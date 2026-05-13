@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Políticas de Privacidad - ExpresaT V2</title>
+    <link rel="stylesheet" href="./styles/main.css">
+    <link rel="stylesheet" href="./styles/navbar.css">
+    <link rel="stylesheet" href="./styles/footer.css">
+    <link rel="stylesheet" href="./styles/terminos.css">
+</head>
+<body>
+    <canvas id="bg"></canvas>
+
+    <nav class="navbar">
+        <a href="index.html" class="nav-brand">
+            <img src="../assets/logo/logo.png" alt="Logo" class="nav-logo">
+            <span class="gradient-text">ExpresaT <span style="font-size: 0.8rem; color: white;">V2</span></span>
+        </a>
+        <button id="mobile-toggle" class="mobile-toggle">☰</button>
+        <ul class="nav-links" id="nav-links">
+            <li><a href="index.html">Inicio</a></li>
+            <li><a href="traductor.html">Traductor</a></li>
+            <li><a href="aprende_lms.html">Aprender LSM</a></li>
+            <li><a href="informacion.html">Nosotros</a></li>
+        </ul>
+        <div class="nav-controls">
+            <a href="login.html" class="btn-neon" id="nav-login-btn">Iniciar Sesión</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        <div class="glass-panel document-container reveal">
+            <div class="document-header">
+                <h1 class="gradient-text">Políticas de Privacidad</h1>
+                <p>Última actualización: Mayo 2026</p>
+            </div>
+            <div class="document-content">
+                <h3>1. Recopilación de Datos</h3>
+                <p>ExpresaT V2 se compromete a proteger su privacidad. No almacenamos transmisiones de video en nuestros servidores. Todo el procesamiento de fotogramas inicial se realiza de forma efímera en su dispositivo local a través de WebSockets.</p>
+                
+                <h3>2. Uso de la Información</h3>
+                <p>La información recopilada en su perfil (como correo electrónico) se utiliza exclusivamente para fines de autenticación y manejo de sesiones de Supabase, respetando la estricta política Row Level Security (RLS).</p>
+
+                <h3>3. Seguridad</h3>
+                <p>Implementamos medidas de seguridad estándar de la industria, incluyendo transmisión JWT sobre redes seguras y cifrado en bases de datos.</p>
+            </div>
+        </div>
+    </main>
+
+    <footer class="glass-footer">
+        <div class="footer-content">
+            <div class="footer-logo-section">
+                <img src="../assets/logo/logo.png" alt="Logo ExpresaT" class="footer-logo">
+                <p>ExpresaT V2</p>
+            </div>
+            <div class="footer-links">
+                <h4>Enlaces Útiles</h4>
+                <ul>
+                    <li><a href="soporte.html">Soporte Técnico</a></li>
+                    <li><a href="politicas.html">Políticas de Privacidad</a></li>
+                    <li><a href="terminos.html">Términos y Condiciones</a></li>
+                    <li><a href="mailto:contacto@expresat.com">contacto@expresat.com</a></li>
+                </ul>
+            </div>
+            <div class="footer-social">
+                <h4>Redes Sociales</h4>
+                <div class="social-icons">
+                    <a href="https://github.com/salf423" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">GitHub</a>
+                    <a href="#" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Facebook</a>
+                    <a href="#" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Instagram</a>
+                </div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 ExpresaT V2. Todos los derechos reservados.</p>
+        </div>
+    </footer>
+
+    <script src="./js/ui_controller.js"></script>
+    <script src="./js/navbar.js"></script>
+</body>
+</html>

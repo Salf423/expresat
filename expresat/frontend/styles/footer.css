@@ -1,0 +1,89 @@
+/* Footer Styles */
+.glass-footer {
+    background: rgba(7, 9, 15, 0.8);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--glass-border);
+    padding: 3rem 2rem 1rem;
+    margin-top: 4rem;
+    position: relative;
+    z-index: 10;
+}
+
+.footer-content {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 2rem;
+}
+
+.footer-logo-section {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.footer-logo {
+    width: 85px; /* Logo más grande en el footer también */
+    height: auto;
+    margin-bottom: 0.5rem;
+}
+
+.footer-links h4, .footer-social h4 {
+    color: var(--accent-purple);
+    margin-bottom: 1rem;
+}
+
+.footer-links ul {
+    list-style: none;
+}
+
+.footer-links li {
+    margin-bottom: 0.5rem;
+}
+
+.footer-links a, .footer-social a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: color 0.3s;
+    font-size: 0.9rem;
+}
+
+.footer-links a:hover, .footer-social a:hover {
+    color: var(--accent-cyan);
+}
+
+.social-icons {
+    display: flex;
+    gap: 1rem;
+}
+
+.footer-bottom {
+    text-align: center;
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* Modificación de Navbar Brand */
+.nav-brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-decoration: none;
+    line-height: 1;
+}
+
+.nav-logo {
+    width: 75px; /* Logo mucho más grande (antes 40px) */
+    height: auto;
+    margin-bottom: -5px; /* Reducir espacio entre logo y texto */
+}
+
+/* Ocultar el texto de ExpresaT V2 en el navbar */
+.nav-brand > span {
+    display: none !important;
+}

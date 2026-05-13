@@ -1,0 +1,105 @@
+/* Navbar Styles */
+.navbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 80px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 2rem;
+    background: rgba(7, 9, 15, 0.8);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--glass-border);
+    z-index: 1000;
+}
+
+.nav-brand {
+    font-size: 1.5rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.nav-links {
+    display: flex;
+    gap: 2rem;
+    list-style: none;
+}
+
+.nav-links a {
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.3s;
+}
+
+.nav-links a:hover, .nav-links a.active {
+    color: var(--accent-cyan);
+}
+
+.nav-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    position: relative;
+}
+
+/* Avatar Dropdown */
+.user-avatar {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: var(--accent-purple);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: bold;
+    cursor: pointer;
+    border: 2px solid var(--accent-cyan);
+}
+
+.dropdown-menu {
+    position: absolute;
+    top: 60px; right: 0;
+    width: 200px;
+    display: none;
+    flex-direction: column;
+    padding: 1rem;
+}
+
+.dropdown-menu.active { display: flex; }
+
+.dropdown-menu a, .dropdown-menu button {
+    padding: 0.5rem 0;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+.dropdown-menu a:hover, .dropdown-menu button:hover {
+    color: var(--accent-cyan);
+}
+
+/* Mobile Toggle */
+.mobile-toggle {
+    display: none;
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+@media (max-width: 768px) {
+    .nav-links {
+        display: none;
+        position: absolute;
+        top: 80px; left: 0; right: 0;
+        background: var(--bg-dark);
+        flex-direction: column;
+        padding: 2rem;
+        border-bottom: 1px solid var(--glass-border);
+    }
+    .nav-links.active { display: flex; }
+    .mobile-toggle { display: block; }
+}

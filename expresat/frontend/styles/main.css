@@ -1,0 +1,127 @@
+:root {
+    --bg-dark: #07090f;
+    --bg-navy: #0d1b2a;
+    --accent-cyan: #00f3ff;
+    --accent-purple: #9d4edd;
+    --glass-bg: rgba(7, 9, 15, 0.6);
+    --glass-border: rgba(0, 243, 255, 0.2);
+    --text-primary: #ffffff;
+    --text-secondary: #a0aabf;
+    --font-main: 'Inter', system-ui, sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: var(--font-main);
+}
+
+body {
+    background-color: var(--bg-dark);
+    color: var(--text-primary);
+    overflow-x: hidden;
+    min-height: 100vh;
+}
+
+/* Background Particles Canvas */
+#bg {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    z-index: -1;
+    pointer-events: none;
+}
+
+/* Glassmorphism Premium */
+.glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* Typography */
+h1, h2, h3, h4 { color: var(--text-primary); }
+p { color: var(--text-secondary); line-height: 1.6; }
+
+.gradient-text {
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Buttons con efecto Neón */
+.btn-neon {
+    background: transparent;
+    color: var(--accent-cyan);
+    border: 1px solid var(--accent-cyan);
+    padding: 0.8rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-neon:hover {
+    background: var(--accent-cyan);
+    color: var(--bg-dark);
+    box-shadow: 0 0 15px var(--accent-cyan), 0 0 30px var(--accent-cyan);
+}
+
+.btn-primary {
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+    color: white;
+    border: none;
+    padding: 0.8rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+    box-shadow: 0 0 20px rgba(157, 78, 221, 0.6);
+    transform: translateY(-2px);
+}
+
+/* Spinner Loader integrado */
+.spinner {
+    display: inline-block;
+    width: 20px; height: 20px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 1s ease-in-out infinite;
+    margin-right: 8px;
+    display: none; /* Oculto por defecto */
+}
+.btn-loading .spinner { display: inline-block; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ScrollReveal Utility Class */
+.reveal {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: all 0.8s ease-out;
+}
+.reveal.active {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Container Wrapper */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+}

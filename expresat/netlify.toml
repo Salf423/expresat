@@ -1,0 +1,16 @@
+[build]
+  publish = "frontend"
+  # command = "npm run build" # Optional if you add a bundler later
+
+# Redirect for Single Page Application (SPA) routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Proxy WebSocket requests to FastAPI backend (optional, but recommended if hosting backend under same domain is desired, though usually WS has its own domain)
+# [[redirects]]
+#   from = "/ws/*"
+#   to = "wss://your-backend-url.com/ws/:splat"
+#   status = 200
+#   force = true

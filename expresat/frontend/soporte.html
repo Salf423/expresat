@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soporte Técnico - ExpresaT V2</title>
+    <link rel="stylesheet" href="./styles/main.css">
+    <link rel="stylesheet" href="./styles/navbar.css">
+    <link rel="stylesheet" href="./styles/footer.css">
+    <link rel="stylesheet" href="./styles/auth.css">
+    <link rel="stylesheet" href="./styles/terminos.css">
+</head>
+<body>
+    <canvas id="bg"></canvas>
+
+    <nav class="navbar">
+        <a href="index.html" class="nav-brand">
+            <img src="../assets/logo/logo.png" alt="Logo" class="nav-logo">
+            <span class="gradient-text">ExpresaT <span style="font-size: 0.8rem; color: white;">V2</span></span>
+        </a>
+        <button id="mobile-toggle" class="mobile-toggle">☰</button>
+        <ul class="nav-links" id="nav-links">
+            <li><a href="index.html">Inicio</a></li>
+            <li><a href="traductor.html">Traductor</a></li>
+            <li><a href="aprende_lms.html">Aprender LSM</a></li>
+            <li><a href="informacion.html">Nosotros</a></li>
+        </ul>
+        <div class="nav-controls">
+            <a href="login.html" class="btn-neon" id="nav-login-btn">Iniciar Sesión</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        <div class="glass-panel document-container reveal" style="text-align: center;">
+            <div class="document-header">
+                <h1 class="gradient-text">Soporte Técnico</h1>
+                <p>¿Tienes problemas con la plataforma? Estamos aquí para ayudarte.</p>
+            </div>
+            
+            <form class="support-form form-group" style="max-width: 600px; margin: 0 auto; text-align: left;">
+                <label>Tu Correo Electrónico</label>
+                <input type="email" placeholder="usuario@correo.com" required>
+                
+                <label style="margin-top: 1rem;">Describe tu problema</label>
+                <textarea placeholder="Detalla el inconveniente que estás presentando..." required></textarea>
+                
+                <button type="submit" class="btn-primary" style="margin-top: 1.5rem;">Enviar Mensaje a Soporte</button>
+            </form>
+            
+            <p style="margin-top: 2rem; color: var(--text-secondary);">También puedes escribirnos directamente a <a href="mailto:contacto@expresat.com" style="color: var(--accent-cyan);">contacto@expresat.com</a></p>
+        </div>
+    </main>
+
+    <footer class="glass-footer">
+        <div class="footer-content">
+            <div class="footer-logo-section">
+                <img src="../assets/logo/logo.png" alt="Logo ExpresaT" class="footer-logo">
+                <p>ExpresaT V2</p>
+            </div>
+            <div class="footer-links">
+                <h4>Enlaces Útiles</h4>
+                <ul>
+                    <li><a href="soporte.html">Soporte Técnico</a></li>
+                    <li><a href="politicas.html">Políticas de Privacidad</a></li>
+                    <li><a href="terminos.html">Términos y Condiciones</a></li>
+                    <li><a href="mailto:contacto@expresat.com">contacto@expresat.com</a></li>
+                </ul>
+            </div>
+            <div class="footer-social">
+                <h4>Redes Sociales</h4>
+                <div class="social-icons">
+                    <a href="https://github.com/salf423" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">GitHub</a>
+                    <a href="#" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Facebook</a>
+                    <a href="#" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Instagram</a>
+                </div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 ExpresaT V2. Todos los derechos reservados.</p>
+        </div>
+    </footer>
+
+    <script src="./js/ui_controller.js"></script>
+    <script src="./js/navbar.js"></script>
+</body>
+</html>

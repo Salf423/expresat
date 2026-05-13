@@ -1,0 +1,56 @@
+/* Terminos, Politicas y Soporte CSS */
+.document-container {
+    max-width: 900px;
+    margin: 120px auto 4rem;
+    padding: 3rem;
+}
+
+.document-header {
+    text-align: center;
+    margin-bottom: 3rem;
+    border-bottom: 1px solid var(--glass-border);
+    padding-bottom: 2rem;
+}
+
+.document-content h3 {
+    color: var(--accent-cyan);
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+}
+
+.document-content p, .document-content ul {
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+    line-height: 1.8;
+}
+
+.document-content ul {
+    padding-left: 1.5rem;
+}
+
+.document-content li {
+    margin-bottom: 0.5rem;
+}
+
+.support-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 2rem;
+}
+
+.support-form textarea {
+    width: 100%;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    color: white;
+    outline: none;
+    resize: vertical;
+    min-height: 150px;
+}
+
+.support-form textarea:focus {
+    border-color: var(--accent-cyan);
+}
