@@ -1,0 +1,29 @@
+# =============================================================================
+# requirements.txt — ExpresaT Backend (CPU-Only)
+# =============================================================================
+# Todas las dependencias son CPU-only. NO instalar versiones GPU.
+#
+# Instalación:
+#   pip install -r requirements.txt
+#
+# Para entorno de entrenamiento (incluye PyTorch):
+#   pip install -r requirements.txt -r requirements-train.txt
+# =============================================================================
+
+# --- Framework Web ---
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+websockets==15.0.1
+
+# --- Motor de Inferencia (PRODUCCIÓN) ---
+# IMPORTANTE: usar onnxruntime (CPU), NO onnxruntime-gpu
+onnxruntime==1.22.0
+
+# --- Procesamiento Numérico ---
+numpy==2.2.6
+
+# --- Utilidades ---
+pydantic==2.11.3
+
+# --- Auth (opcional, descomentar si se usa Supabase en backend) ---
+# supabase==2.15.2

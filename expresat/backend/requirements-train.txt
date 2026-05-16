@@ -1,0 +1,20 @@
+# =============================================================================
+# requirements-train.txt — ExpresaT: Dependencias de Entrenamiento
+# =============================================================================
+# Instalar ADEMÁS de requirements.txt:
+#   pip install -r requirements.txt -r requirements-train.txt
+#
+# Estas dependencias solo son necesarias para entrenar y exportar el modelo.
+# NO son necesarias en producción (el servidor solo usa onnxruntime).
+# =============================================================================
+
+# --- PyTorch CPU-only ---
+# Usar el índice de PyTorch para la versión CPU
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.7.0+cpu
+
+# --- Exportación ONNX ---
+onnx==1.18.0
+
+# --- Cuantización ONNX (incluida en onnxruntime, pero explícita aquí) ---
+onnxruntime==1.22.0

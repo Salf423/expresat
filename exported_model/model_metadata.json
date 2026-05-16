@@ -1,0 +1,49 @@
+{
+  "model_version": "1.0.0",
+  "architecture": "GRU-Lite",
+  "sequence_length": 15,
+  "num_features": 178,
+  "labels": [
+    "hola",
+    "gracias",
+    "por_favor",
+    "adios",
+    "si",
+    "no",
+    "ayuda",
+    "bien",
+    "mal",
+    "nombre",
+    "como_estas",
+    "mucho_gusto",
+    "perdon",
+    "agua",
+    "comida"
+  ],
+  "num_classes": 15,
+  "feature_layout": {
+    "pose_upper": {
+      "landmarks": 13,
+      "coords_per_landmark": 4,
+      "total": 52,
+      "indices": "0:52"
+    },
+    "left_hand": {
+      "landmarks": 21,
+      "coords_per_landmark": 3,
+      "total": 63,
+      "indices": "52:115"
+    },
+    "right_hand": {
+      "landmarks": 21,
+      "coords_per_landmark": 3,
+      "total": 63,
+      "indices": "115:178"
+    }
+  },
+  "preprocessing": {
+    "normalization": "shoulder_relative",
+    "reference_landmark_left": 11,
+    "reference_landmark_right": 12
+  }
+}
