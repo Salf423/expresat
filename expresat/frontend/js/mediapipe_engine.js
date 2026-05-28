@@ -4,24 +4,18 @@ export class MediaPipeEngine {
      * @param {HTMLVideoElement} videoElement - Elemento de video fuente.
      * @param {HTMLCanvasElement} canvasElement - Canvas donde se dibujarán los resultados.
      * @param {Function} onBatchReady - Callback para enviar los landmarks detectados.
-     * Decisión: Se fija el target FPS a 15 para optimizar el ancho de banda y procesamiento del backend.
      */
     constructor(videoElement, canvasElement, onBatchReady) {
         this.videoElement = videoElement;
         this.canvasElement = canvasElement;
         this.canvasCtx = canvasElement.getContext('2d');
         this.onBatchReady = onBatchReady;
-        
-        // Batcher logic: exactly 15 FPS
         this.targetFPS = 15;
         this.frameInterval = 1000 / this.targetFPS;
         this.lastFrameTime = 0;
-        
-        // FPS Counter
         this.frameCount = 0;
         this.lastFpsTime = performance.now();
         this.fpsElement = document.getElementById('fps-counter');
-
         this.holistic = new window.Holistic({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
         });
@@ -90,10 +84,8 @@ export class MediaPipeEngine {
         this.canvasCtx.save();
         this.canvasCtx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
         
-        // Dibujar video de fondo
         this.canvasCtx.drawImage(results.image, 0, 0, this.canvasElement.width, this.canvasElement.height);
 
-        // Renderizar marcas y esqueleto
         if (results.poseLandmarks) {
             window.drawConnectors(this.canvasCtx, results.poseLandmarks, window.POSE_CONNECTIONS, { color: '#00f3ff', lineWidth: 4 });
             window.drawLandmarks(this.canvasCtx, results.poseLandmarks, { color: '#ffffff', lineWidth: 2 });
@@ -108,7 +100,6 @@ export class MediaPipeEngine {
         }
         this.canvasCtx.restore();
 
-        // Extraer landmarks y enviarlos en el Batch (15FPS controlados por el onFrame)
         const payload = this.extractLandmarks(results);
         if (this.onBatchReady) {
             this.onBatchReady(payload);
