@@ -34,7 +34,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
 # =============================================================================
-# IMPORTACIONES CRÍTICAS (ONNX Runtime)
+# IMPORTACIONES CRÍTICAS 
 # =============================================================================
 try:
     import onnxruntime as ort
@@ -42,7 +42,7 @@ try:
 except ImportError as e:
     print("\n[ERROR CRÍTICO] Faltan dependencias clave como 'onnxruntime'.", file=sys.stderr)
     print(f"Detalle del error: {e}", file=sys.stderr)
-    print("\n💡 SOLUCIÓN:", file=sys.stderr)
+    print("\n SOLUCIÓN:", file=sys.stderr)
     print("Asegúrate de ejecutar este script utilizando el entorno virtual correcto del proyecto:", file=sys.stderr)
     print("  ./expresat/.venv/bin/python expresat/models/train_and_export.py\n", file=sys.stderr)
     sys.exit(1)
@@ -145,7 +145,7 @@ class SignLanguageGRU(nn.Module):
 
 
 # =============================================================================
-# 3. DATASET SINTÉTICO (PARA DEMOSTRACIÓN)
+# 3. DATASET SINTÉTICO 
 # =============================================================================
 
 class SyntheticSignDataset(Dataset):
@@ -359,13 +359,13 @@ def optimize_onnx_int8(onnx_path: str, optimized_path: str):
         quantized_size = os.path.getsize(optimized_path)
         reduction = (1 - quantized_size / original_size) * 100
 
-        print(f"  ✓ ONNX cuantizado: {quantized_size:,} bytes ({quantized_size/1024:.1f} KB)")
+        print(f"  ONNX cuantizado: {quantized_size:,} bytes ({quantized_size/1024:.1f} KB)")
         print(f"    Reducción: {reduction:.1f}% respecto al original")
 
         return optimized_path
 
     except Exception as e:
-        print(f"  ⚠ Error en cuantización ONNX: {e}. Usando modelo float32.")
+        print(f"  Error en cuantización ONNX: {e}. Usando modelo float32.")
         return onnx_path
 
 
@@ -462,9 +462,9 @@ def benchmark_onnx(onnx_path: str, num_runs: int = 100):
         print(f"    Max:      {latencies.max():.2f} ms")
 
         if latencies.mean() < 100:
-            print(f"    ✅ CUMPLE objetivo < 100ms")
+            print(f"   CUMPLE objetivo < 100ms")
         else:
-            print(f"    ❌ NO cumple objetivo < 100ms")
+            print(f"   NO cumple objetivo < 100ms")
 
         print(f"  {'='*50}\n")
 
@@ -499,7 +499,7 @@ def main():
     num_classes = len(args.labels)
 
     # --- Paso 1: Construir modelo ---
-    print("\n📐 Construyendo modelo GRU...")
+    print("\n Construyendo modelo GRU...")
     model = SignLanguageGRU(
         input_size=NUM_FEATURES,
         hidden_size=64,
@@ -512,10 +512,10 @@ def main():
 
     # --- Paso 2: Entrenar ---
     if not args.skip_train:
-        print("\n🏋️ Entrenando modelo...")
+        print("\n Entrenando modelo...")
         model = train_model(model, epochs=args.epochs)
     else:
-        print("\n⏭️  Saltando entrenamiento (--skip-train)")
+        print("\n  Saltando entrenamiento (--skip-train)")
 
     # --- Paso 3: Guardar modelo PyTorch (checkpoint) ---
     pytorch_path = os.path.join(output_dir, "expresat_gru.pt")
@@ -523,17 +523,17 @@ def main():
     print(f"  ✓ Checkpoint PyTorch guardado: {pytorch_path}")
 
     # --- Paso 4: Exportar a ONNX (float32) ---
-    print("\n📦 Exportando a ONNX...")
+    print("\n Exportando a ONNX...")
     onnx_float_path = os.path.join(output_dir, "expresat_gru_float32.onnx")
     export_to_onnx(model, onnx_float_path)
 
     # --- Paso 5: Cuantización INT8 sobre ONNX ---
-    print("\n🔧 Cuantización INT8...")
+    print("\n Cuantización INT8...")
     onnx_int8_path = os.path.join(output_dir, "expresat_gru_int8.onnx")
     final_model_path = optimize_onnx_int8(onnx_float_path, onnx_int8_path)
 
     # --- Paso 6: Guardar metadatos ---
-    print("\n📋 Guardando metadatos...")
+    print("\n Guardando metadatos...")
     save_model_metadata(output_dir, args.labels)
 
     # --- Paso 7: Benchmark ---
