@@ -3,7 +3,6 @@ import json
 import sys
 import os
 
-# Agregamos la ruta root para importar el modelo
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.inference import SignLanguagePredictor
 
