@@ -1,6 +1,3 @@
-// navbar.js
-// Manejo del menú responsive y dropdown de usuario
-
 document.addEventListener('DOMContentLoaded', () => {
     const mobileToggle = document.getElementById('mobile-toggle');
     const navLinks = document.getElementById('nav-links');
@@ -27,8 +24,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Mock auth state toggle (Debería ser controlado por auth_service.js)
-    // Mostramos el avatar o el botón Login según el estado (simulado aquí para visualización si no hay backend aún)
     const loginBtn = document.getElementById('nav-login-btn');
     const authWrapper = document.getElementById('nav-auth-wrapper');
     
