@@ -1,20 +1,20 @@
 """
 train_and_export.py — ExpresaT: Entrenamiento y Exportación del Modelo GRU Ultra-Ligero
 ========================================================================================
-Este script construye, entrena y exporta un modelo GRU cuantizado a INT8
+Construye, entrena y exporta un modelo GRU cuantizado a INT8
 para la traducción de Lengua de Señas en tiempo real sobre CPU.
 
 Arquitectura del Modelo:
     - Input:  (batch, 15 frames, 225 features)
-    - GRU:    1 capa, 64 unidades hidden (bidireccional=False para velocidad)
+    - GRU:    1 capa, 64 unidades hidden
     - Head:   Linear(64 → 32) → ReLU → Dropout → Linear(32 → num_clases)
-    - Params: ~12,000 (ultra-ligero para CPU)
+    - Params: ~12,000
 
 Pipeline de exportación:
-    1. Entrenar modelo en PyTorch (o cargar pesos pre-entrenados)
-    2. Aplicar Dynamic Quantization INT8 (torch.quantization)
+    1. Entrenar modelo en PyTorch 
+    2. Aplicar Dynamic Quantization INT8 
     3. Exportar a ONNX con opset 17
-    4. (Opcional) Optimizar ONNX con onnxruntime optimizations
+    4. Optimizar ONNX con onnxruntime optimizations
 
 Uso:
     python train_and_export.py --epochs 50 --output ./exported_model
@@ -43,7 +43,7 @@ except ImportError as e:
     print("\n[ERROR CRÍTICO] Faltan dependencias clave como 'onnxruntime'.", file=sys.stderr)
     print(f"Detalle del error: {e}", file=sys.stderr)
     print("\n SOLUCIÓN:", file=sys.stderr)
-    print("Asegúrate de ejecutar este script utilizando el entorno virtual correcto del proyecto:", file=sys.stderr)
+    print("Alerta de uso, solo funciona en el entorno virtual correcto del proyecto:", file=sys.stderr)
     print("  ./expresat/.venv/bin/python expresat/models/train_and_export.py\n", file=sys.stderr)
     sys.exit(1)
 
@@ -298,16 +298,6 @@ def quantize_model(model: nn.Module) -> nn.Module:
 # =============================================================================
 
 def export_to_onnx(model: nn.Module, output_path: str, quantized: bool = False):
-    """
-    Exporta el modelo a formato ONNX para inferencia con ONNX Runtime.
-
-    Nota importante: PyTorch dynamic quantized models no se exportan directamente
-    a ONNX de forma óptima. La estrategia es:
-      1. Exportar el modelo FLOAT32 original a ONNX
-      2. Aplicar cuantización INT8 *dentro* de ONNX Runtime (post-export)
-
-    Esto da mejor rendimiento que intentar exportar el modelo ya cuantizado.
-    """
     model.eval()
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
@@ -469,7 +459,7 @@ def benchmark_onnx(onnx_path: str, num_runs: int = 100):
         print(f"  {'='*50}\n")
 
     except Exception as e:
-        print(f"  ⚠ Error al ejecutar benchmark: {e}")
+        print(f" Error al ejecutar benchmark: {e}")
 
 
 # =============================================================================
@@ -520,7 +510,7 @@ def main():
     # --- Paso 3: Guardar modelo PyTorch (checkpoint) ---
     pytorch_path = os.path.join(output_dir, "expresat_gru.pt")
     torch.save(model.state_dict(), pytorch_path)
-    print(f"  ✓ Checkpoint PyTorch guardado: {pytorch_path}")
+    print(f"  Checkpoint PyTorch guardado: {pytorch_path}")
 
     # --- Paso 4: Exportar a ONNX (float32) ---
     print("\n Exportando a ONNX...")
@@ -538,15 +528,13 @@ def main():
 
     # --- Paso 7: Benchmark ---
     if args.benchmark:
-        print("\n⚡ Ejecutando benchmark de latencia...")
+        print("\n Ejecutando benchmark de latencia...")
         benchmark_onnx(final_model_path)
 
     print(f"\n{'='*60}")
-    print(f"  ✅ PIPELINE COMPLETO")
+    print(f"  PIPELINE COMPLETO")
     print(f"  Modelo final: {final_model_path}")
     print(f"  Metadatos:    {os.path.join(output_dir, 'model_metadata.json')}")
     print(f"{'='*60}\n")
-
-
 if __name__ == "__main__":
     main()
