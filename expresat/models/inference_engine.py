@@ -4,7 +4,6 @@ inference_engine.py — ExpresaT: Motor de Inferencia ONNX Runtime (CPU-Only)
 Clase de producción que carga el modelo GRU cuantizado a INT8 en formato ONNX
 y ejecuta inferencia sobre lotes de 15 frames de landmarks de MediaPipe.
 
-Características clave:
     - ONNX Runtime como motor de inferencia (NO PyTorch/TensorFlow en prod)
     - Preprocesamiento vectorizado con NumPy (zero-copy cuando es posible)
     - Normalización relativa a los hombros para invariancia de posición
@@ -48,11 +47,6 @@ NUM_FEATURES = (len(POSE_UPPER_INDICES) * POSE_COORDS) + (HAND_LANDMARKS * HAND_
 
 class InferenceEngine:
     """
-    Motor de inferencia de producción para ExpresaT.
-
-    Carga el modelo ONNX cuantizado y proporciona una interfaz limpia
-    para ejecutar predicciones sobre secuencias de landmarks.
-
     Attributes:
         session: Sesión de ONNX Runtime configurada para CPU
         labels: Lista de etiquetas de señas
@@ -87,7 +81,7 @@ class InferenceEngine:
         # --- Cachear nombre del input para evitar lookups repetidos ---
         self._input_name = self.session.get_inputs()[0].name
 
-        print(f"  ✓ InferenceEngine inicializado")
+        print(f"    InferenceEngine inicializado")
         print(f"    Modelo:     {self._get_model_path().name}")
         print(f"    Clases:     {self.num_classes}")
         print(f"    Features:   {NUM_FEATURES}")
@@ -115,7 +109,7 @@ class InferenceEngine:
         if int8_path.exists():
             return int8_path
         elif float32_path.exists():
-            print("  ⚠ Modelo INT8 no encontrado, usando float32.")
+            print("  Modelo INT8 no encontrado, usando float32.")
             return float32_path
         else:
             raise FileNotFoundError(
@@ -162,14 +156,6 @@ class InferenceEngine:
 
     def preprocess_batch(self, raw_frames: list[dict]) -> np.ndarray:
         """
-        Preprocesa un lote de 15 frames crudos de MediaPipe.
-
-        Pipeline de preprocesamiento:
-          1. Extraer landmarks relevantes (pose superior, manos)
-          2. Normalizar coordenadas relativas a punto central (hombros)
-          3. Manejar landmarks faltantes (zero-fill)
-          4. Ensamblar tensor final de forma (1, 15, NUM_FEATURES)
-
         Args:
             raw_frames: Lista de 15 diccionarios, cada uno con:
                 - "pose": lista de 33 landmarks [{x, y, z}, ...]
@@ -239,12 +225,7 @@ class InferenceEngine:
         return np.array(features, dtype=np.float32)
 
     def _extract_hand(self, hand_landmarks: Optional[list]) -> np.ndarray:
-        """
-        Extrae los 21 landmarks de una mano.
 
-        Returns:
-            np.ndarray de forma (63,) → 21 landmarks × 3 coordenadas
-        """
         if not hand_landmarks:
             return np.zeros(HAND_LANDMARKS * HAND_COORDS, dtype=np.float32)
 
@@ -273,11 +254,6 @@ class InferenceEngine:
         """
         Normaliza las coordenadas haciéndolas relativas al punto medio
         entre los hombros (landmarks 11 y 12 de MediaPipe Pose).
-
-        Esto hace que el modelo sea invariante a la posición de la persona
-        en el frame de la cámara. Una persona a la izquierda o derecha
-        de la pantalla producirá las mismas features relativas.
-
         Args:
             features: Vector de features del frame (178,)
             pose_landmarks: Lista completa de 33 landmarks de pose
@@ -334,8 +310,6 @@ class InferenceEngine:
 
     def predict(self, raw_frames: list[dict]) -> dict:
         """
-        Ejecuta el pipeline completo: preprocesamiento → inferencia → post-procesamiento.
-
         Args:
             raw_frames: Lista de hasta 15 frames de landmarks de MediaPipe.
 
@@ -390,10 +364,6 @@ class InferenceEngine:
 
     @staticmethod
     def _softmax(logits: np.ndarray) -> np.ndarray:
-        """
-        Softmax numéricamente estable sobre logits.
-        Resta el máximo antes de exponenciar para evitar overflow.
-        """
         exp_logits = np.exp(logits - np.max(logits))
         return exp_logits / exp_logits.sum()
 
