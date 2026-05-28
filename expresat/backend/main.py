@@ -1,5 +1,5 @@
 """
-main.py — ExpresaT: Servidor FastAPI con WebSocket para Traducción en Tiempo Real
+main.py — ExpresaT: Servidor FastAPI con WebSocket
 ==================================================================================
 Servidor de producción que gestiona:
   - Endpoint WebSocket /ws/translate para recepción de lotes de landmarks
@@ -25,7 +25,6 @@ from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-# Agregar la ruta del proyecto para imports relativos
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -42,7 +41,7 @@ CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
 
 
 # =============================================================================
-# INFERENCE ENGINE — Singleton (se carga una vez al iniciar el servidor)
+# INFERENCE ENGINE — Singleton 
 # =============================================================================
 
 # Referencia global al motor de inferencia
@@ -71,7 +70,7 @@ async def lifespan(app: FastAPI):
     global _inference_engine
 
     print("\n" + "=" * 60)
-    print("  🚀 ExpresaT Backend — Iniciando servidor...")
+    print("  ExpresaT Backend — Iniciando servidor...")
     print("=" * 60)
 
     # --- Cargar motor de inferencia ---
@@ -79,7 +78,7 @@ async def lifespan(app: FastAPI):
         from models.inference_engine import InferenceEngine
 
         model_path = os.path.abspath(MODEL_DIR)
-        print(f"\n  📂 Modelo: {model_path}")
+        print(f"\n  Modelo: {model_path}")
 
         _inference_engine = InferenceEngine(
             model_dir=model_path,
@@ -87,27 +86,27 @@ async def lifespan(app: FastAPI):
         )
 
         engine_info = _inference_engine.get_info()
-        print(f"  📊 Motor: {engine_info['engine']}")
-        print(f"  📦 Modelo: {engine_info['model_file']} ({engine_info['model_size_kb']} KB)")
-        print(f"  🏷️  Clases: {engine_info['num_classes']}")
-        print(f"  ✅ Motor de inferencia listo.\n")
+        print(f"   Motor: {engine_info['engine']}")
+        print(f"   Modelo: {engine_info['model_file']} ({engine_info['model_size_kb']} KB)")
+        print(f"   Clases: {engine_info['num_classes']}")
+        print(f"   Motor de inferencia listo.\n")
 
     except FileNotFoundError as e:
-        print(f"\n  ⚠️  ADVERTENCIA: {e}")
-        print(f"  ⚠️  El servidor arrancará en modo MOCK (sin modelo real).\n")
+        print(f"\n   ADVERTENCIA: {e}")
+        print(f"     El servidor arrancará en modo MOCK (sin modelo real).\n")
         _inference_engine = None
 
     except Exception as e:
-        print(f"\n  ❌ Error cargando motor de inferencia: {e}")
-        print(f"  ⚠️  El servidor arrancará en modo MOCK.\n")
+        print(f"\n Error cargando motor de inferencia: {e}")
+        print(f"   El servidor arrancará en modo MOCK.\n")
         _inference_engine = None
 
     yield  # El servidor está corriendo aquí
 
     # --- Shutdown ---
-    print("\n  🛑 ExpresaT Backend — Apagando...")
+    print("\n ExpresaT Backend — Apagando...")
     _inference_engine = None
-    print("  ✓ Recursos liberados.\n")
+    print("  Recursos liberados.\n")
 
 
 # =============================================================================
@@ -138,7 +137,6 @@ app.add_middleware(
 class ConnectionManager:
     """
     Gestiona las conexiones WebSocket activas.
-    Thread-safe para múltiples conexiones concurrentes.
     """
 
     def __init__(self):
@@ -147,12 +145,12 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        print(f"  🔗 Cliente conectado. Total activos: {len(self.active_connections)}")
+        print(f"  Cliente conectado. Total activos: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-        print(f"  🔌 Cliente desconectado. Total activos: {len(self.active_connections)}")
+        print(f"  Cliente desconectado. Total activos: {len(self.active_connections)}")
 
     async def send_personal(self, message: dict, websocket: WebSocket):
         """Envía un mensaje JSON a un cliente específico."""
@@ -166,8 +164,8 @@ manager = ConnectionManager()
 # THREAD POOL EXECUTOR — Para offload de inferencia síncrona
 # =============================================================================
 
-# asyncio.to_thread() usará este executor internamente
-# Esto evita que la inferencia ONNX (síncrona) bloquee el event loop de asyncio
+# asyncio.to_thread() se usará este executor internamente
+# Esto evita que la inferencia ONNX bloquee el event loop de asyncio
 
 async def run_inference_async(frames: list[dict]) -> dict:
     """
@@ -226,7 +224,7 @@ def verify_supabase_token(token: str) -> Optional[dict]:
     if not token:
         return None
 
-    # --- PRODUCCIÓN: Descomentar este bloque ---
+    # --- PRODUCCIÓN: Descomentar este bloque para conectar todo a la DB ---
     # try:
     #     from supabase import create_client
     #     supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -340,7 +338,7 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                         }, websocket)
 
                 except Exception as e:
-                    print(f"  ❌ Error en inferencia: {e}")
+                    print(f"  Error en inferencia: {e}")
                     await manager.send_personal({
                         "type": "error",
                         "payload": f"Error en inferencia: {str(e)}"
@@ -356,12 +354,12 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
-        print(f"  ❌ WebSocket error: {e}")
+        print(f"  WebSocket error: {e}")
         manager.disconnect(websocket)
 
 
 # =============================================================================
-# ENDPOINT LEGACY — /ws (retrocompatibilidad con frontend existente)
+# ENDPOINT LEGACY — /ws
 # =============================================================================
 
 @app.websocket("/ws")
@@ -427,7 +425,7 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
 
-    print(f"\n  🌐 Iniciando servidor en {host}:{port}")
+    print(f"\n Iniciando servidor en {host}:{port}")
     uvicorn.run(
         "main:app",
         host=host,
