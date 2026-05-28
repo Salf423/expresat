@@ -1,4 +1,4 @@
-#ExpresaT — Especificación Técnica del Backend (IA & Inferencia)
+# ExpresaT — Especificación Técnica del Backend (IA & Inferencia)
 
 Aquí se describe en detalle la arquitectura, el diseño de modelos y la lógica de inferencia del backend de **ExpresaT**, un traductor de Lengua de Señas en tiempo real optimizado para CPU.
 
