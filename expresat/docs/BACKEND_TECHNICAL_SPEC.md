@@ -1,12 +1,10 @@
-# 📑 ExpresaT — Especificación Técnica del Backend (IA & Inferencia)
+#ExpresaT — Especificación Técnica del Backend (IA & Inferencia)
 
-Esta documentación describe en detalle la arquitectura, el diseño de modelos y la lógica de inferencia del backend de **ExpresaT**, un traductor de Lengua de Señas en tiempo real optimizado para CPU.
+Aquí se describe en detalle la arquitectura, el diseño de modelos y la lógica de inferencia del backend de **ExpresaT**, un traductor de Lengua de Señas en tiempo real optimizado para CPU.
 
 ---
 
 ## 1. Arquitectura de Alto Nivel
-
-El sistema utiliza una arquitectura de **procesamiento asíncrono basado en flujos (stream-batch)**. El frontend captura landmarks mediante MediaPipe Holistic y los envía a través de WebSockets. El backend procesa estos landmarks en ventanas temporales para predecir la seña correspondiente.
 
 ### Flujo de Datos (Pipeline de Inferencia)
 1. **Ingesta**: Recepción de 15 frames (1 segundo de video a 15 FPS) vía WebSocket.
@@ -32,7 +30,7 @@ Cada frame se convierte en un vector plano de 178 elementos:
 | **TOTAL** | | | **178** |
 
 ### Normalización Relativa al Cuerpo (Shoulder-Relative)
-Para garantizar que la traducción sea independiente de la posición del usuario en la cámara (distancia o lateralidad), aplicamos la siguiente transformación:
+Para garantizar que la traducción sea independiente de la posición del usuario en la cámara, aplicamos la siguiente transformación:
 - **Origen (0,0,0)**: Se establece en el punto medio entre los hombros (Landmarks 11 y 12).
 - **Escalado**: Se divide cada coordenada por la distancia euclidiana entre los hombros.
 - **Fórmula**: `Coord_norm = (Coord_raw - Shoulder_Mid) / Shoulder_Dist`
@@ -41,7 +39,7 @@ Para garantizar que la traducción sea independiente de la posición del usuario
 
 ## 3. Arquitectura del Modelo de IA
 
-El modelo es una Red Neuronal Recurrente (RNN) diseñada para ser **ultra-ligera** (~49,000 parámetros).
+El modelo es una Red Neuronal Recurrente (RNN) diseñada para ser ultra-ligera (~49,000 parámetros).
 
 ### Capas del Modelo
 - **GRU (Gated Recurrent Unit)**: 
