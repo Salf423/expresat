@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import logoImg from '../assets/logo.png';
 
 const Footer = () => {
   return (
@@ -14,8 +15,8 @@ const Footer = () => {
         display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '2rem'
       }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <span className="gradient-text" style={{ fontSize: '1.5rem', fontWeight: '700' }}>ExpresaT</span>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1rem' }}>
+            <img src={logoImg} alt="ExpresaT Logo" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
           </div>
           <p style={{ color: 'var(--text-muted)' }}>
             Rompiendo barreras de comunicación con inteligencia artificial.
@@ -45,7 +46,7 @@ const Footer = () => {
         marginTop: '3rem', paddingTop: '2rem', borderTop: '1px solid var(--panel-border)',
         textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem'
       }}>
-        &copy; {new Date().getFullYear()} ExpresaT V2. Todos los derechos reservados.
+        &copy; {new Date().getFullYear()} ExpresaT. Todos los derechos reservados.
       </div>
     </footer>
   );

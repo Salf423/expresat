@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Users,
@@ -524,7 +525,7 @@ const About = () => {
       </section>
 
       {/* Detail Modal */}
-      {selectedMember && (
+      {selectedMember && createPortal(
         <div
           className="about-modal-overlay"
           onClick={() => setSelectedMember(null)}
@@ -613,7 +614,8 @@ const About = () => {
               </div>
             </section>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

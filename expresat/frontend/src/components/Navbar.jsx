@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { User, Menu, X } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 import EnvironmentSelector from './EnvironmentSelector';
+import logoImg from '../assets/logo.png';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = React.useState(false);
@@ -27,16 +28,7 @@ const Navbar = () => {
       }}>
         {/* Brand */}
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <div style={{
-            width: '40px', height: '40px', borderRadius: '50%',
-            background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 'bold'
-          }}>
-            E
-          </div>
-          <span className="gradient-text" style={{ fontSize: '1.5rem', fontWeight: '700' }}>
-            ExpresaT <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>V2</span>
-          </span>
+          <img src={logoImg} alt="ExpresaT Logo" style={{ height: '40px', width: 'auto', objectFit: 'contain' }} />
         </Link>
 
         {/* Desktop Links */}
