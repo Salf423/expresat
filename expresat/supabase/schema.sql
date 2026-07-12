@@ -43,7 +43,7 @@ CREATE TABLE public.translation_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- RLS for translations logs
+-- RLS for translations log
 ALTER TABLE public.translation_logs ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can insert own translations" 
