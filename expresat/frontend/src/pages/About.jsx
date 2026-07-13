@@ -12,7 +12,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 
-/* Custom SVG icons — lucide-react v1.x removed brand icons */
+
 const Github = ({ size = 24, ...rest }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" {...rest}>
     <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
@@ -41,7 +41,7 @@ const teamMembers = [
       'Coordinación de grupos focales y pruebas de usabilidad iniciales con la comunidad.'
     ],
     timeline: [
-      { date: 'Mes 1', event: 'Definición del roadmap e inicio del proyecto.' },
+      { date: 'Mes 1', event: 'Definición del roadmap e inicio del proyect ademas de la planificacin de como se va a ejecutar la idea.' },
       { date: 'Mes 3', event: 'Coordinación del primer prototipo funcional.' },
       { date: 'Mes 5', event: 'Lanzamiento de la versión beta y análisis de feedback.' }
     ],
@@ -147,7 +147,7 @@ const teamMembers = [
 const About = () => {
   const [selectedMember, setSelectedMember] = useState(null);
 
-  // Close modal on Escape key
+  
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && selectedMember) {
@@ -158,7 +158,7 @@ const About = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedMember]);
 
-  // Handle body scroll locking when modal is open
+  
   useEffect(() => {
     if (selectedMember) {
       document.body.style.overflow = 'hidden';
@@ -466,18 +466,18 @@ const About = () => {
         <div style={{ color: 'var(--text-muted)', fontSize: '1.15rem', lineHeight: '1.8' }}>
           <p style={{ marginBottom: '1.5rem', textAlign: 'justify' }}>
             <strong style={{ color: 'var(--text-color)' }}>ExpresaT</strong> nació con la visión de derribar las barreras de
-            comunicación para la comunidad sorda en México y el mundo, esto gracias a
+            comunicación para la comunidadcon dicapacidades auditivas o prblemas del habla en México y el mundo, esto gracias a
             nuestro apasionado equipo de desarrollo.
           </p>
           <p style={{ marginBottom: '1.5rem', textAlign: 'justify' }}>
-            Nuestro equipo combina experiencia avanzada en inteligencia artificial, desarrollo de
-            interfaces modernas y un profundo compromiso social para ofrecer una
+            Nuestro equipo combina tecnologia avanzada en inteligencia artificial, desarrollo de
+            interfaces modernas intentando que sea lo mas atracyiva y sencilla posible, tenemos un profundo compromiso social para ofrecer una
             herramienta tecnológica que no solo traduce, sino que conecta a las personas de manera genuina.
           </p>
           <p style={{ textAlign: 'justify' }}>
-            Utilizamos las últimas tecnologías en visión por computadora a través de MediaPipe
+            Utilizamos las últimas tecnologías en visión por computador traves de una web cam
             y redes neuronales procesadas en tiempo real para interpretar los complejos
-            gestos de la Lengua de Señas Mexicana (LSM) directamente en tu navegador.
+            gestos de la Lengua de Señas Mexicana (LSM) directamente en tu navegador sin que debas de tener conocimiento de LLM's o vison computacional.
           </p>
         </div>
       </div>

@@ -42,7 +42,7 @@ const Home = () => {
             </div>
             <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Estética Glassmorphism</h3>
             <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>
-              Diseño moderno, refinado y profesional. Disfruta de una experiencia visual impresionante tanto en modo claro como oscuro.
+              Diseño moderno, refinado y profesional. Disfruta de una  experiencia  sencilla e interactiva para poder eliminar las barreras de la comunicacion.
             </p>
           </div>
 

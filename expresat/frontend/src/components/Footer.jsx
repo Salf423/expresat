@@ -36,8 +36,8 @@ const Footer = () => {
           <h4 style={{ marginBottom: '1rem' }}>Contacto</h4>
           <p style={{ color: 'var(--text-muted)' }}>contacto@expresat.com</p>
           <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-            <a href="#" className="btn-outline" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>GitHub</a>
-            <a href="#" className="btn-outline" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>Twitter</a>
+            <a href="https://github.com/Salf423/expresat" className="btn-outline" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>GitHub</a>
+            <a href="https://instagram.com/somosexpresat?igsh=MTB5NTk2Z2xqNHNtcA" className="btn-outline" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>Instagram</a>
           </div>
         </div>
       </div>
