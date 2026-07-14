@@ -19,7 +19,7 @@ const Footer = () => {
             <img src={logoImg} alt="ExpresaT Logo" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
           </div>
           <p style={{ color: 'var(--text-muted)' }}>
-            Rompiendo barreras de comunicación con inteligencia artificial.
+            Rompiendo las barreras de la comunicacion con inovacion.
           </p>
         </div>
         
@@ -34,7 +34,7 @@ const Footer = () => {
         
         <div>
           <h4 style={{ marginBottom: '1rem' }}>Contacto</h4>
-          <p style={{ color: 'var(--text-muted)' }}>contacto@expresat.com</p>
+          <p style={{ color: 'var(--text-muted)' }}>infoexpresat@gmil.com</p>
           <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
             <a href="https://github.com/Salf423/expresat" className="btn-outline" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>GitHub</a>
             <a href="https://instagram.com/somosexpresat?igsh=MTB5NTk2Z2xqNHNtcA" className="btn-outline" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>Instagram</a>

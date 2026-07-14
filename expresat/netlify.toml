@@ -1,9 +1,8 @@
 [build]
   publish = "frontend"
-  # command = "npm run build" # Optional if you add a bundler later
+  command = "npm run build" 
 
-# Redirect for Single Page Application (SPA) routing
-[[redirects]]
+ [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
