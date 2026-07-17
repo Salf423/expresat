@@ -1,6 +1,6 @@
 # ExpresaT — Especificación Técnica del Backend (IA & Inferencia)
 
-Aquí se describe en detalle la arquitectura, el diseño de modelos y la lógica de inferencia del backend de **ExpresaT**, un traductor de Lengua de Señas en tiempo real optimizado para CPU.
+Aquí s muestran varios puntos clave de la funcionalidad de la aplicacion
 
 ---
 
@@ -9,7 +9,7 @@ Aquí se describe en detalle la arquitectura, el diseño de modelos y la lógica
 ### Flujo de Datos (Pipeline de Inferencia)
 1. **Ingesta**: Recepción de 15 frames (1 segundo de video a 15 FPS) vía WebSocket.
 2. **Preprocesamiento**: Extracción de 178 features y normalización relativa al cuerpo.
-3. **Inferencia**: Ejecución del modelo GRU cuantizado mediante **ONNX Runtime**.
+3. **Inferencia**: Ejecución del modelo GRU cuantizado medianteONNX Runtime.
 4. **Post-procesamiento**: Aplicación de Softmax y filtrado por umbral de confianza (Confidence Threshold).
 5. **Entrega**: Envío de la traducción resultante al cliente.
 
