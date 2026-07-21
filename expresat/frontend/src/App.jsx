@@ -7,15 +7,14 @@ import Translator from './pages/Translator';
 import Learn from './pages/Learn';
 import About from './pages/About';
 import Auth from './pages/Auth';
+import BackgroundParticles from './components/BackgroundParticles';
 import { ThemeProvider } from './context/ThemeContext';
 
 function App() {
   return (
     <ThemeProvider>
       <Router>
-        {/* Background Blobs for Glassmorphism aesthetic */}
-        <div className="bg-blob blob-1"></div>
-        <div className="bg-blob blob-2"></div>
+        <BackgroundParticles />
         
         <Navbar />
         <main>

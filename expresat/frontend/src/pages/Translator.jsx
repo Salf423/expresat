@@ -36,7 +36,11 @@ const Translator = () => {
       const engine = new MediaPipeEngine(videoRef.current, canvasRef.current, (landmarks) => {
         apiService.sendLandmarks(landmarks);
       });
-      
+
+      // Track FPS without breaking the original render loop
+      engine.frameCount = 0;
+      engine.lastFpsTime = performance.now();
+
       const originalRenderLoop = engine.renderLoop.bind(engine);
       engine.renderLoop = () => {
         engine.frameCount++;
@@ -46,7 +50,8 @@ const Translator = () => {
           engine.frameCount = 0;
           engine.lastFpsTime = now;
         }
-        window.requestAnimationFrame(() => engine.renderLoop());
+        // Call the original render loop so MediaPipe actually processes frames
+        originalRenderLoop();
       };
 
       engine.start();

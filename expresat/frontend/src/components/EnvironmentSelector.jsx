@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Server, ChevronDown } from 'lucide-react';
 
 const EnvironmentSelector = () => {
-  const [env, setEnv] = useState('Local');
+  const [env, setEnv] = useState(() => localStorage.getItem('apiEnv') || 'Local');
   const [isOpen, setIsOpen] = useState(false);
 
   const handleSelect = (selectedEnv) => {
