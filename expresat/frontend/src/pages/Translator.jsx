@@ -56,6 +56,9 @@ const Translator = () => {
 
       engine.start();
       engineRef.current = engine;
+      
+      // Dispatch event to pause background particles
+      window.dispatchEvent(new CustomEvent('camera-active', { detail: true }));
     }
 
     return () => {
@@ -65,6 +68,8 @@ const Translator = () => {
       if (engineRef.current && engineRef.current.camera) {
         engineRef.current.camera.stop();
       }
+      // Resume background particles when camera stops
+      window.dispatchEvent(new CustomEvent('camera-active', { detail: false }));
     };
   }, []);
 

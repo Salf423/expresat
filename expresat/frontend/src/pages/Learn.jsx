@@ -137,7 +137,7 @@ const Learn = () => {
       </div>
 
       {/* Group Modal */}
-      {selectedGroup && (
+      {selectedGroup && !selectedSign && (
         <div style={modalOverlayStyle} onClick={() => setSelectedGroup(null)}>
           <div 
             className="glass-panel animate-fade-in" 
@@ -190,17 +190,26 @@ const Learn = () => {
 
       {/* Sign Detail Modal */}
       {selectedSign && (
-        <div style={{...modalOverlayStyle, zIndex: 1100}} onClick={() => setSelectedSign(null)}>
+        <div style={{...modalOverlayStyle, zIndex: 9999}} onClick={() => { setSelectedSign(null); setSelectedGroup(null); }}>
           <div 
             className="glass-panel animate-fade-in" 
             style={{...modalContentStyle, maxWidth: '900px'}}
             onClick={(e) => e.stopPropagation()}
           >
-            <button style={closeBtnStyle} onClick={() => setSelectedSign(null)}>
+            {/* Botón Volver */}
+            <button 
+              style={{...closeBtnStyle, right: 'auto', left: '1.5rem', width: 'auto', padding: '0 1rem', gap: '0.5rem', borderRadius: '20px'}} 
+              onClick={() => setSelectedSign(null)}
+            >
+              <ArrowRight size={20} style={{ transform: 'rotate(180deg)' }} /> Volver
+            </button>
+
+            {/* Botón Cerrar Todo */}
+            <button style={closeBtnStyle} onClick={() => { setSelectedSign(null); setSelectedGroup(null); }}>
               <X size={24} />
             </button>
             
-            <h2 style={{ fontSize: '2.5rem', marginBottom: '1.5rem', textAlign: 'center', color: 'var(--accent-primary)' }}>
+            <h2 style={{ fontSize: '2.5rem', marginBottom: '1.5rem', marginTop: '2.5rem', textAlign: 'center', color: 'var(--accent-primary)' }}>
               {selectedSign.name}
             </h2>
 
@@ -296,13 +305,13 @@ const modalOverlayStyle = {
   left: 0,
   width: '100vw',
   height: '100vh',
-  background: 'rgba(0, 0, 0, 0.6)',
-  backdropFilter: 'blur(8px)',
-  WebkitBackdropFilter: 'blur(8px)',
+  background: 'rgba(0, 0, 0, 0.7)',
+  backdropFilter: 'blur(10px)',
+  WebkitBackdropFilter: 'blur(10px)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  zIndex: 1000,
+  zIndex: 9998,
   padding: '2rem'
 };
 

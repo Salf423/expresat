@@ -1,0 +1,49 @@
+# OS/System files
+.DS_Store
+Thumbs.db
+db.properties
+
+# IDEs/Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# Python - Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+ENV/local/
+pip-selfcheck.json
+
+# Python - Caches & Builds
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Local Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Supabase (if local configuration exists)
+.supabase/functions/.env
+
+# Node/Frontend (fallback if root is committed)
+node_modules/
+dist/
+dist-ssr/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Models / Large Weights (optional, uncomment if you don't want to track exported ONNX files in git)
+# models/exported_model/

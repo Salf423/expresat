@@ -4,13 +4,13 @@ import { AuthService } from '../services/authService';
 import logoImg from '../assets/logo.png';
 
 const Auth = () => {
-  const [mode, setMode] = useState('login'); // 'login', 'register', 'forgot'
+  const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  
+
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
@@ -77,7 +77,6 @@ const Auth = () => {
       } else if (mode === 'register') {
         await authService.register(email, password, fullName);
         setSuccess('¡Registro exitoso! Por favor revisa tu bandeja de entrada para confirmar tu correo electrónico.');
-        // Don't auto login, user needs to confirm email first in Supabase
         setMode('login');
       } else if (mode === 'forgot') {
         await authService.resetPassword(email);
@@ -134,13 +133,13 @@ const Auth = () => {
         )}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-          
+
           {mode === 'register' && (
             <div style={{ position: 'relative' }}>
               <User size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input 
-                type="text" 
-                placeholder="Nombre completo" 
+              <input
+                type="text"
+                placeholder="Nombre completo"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 style={{
@@ -154,9 +153,9 @@ const Auth = () => {
 
           <div style={{ position: 'relative' }}>
             <Mail size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-            <input 
-              type="email" 
-              placeholder="Correo electrónico" 
+            <input
+              type="email"
+              placeholder="Correo electrónico"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               style={{
@@ -170,9 +169,9 @@ const Auth = () => {
           {mode !== 'forgot' && (
             <div style={{ position: 'relative' }}>
               <Lock size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input 
-                type={showPassword ? 'text' : 'password'} 
-                placeholder="Contraseña" 
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Contraseña"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 style={{
@@ -181,7 +180,7 @@ const Auth = () => {
                   color: 'var(--text-color)', fontSize: '1rem', outline: 'none'
                 }}
               />
-              <button 
+              <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
@@ -206,9 +205,9 @@ const Auth = () => {
           {mode === 'register' && (
             <div style={{ position: 'relative' }}>
               <CheckCircle size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input 
-                type={showPassword ? 'text' : 'password'} 
-                placeholder="Confirmar contraseña" 
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Confirmar contraseña"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 style={{
@@ -222,7 +221,7 @@ const Auth = () => {
 
           {mode === 'login' && (
             <div style={{ textAlign: 'right', marginTop: '-0.5rem' }}>
-              <button 
+              <button
                 type="button"
                 onClick={() => { setMode('forgot'); setError(''); setSuccess(''); }}
                 style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.85rem' }}
@@ -234,23 +233,23 @@ const Auth = () => {
 
           <button type="submit" className="btn-primary" style={{ width: '100%', padding: '1rem', marginTop: '0.5rem', fontSize: '1rem', display: 'flex', justifyContent: 'center', gap: '0.5rem' }} disabled={loading}>
             {loading ? 'Procesando...' : (
-              mode === 'login' ? <><LogIn size={18} /> Iniciar Sesión</> : 
-              mode === 'register' ? <><UserPlus size={18} /> Registrarse</> : 
-              <><Mail size={18} /> Enviar enlace</>
+              mode === 'login' ? <><LogIn size={18} /> Iniciar Sesión</> :
+                mode === 'register' ? <><UserPlus size={18} /> Registrarse</> :
+                  <><Mail size={18} /> Enviar enlace</>
             )}
           </button>
         </form>
 
         <div style={{ textAlign: 'center', marginTop: '2rem' }}>
           {mode !== 'login' ? (
-            <button 
+            <button
               onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
               style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', margin: '0 auto' }}
             >
               <ArrowLeft size={16} /> Volver a Iniciar Sesión
             </button>
           ) : (
-            <button 
+            <button
               onClick={() => { setMode('register'); setError(''); setSuccess(''); }}
               style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'underline' }}
             >

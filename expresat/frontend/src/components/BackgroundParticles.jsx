@@ -50,8 +50,11 @@ const BackgroundParticles = () => {
     }
 
     let animationFrameId;
+    let isPaused = false;
 
     function animate() {
+      if (isPaused) return;
+
       ctx.clearRect(0, 0, width, height);
       particles.forEach(p => {
         p.update();
@@ -87,13 +90,30 @@ const BackgroundParticles = () => {
     const handleResize = () => {
       width = canvas.width = window.innerWidth;
       height = canvas.height = window.innerHeight;
+      if (isPaused) {
+        // Just redraw once without updating positions so it doesn't break on resize
+        ctx.clearRect(0, 0, width, height);
+        particles.forEach(p => p.draw());
+      }
+    };
+
+    const handleCameraActive = (e) => {
+      const wasPaused = isPaused;
+      isPaused = e.detail;
+      if (wasPaused && !isPaused) {
+        animate(); // Resume animation
+      } else if (!wasPaused && isPaused) {
+        cancelAnimationFrame(animationFrameId); // Stop animation
+      }
     };
 
     window.addEventListener('resize', handleResize);
+    window.addEventListener('camera-active', handleCameraActive);
 
     return () => {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('camera-active', handleCameraActive);
     };
   }, [theme]);
 
