@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -8,11 +9,11 @@ const BackgroundParticles = () => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     let width = canvas.width = window.innerWidth;
     let height = canvas.height = window.innerHeight;
-    
+
     const isDark = theme === 'dark';
     const particles = [];
     const particleCount = window.innerWidth < 768 ? 40 : 100;
@@ -24,7 +25,7 @@ const BackgroundParticles = () => {
         this.vx = (Math.random() - 0.5) * 0.5;
         this.vy = (Math.random() - 0.5) * 0.5;
         this.size = Math.random() * 2 + 1;
-        
+
         if (isDark) {
           this.color = Math.random() > 0.5 ? 'rgba(0, 243, 255, 0.4)' : 'rgba(157, 78, 221, 0.4)';
         } else {
@@ -50,29 +51,26 @@ const BackgroundParticles = () => {
     }
 
     let animationFrameId;
-    let isPaused = false;
 
     function animate() {
-      if (isPaused) return;
-
       ctx.clearRect(0, 0, width, height);
       particles.forEach(p => {
         p.update();
         p.draw();
       });
-      
-      for(let i=0; i<particles.length; i++) {
-        for(let j=i+1; j<particles.length; j++) {
+
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
           let dx = particles[i].x - particles[j].x;
           let dy = particles[i].y - particles[j].y;
-          let dist = Math.sqrt(dx*dx + dy*dy);
-          if(dist < 120) {
+          let dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 120) {
             if (isDark) {
-              ctx.strokeStyle = `rgba(255,255,255, ${Math.max(0, 0.4 - dist/300)})`;
+              ctx.strokeStyle = `rgba(255,255,255, ${Math.max(0, 0.4 - dist / 300)})`;
               ctx.lineWidth = 1;
             } else {
               // High-opacity purple lines for strong contrast on white background
-              ctx.strokeStyle = `rgba(114, 9, 183, ${Math.max(0, 0.85 - dist/150)})`;
+              ctx.strokeStyle = `rgba(114, 9, 183, ${Math.max(0, 0.85 - dist / 150)})`;
               ctx.lineWidth = 1.2;
             }
             ctx.beginPath();
@@ -84,52 +82,35 @@ const BackgroundParticles = () => {
       }
       animationFrameId = requestAnimationFrame(animate);
     }
-    
+
     animate();
 
     const handleResize = () => {
       width = canvas.width = window.innerWidth;
       height = canvas.height = window.innerHeight;
-      if (isPaused) {
-        // Just redraw once without updating positions so it doesn't break on resize
-        ctx.clearRect(0, 0, width, height);
-        particles.forEach(p => p.draw());
-      }
-    };
-
-    const handleCameraActive = (e) => {
-      const wasPaused = isPaused;
-      isPaused = e.detail;
-      if (wasPaused && !isPaused) {
-        animate(); // Resume animation
-      } else if (!wasPaused && isPaused) {
-        cancelAnimationFrame(animationFrameId); // Stop animation
-      }
     };
 
     window.addEventListener('resize', handleResize);
-    window.addEventListener('camera-active', handleCameraActive);
 
     return () => {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('camera-active', handleCameraActive);
     };
   }, [theme]);
 
   return (
-    <canvas 
-      id="bg" 
-      ref={canvasRef} 
-      style={{ 
-        position: 'fixed', 
-        top: 0, 
-        left: 0, 
-        width: '100vw', 
-        height: '100vh', 
-        zIndex: -1, 
-        pointerEvents: 'none', 
-        backgroundColor: 'var(--bg)' 
+    <canvas
+      id="bg"
+      ref={canvasRef}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        zIndex: -1,
+        pointerEvents: 'none',
+        backgroundColor: 'var(--bg)'
       }}
     />
   );

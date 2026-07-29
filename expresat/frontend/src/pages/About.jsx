@@ -466,7 +466,7 @@ const About = () => {
         <div style={{ color: 'var(--text-muted)', fontSize: '1.15rem', lineHeight: '1.8' }}>
           <p style={{ marginBottom: '1.5rem', textAlign: 'justify' }}>
             <strong style={{ color: 'var(--text-color)' }}>ExpresaT</strong> nació con la visión de derribar las barreras de
-            comunicación para la comunidadcon dicapacidades auditivas o prblemas del habla en México y el mundo, esto gracias a
+            comunicación para la comunida con dicapacidades auditivas o prblemas del habla en México y el mundo, esto gracias a
             nuestro apasionado equipo de desarrollo.
           </p>
           <p style={{ marginBottom: '1.5rem', textAlign: 'justify' }}>

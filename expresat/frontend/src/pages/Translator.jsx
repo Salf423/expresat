@@ -16,7 +16,9 @@ const Translator = () => {
 
   useEffect(() => {
     const env = localStorage.getItem('apiEnv') || 'Local';
-    const wsUrl = env === 'Local' ? 'ws://127.0.0.1:8000/ws' : 'wss://api.expresat.cloud/ws';
+    const wsUrl = env === 'Local' 
+      ? (import.meta.env.VITE_WS_URL_LOCAL || 'ws://127.0.0.1:8000/ws') 
+      : (import.meta.env.VITE_WS_URL_PROD || 'wss://api.expresat.cloud/ws');
 
     const apiService = new ApiService(wsUrl);
     apiRef.current = apiService;

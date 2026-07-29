@@ -1,23 +1,22 @@
 # ==============================================================================
-# Netlify Configuration - Expresat Frontend (React + Vite)
+# Netlify Configuration - Root Repository Level
 # ==============================================================================
 
 [build]
-  # Directorio base del frontend (relativo al directorio del proyecto expresat)
-  base = "frontend"
+  # Ubicación del módulo frontend desde la raíz del repositorio Git
+  base = "expresat/frontend"
   
-  # Comando de build de Vite
+  # Comando de compilación de Vite
   command = "npm run build"
   
-  # Directorio de distribución generado por Vite
+  # Carpeta generada por Vite (relativa a base: expresat/frontend/dist)
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "20"
 
 # ------------------------------------------------------------------------------
-# SPA Client-Side Routing (React Router DOM)
-# Redirecciona todas las peticiones HTML al entrypoint index.html
+# Redirección SPA para React Router DOM
 # ------------------------------------------------------------------------------
 [[redirects]]
   from = "/*"
@@ -25,16 +24,7 @@
   status = 200
 
 # ------------------------------------------------------------------------------
-# Proxy de WebSocket / API al backend FastAPI (Descomentar si se requiere proxy en mismo dominio)
-# ------------------------------------------------------------------------------
-# [[redirects]]
-#   from = "/ws/*"
-#   to = "wss://api.expresat.cloud/ws/:splat"
-#   status = 200
-#   force = true
-
-# ------------------------------------------------------------------------------
-# Cabeceras de Seguridad y Optimización de Caché
+# Cabeceras de Seguridad y Permisos
 # ------------------------------------------------------------------------------
 [[headers]]
   for = "/*"
@@ -43,11 +33,9 @@
     X-Content-Type-Options = "nosniff"
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    # Permiso explícito de cámara para reconocimiento gestual con MediaPipe
     Permissions-Policy = "camera=(self), microphone=()"
 
 [[headers]]
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
-
