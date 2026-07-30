@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
             dropdownMenu.classList.toggle('active');
         });
 
-        // Cerrar al hacer clic fuera
+        // Close when clicking outside
         document.addEventListener('click', (e) => {
             if (!userAvatar.contains(e.target) && !dropdownMenu.contains(e.target)) {
                 dropdownMenu.classList.remove('active');
@@ -28,11 +28,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const authWrapper = document.getElementById('nav-auth-wrapper');
     
     /**
-     * Actualiza el estado visual de la barra de navegación según la sesión del usuario.
-     * Decisión: Esta función se expone globalmente para ser invocada desde auth_service.js 
-     * o app.js cuando el estado de autenticación cambia, desacoplando la lógica de auth de la UI.
-     * @param {boolean} isLoggedIn - Indica si hay una sesión activa.
-     * @param {string} userLetter - Inicial del usuario para mostrar en el avatar.
+     * Updates the visual state of the navigation bar based on the user session.
+     * Decision: This function is exposed globally to be invoked from auth_service.js 
+     * or app.js when the authentication state changes, decoupling auth logic from the UI.
+     * @param {boolean} isLoggedIn - Indicates if there is an active session.
+     * @param {string} userLetter - User initial to display in the avatar.
      */
     window.updateNavbarAuthState = (isLoggedIn, userLetter = 'U') => {
         if(isLoggedIn) {

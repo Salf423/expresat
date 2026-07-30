@@ -1,17 +1,17 @@
 """
-main.py — ExpresaT: Servidor FastAPI con WebSocket
+main.py — ExpresaT: FastAPI Server with WebSocket
 ==================================================================================
-Servidor de producción que gestiona:
-  - Endpoint WebSocket /ws/translate para recepción de lotes de landmarks
-  - Pipeline asíncrono de inferencia (no bloquea el event loop)
-  - Autenticación JWT vía Supabase
-  - Health checks y métricas de latencia
+Production server that handles:
+  - WebSocket endpoint /ws/translate for receiving batches of landmarks
+  - Asynchronous inference pipeline (does not block the event loop)
+  - JWT Authentication via Supabase
+  - Health checks and latency metrics
 
-Ejecución:
+Execution:
     uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 
-    NOTA: --workers 1 porque el modelo ONNX se carga una sola vez en memoria.
-    Para escalar horizontalmente, usar múltiples instancias detrás de un load balancer.
+    NOTE: --workers 1 because the ONNX model is loaded into memory only once.
+    To scale horizontally, use multiple instances behind a load balancer.
 """
 
 import asyncio
@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # =============================================================================
-# VARIABLES DE ENTORNO
+# ENVIRONMENT VARIABLES
 # =============================================================================
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://your-project.supabase.co")
@@ -44,41 +44,41 @@ CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
 # INFERENCE ENGINE — Singleton 
 # =============================================================================
 
-# Referencia global al motor de inferencia
+# Global reference to the inference engine
 _inference_engine = None
 
 
 def get_inference_engine():
-    """Getter para acceder al motor de inferencia desde cualquier handler."""
+    """Getter to access the inference engine from any handler."""
     global _inference_engine
     return _inference_engine
 
 
 # =============================================================================
-# LIFESPAN — Inicialización y limpieza del servidor
+# LIFESPAN — Server initialization and cleanup
 # =============================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Gestiona el ciclo de vida del servidor.
-    Se ejecuta al iniciar (startup) y al apagar (shutdown).
+    Manages the server lifecycle.
+    Executes on startup and shutdown.
 
-    Decisión: Usamos lifespan en lugar de @app.on_event porque
-    on_event está deprecated desde FastAPI 0.109+
+    Decision: We use lifespan instead of @app.on_event because
+    on_event is deprecated since FastAPI 0.109+
     """
     global _inference_engine
 
     print("\n" + "=" * 60)
-    print("  ExpresaT Backend — Iniciando servidor...")
+    print("  ExpresaT Backend — Starting server...")
     print("=" * 60)
 
-    # --- Cargar motor de inferencia ---
+    # --- Load inference engine ---
     try:
         from models.inference_engine import InferenceEngine
 
         model_path = os.path.abspath(MODEL_DIR)
-        print(f"\n  Modelo: {model_path}")
+        print(f"\n  Model: {model_path}")
 
         _inference_engine = InferenceEngine(
             model_dir=model_path,
@@ -86,41 +86,41 @@ async def lifespan(app: FastAPI):
         )
 
         engine_info = _inference_engine.get_info()
-        print(f"   Motor: {engine_info['engine']}")
-        print(f"   Modelo: {engine_info['model_file']} ({engine_info['model_size_kb']} KB)")
-        print(f"   Clases: {engine_info['num_classes']}")
-        print(f"   Motor de inferencia listo.\n")
+        print(f"   Engine: {engine_info['engine']}")
+        print(f"   Model: {engine_info['model_file']} ({engine_info['model_size_kb']} KB)")
+        print(f"   Classes: {engine_info['num_classes']}")
+        print(f"   Inference engine ready.\n")
 
     except FileNotFoundError as e:
-        print(f"\n   ADVERTENCIA: {e}")
-        print(f"     El servidor arrancará en modo MOCK (sin modelo real).\n")
+        print(f"\n   WARNING: {e}")
+        print(f"     Server will start in MOCK mode (no real model).\n")
         _inference_engine = None
 
     except Exception as e:
-        print(f"\n Error cargando motor de inferencia: {e}")
-        print(f"   El servidor arrancará en modo MOCK.\n")
+        print(f"\n Error loading inference engine: {e}")
+        print(f"   Server will start in MOCK mode.\n")
         _inference_engine = None
 
-    yield  # El servidor está corriendo aquí
+    yield  # Server is running here
 
     # --- Shutdown ---
-    print("\n ExpresaT Backend — Apagando...")
+    print("\n ExpresaT Backend — Shutting down...")
     _inference_engine = None
-    print("  Recursos liberados.\n")
+    print("  Resources released.\n")
 
 
 # =============================================================================
-# APLICACIÓN FASTAPI
+# FASTAPI APPLICATION
 # =============================================================================
 
 app = FastAPI(
     title="ExpresaT API V2",
-    description="Backend de traducción de Lengua de Señas en tiempo real",
+    description="Real-time Sign Language Translation Backend",
     version="2.0.0",
     lifespan=lifespan
 )
 
-# CORS — En producción, restringir a los dominios de Netlify
+# CORS — In production, restrict to Netlify domains
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
@@ -131,12 +131,12 @@ app.add_middleware(
 
 
 # =============================================================================
-# CONNECTION MANAGER — Gestión de WebSockets activos
+# CONNECTION MANAGER — Active WebSockets management
 # =============================================================================
 
 class ConnectionManager:
     """
-    Gestiona las conexiones WebSocket activas.
+    Manages active WebSocket connections.
     """
 
     def __init__(self):
@@ -145,15 +145,15 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        print(f"  Cliente conectado. Total activos: {len(self.active_connections)}")
+        print(f"  Client connected. Total active: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-        print(f"  Cliente desconectado. Total activos: {len(self.active_connections)}")
+        print(f"  Client disconnected. Total active: {len(self.active_connections)}")
 
     async def send_personal(self, message: dict, websocket: WebSocket):
-        """Envía un mensaje JSON a un cliente específico."""
+        """Sends a JSON message to a specific client."""
         await websocket.send_json(message)
 
 
@@ -161,40 +161,40 @@ manager = ConnectionManager()
 
 
 # =============================================================================
-# THREAD POOL EXECUTOR — Para offload de inferencia síncrona
+# THREAD POOL EXECUTOR — For synchronous inference offloading
 # =============================================================================
 
-# asyncio.to_thread() se usará este executor internamente
-# Esto evita que la inferencia ONNX bloquee el event loop de asyncio
+# asyncio.to_thread() will use this executor internally
+# This prevents the ONNX inference from blocking the asyncio event loop
 
 async def run_inference_async(frames: list[dict]) -> dict:
     """
-    Ejecuta la inferencia en un thread separado para no bloquear el event loop.
+    Executes inference in a separate thread to avoid blocking the event loop.
 
-    Decisión de diseño: Usamos asyncio.to_thread() en lugar de
-    ProcessPoolExecutor porque:
-      1. El modelo ONNX ya es thread-safe internamente
-      2. Evita serialización/deserialización de datos entre procesos
-      3. Menor overhead de memoria (no duplica el modelo)
-      4. Suficiente para modelos ultra-ligeros (< 10ms de inferencia)
+    Design decision: We use asyncio.to_thread() instead of
+    ProcessPoolExecutor because:
+      1. The ONNX model is already thread-safe internally
+      2. Avoids serialization/deserialization of data between processes
+      3. Lower memory overhead (doesn't duplicate the model)
+      4. Sufficient for ultra-light models (< 10ms inference)
 
-    Para modelos más pesados, considerar ProcessPoolExecutor.
+    For heavier models, consider ProcessPoolExecutor.
     """
     engine = get_inference_engine()
 
     if engine is None:
-        # Modo mock cuando no hay modelo cargado
+        # Mock mode when no model is loaded
         return _mock_inference(frames)
 
-    # Offload la inferencia síncrona a un thread del pool
+    # Offload synchronous inference to a pool thread
     result = await asyncio.to_thread(engine.predict, frames)
     return result
 
 
 def _mock_inference(frames: list[dict]) -> dict:
     """
-    Inferencia mock para desarrollo/testing cuando no hay modelo entrenado.
-    Simula una predicción con latencia realista.
+    Mock inference for development/testing when there is no trained model.
+    Simulates a prediction with realistic latency.
     """
     import random
 
@@ -211,20 +211,20 @@ def _mock_inference(frames: list[dict]) -> dict:
 
 
 # =============================================================================
-# SUPABASE AUTH — Verificación de JWT
+# SUPABASE AUTH — JWT Verification
 # =============================================================================
 
 def verify_supabase_token(token: str) -> Optional[dict]:
     """
-    Verifica un JWT token de Supabase.
+    Verifies a Supabase JWT token.
 
-    En producción: descomentar la verificación real con el cliente Supabase.
-    En desarrollo: acepta cualquier token no vacío.
+    In production: uncomment the real verification with the Supabase client.
+    In development: accepts any non-empty token.
     """
     if not token:
         return None
 
-    # --- PRODUCCIÓN: Descomentar este bloque para conectar todo a la DB ---
+    # --- PRODUCTION: Uncomment this block to connect everything to the DB ---
     # try:
     #     from supabase import create_client
     #     supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -235,7 +235,7 @@ def verify_supabase_token(token: str) -> Optional[dict]:
     # except Exception:
     #     return None
 
-    # --- DESARROLLO: Aceptar cualquier token ---
+    # --- DEVELOPMENT: Accept any token ---
     return {"id": "dev-user", "email": "dev@expresat.local"}
 
 
@@ -246,73 +246,73 @@ def verify_supabase_token(token: str) -> Optional[dict]:
 @app.websocket("/ws/translate")
 async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
     """
-    Endpoint WebSocket principal para traducción de señas en tiempo real.
+    Main WebSocket endpoint for real-time sign language translation.
 
-    Protocolo de mensajes:
-        Cliente → Servidor:
+    Message protocol:
+        Client → Server:
             {"type": "ping"}
             {"type": "inference", "payload": [frame1, frame2, ..., frame15]}
             {"type": "inference", "payload": single_frame_dict}
 
-        Servidor → Cliente:
+        Server → Client:
             {"type": "pong"}
             {"type": "translation", "payload": {...}}
-            {"type": "error", "payload": "mensaje de error"}
+            {"type": "error", "payload": "error message"}
 
-    El endpoint soporta dos modos de envío:
-      1. Batch mode: El frontend envía 15 frames de golpe (óptimo)
-      2. Stream mode: El frontend envía frame por frame y el backend
-         acumula internamente hasta tener 15 (compatible con versión anterior)
+    The endpoint supports two delivery modes:
+      1. Batch mode: The frontend sends 15 frames at once (optimal)
+      2. Stream mode: The frontend sends frame by frame and the backend
+         accumulates internally until it has 15 (compatible with previous version)
     """
-    # --- Verificar autenticación ---
+    # --- Verify authentication ---
     user = verify_supabase_token(token)
     if not user:
-        await websocket.close(code=1008, reason="Token inválido o faltante")
+        await websocket.close(code=1008, reason="Invalid or missing token")
         return
 
-    # --- Aceptar conexión ---
+    # --- Accept connection ---
     await manager.connect(websocket)
 
-    # Buffer de frames para modo stream (acumulación frame-a-frame)
+    # Frame buffer for stream mode (frame-by-frame accumulation)
     frame_buffer: list[dict] = []
 
     try:
         while True:
-            # Recibir mensaje JSON del cliente
+            # Receive JSON message from client
             data = await websocket.receive_json()
             msg_type = data.get("type")
 
-            # ----- PING/PONG para latencia -----
+            # ----- PING/PONG for latency -----
             if msg_type == "ping":
                 await manager.send_personal({"type": "pong"}, websocket)
 
-            # ----- INFERENCIA -----
+            # ----- INFERENCE -----
             elif msg_type == "inference":
                 payload = data.get("payload")
 
                 if payload is None:
                     await manager.send_personal({
                         "type": "error",
-                        "payload": "Payload vacío en mensaje de inferencia"
+                        "payload": "Empty payload in inference message"
                     }, websocket)
                     continue
 
-                # Detectar modo: batch (lista de frames) vs stream (frame individual)
+                # Detect mode: batch (list of frames) vs stream (single frame)
                 if isinstance(payload, list):
                     # ===== BATCH MODE =====
-                    # El frontend envió un lote completo de 15 frames
+                    # The frontend sent a full batch of 15 frames
                     frames_to_process = payload
 
                 elif isinstance(payload, dict):
-                    # ===== STREAM MODE (retrocompatible) =====
-                    # El frontend envía un frame a la vez
+                    # ===== STREAM MODE (backward compatible) =====
+                    # The frontend sends one frame at a time
                     frame_buffer.append(payload)
 
-                    # Mantener buffer en máximo SEQUENCE_LENGTH frames
+                    # Keep buffer at maximum SEQUENCE_LENGTH frames
                     if len(frame_buffer) > 15:
                         frame_buffer = frame_buffer[-15:]
 
-                    # Solo inferir cuando tenemos el buffer lleno
+                    # Only infer when we have a full buffer
                     if len(frame_buffer) < 15:
                         continue
 
@@ -322,15 +322,15 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                 else:
                     await manager.send_personal({
                         "type": "error",
-                        "payload": "Formato de payload inválido"
+                        "payload": "Invalid payload format"
                     }, websocket)
                     continue
 
-                # --- Ejecutar inferencia asíncrona ---
+                # --- Execute asynchronous inference ---
                 try:
                     result = await run_inference_async(frames_to_process)
 
-                    # Solo enviar traducción si la confianza supera el threshold
+                    # Only send translation if confidence exceeds threshold
                     if result.get("label") is not None:
                         await manager.send_personal({
                             "type": "translation",
@@ -338,17 +338,17 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                         }, websocket)
 
                 except Exception as e:
-                    print(f"  Error en inferencia: {e}")
+                    print(f"  Inference error: {e}")
                     await manager.send_personal({
                         "type": "error",
-                        "payload": f"Error en inferencia: {str(e)}"
+                        "payload": f"Inference error: {str(e)}"
                     }, websocket)
 
-            # ----- MENSAJE DESCONOCIDO -----
+            # ----- UNKNOWN MESSAGE -----
             else:
                 await manager.send_personal({
                     "type": "error",
-                    "payload": f"Tipo de mensaje desconocido: {msg_type}"
+                    "payload": f"Unknown message type: {msg_type}"
                 }, websocket)
 
     except WebSocketDisconnect:
@@ -359,26 +359,26 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
 
 
 # =============================================================================
-# ENDPOINT LEGACY — /ws
+# LEGACY ENDPOINT — /ws
 # =============================================================================
 
 @app.websocket("/ws")
 async def websocket_legacy(websocket: WebSocket, token: str = Query(None)):
     """
-    Endpoint legacy que redirige al nuevo /ws/translate.
-    Mantiene compatibilidad con el frontend existente que usa /ws.
+    Legacy endpoint that redirects to the new /ws/translate.
+    Maintains compatibility with existing frontend that uses /ws.
     """
-    # Reusar la misma lógica del endpoint principal
+    # Reuse the same logic from the main endpoint
     await websocket_translate(websocket, token)
 
 
 # =============================================================================
-# REST ENDPOINTS — Health checks y utilidades
+# REST ENDPOINTS — Health checks and utilities
 # =============================================================================
 
 @app.get("/")
 async def health_check():
-    """Health check básico del servidor."""
+    """Basic server health check."""
     engine = get_inference_engine()
     return {
         "status": "ok",
@@ -389,7 +389,7 @@ async def health_check():
 
 @app.get("/health")
 async def detailed_health():
-    """Health check detallado con información del modelo."""
+    """Detailed health check with model information."""
     engine = get_inference_engine()
 
     response = {
@@ -401,22 +401,22 @@ async def detailed_health():
     if engine:
         response["model"] = engine.get_info()
     else:
-        response["model"] = {"status": "mock_mode", "reason": "Modelo no cargado"}
+        response["model"] = {"status": "mock_mode", "reason": "Model not loaded"}
 
     return response
 
 
 @app.get("/labels")
 async def get_labels():
-    """Retorna las etiquetas/señas que el modelo puede reconocer."""
+    """Returns the labels/signs that the model can recognize."""
     engine = get_inference_engine()
     if engine:
         return {"labels": engine.labels, "count": engine.num_classes}
-    return {"labels": [], "count": 0, "message": "Modelo no cargado"}
+    return {"labels": [], "count": 0, "message": "Model not loaded"}
 
 
 # =============================================================================
-# EJECUCIÓN DIRECTA
+# DIRECT EXECUTION
 # =============================================================================
 
 if __name__ == "__main__":
@@ -425,13 +425,13 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
 
-    print(f"\n Iniciando servidor en {host}:{port}")
+    print(f"\n Starting server at {host}:{port}")
     uvicorn.run(
         "main:app",
         host=host,
         port=port,
-        reload=True,          # Hot-reload en desarrollo
+        reload=True,          # Hot-reload in development
         log_level="info",
-        ws_ping_interval=30,  # Ping automático cada 30s para mantener conexión
-        ws_ping_timeout=10,   # Timeout de pong
+        ws_ping_interval=30,  # Automatic ping every 30s to keep connection alive
+        ws_ping_timeout=10,   # Pong timeout
     )

@@ -3,7 +3,7 @@ import { ApiService } from './api_service.js';
 import { MediaPipeEngine } from './mediapipe_engine.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // Componentes del DOM
+    // DOM Components
     const authOverlay = document.getElementById('auth-overlay');
     const mainApp = document.getElementById('main-app');
     const authForm = document.getElementById('auth-form');
@@ -15,16 +15,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const wsStatus = document.getElementById('ws-status');
     const translationText = document.getElementById('translation-text');
     
-    // Configuración Inicial
+    // Initial Configuration
     const authService = new AuthService();
-    // Cambiar por URL real del backend FastAPI
+    // Change to real FastAPI backend URL
     const apiService = new ApiService('ws://127.0.0.1:8000/ws'); 
     let mediaPipeEngine = null;
 
     /**
-     * Middleware de Autenticación: Verifica si existe una sesión válida al cargar la aplicación.
-     * Decisión: Se intenta obtener la sesión de Supabase de forma asíncrona. Si falla o no existe,
-     * se redirige visualmente al usuario a la pantalla de autenticación.
+     * Authentication Middleware: Checks if a valid session exists when loading the app.
+     * Decision: Attempts to get the Supabase session asynchronously. If it fails or doesn't exist,
+     * it visually redirects the user to the authentication screen.
      */
     const checkAuth = async () => {
         try {
@@ -49,30 +49,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     /**
-     * Prepara y muestra la aplicación principal una vez autenticado el usuario.
-     * Acciones: Oculta el overlay de login, inicia la conexión WebSocket y arranca
-     * el motor de MediaPipe para la detección de señas.
-     * @param {string} token - JWT Token para la conexión WebSocket.
+     * Prepares and shows the main application once the user is authenticated.
+     * Actions: Hides the login overlay, starts the WebSocket connection, and starts
+     * the MediaPipe engine for sign detection.
+     * @param {string} token - JWT Token for the WebSocket connection.
      */
     const showApp = (token) => {
         authOverlay.classList.remove('active');
         authOverlay.classList.add('hidden');
         mainApp.classList.remove('hidden');
 
-        // Iniciar WebSockets
+        // Start WebSockets
         apiService.connect(token);
         
-        // Iniciar MediaPipe si no ha iniciado
+        // Start MediaPipe if not started
         if (!mediaPipeEngine) {
             const videoEl = document.getElementById('input-video');
             const canvasEl = document.getElementById('output-canvas');
             
-            // Ajustar canvas internamente
+            // Adjust canvas internally
             canvasEl.width = 640;
             canvasEl.height = 480;
 
             mediaPipeEngine = new MediaPipeEngine(videoEl, canvasEl, (landmarks) => {
-                // Enviar datos al backend 
+                // Send data to backend 
                 apiService.sendLandmarks(landmarks);
             });
             mediaPipeEngine.start();
@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     /**
-     * Muestra la pantalla de autenticación y oculta la aplicación principal.
+     * Shows the authentication screen and hides the main application.
      */
     const showAuth = () => {
         authOverlay.classList.add('active');
@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainApp.classList.add('hidden');
     };
 
-    // --- EVENTOS UI ---
+    // --- UI EVENTS ---
     authForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         authError.classList.add('hidden');
@@ -121,11 +121,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     logoutBtn.addEventListener('click', async () => {
         await authService.logout();
-        // Recargar para limpiar estados
+        // Reload to clear states
         window.location.reload(); 
     });
 
-    // --- EVENTOS API (WEBSOCKETS) ---
+    // --- API EVENTS (WEBSOCKETS) ---
     apiService.onStatusChange((text, className) => {
         wsStatus.innerText = text;
         wsStatus.className = `indicator ${className}`;
@@ -135,6 +135,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         translationText.innerText = translation;
     });
 
-    // Inicializar app verificando sesión
+    // Initialize app by checking session
     checkAuth();
 });

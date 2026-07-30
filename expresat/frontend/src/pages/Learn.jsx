@@ -196,7 +196,7 @@ const Learn = () => {
             style={{...modalContentStyle, maxWidth: '900px'}}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Botón Volver */}
+            {/* Back Button */}
             <button 
               style={{...closeBtnStyle, right: 'auto', left: '1.5rem', width: 'auto', padding: '0 1rem', gap: '0.5rem', borderRadius: '20px'}} 
               onClick={() => setSelectedSign(null)}
@@ -204,7 +204,7 @@ const Learn = () => {
               <ArrowRight size={20} style={{ transform: 'rotate(180deg)' }} /> Volver
             </button>
 
-            {/* Botón Cerrar Todo */}
+            {/* Close All Button */}
             <button style={closeBtnStyle} onClick={() => { setSelectedSign(null); setSelectedGroup(null); }}>
               <X size={24} />
             </button>

@@ -37,7 +37,7 @@ class ConnectionManager:
             translation_result = self.predictor.process_frame(landmarks)
             
             if translation_result:
-                # Si el modelo determinó que la seña está completa y devolvió una palabra
+                # If the model determined that the sign is complete and returned a word
                 await self.send_personal_message({
                     'type': 'translation',
                     'payload': translation_result

@@ -1,9 +1,9 @@
 export class MediaPipeEngine {
     /**
-     * Inicializa el motor de detección de MediaPipe Holistic.
-     * @param {HTMLVideoElement} videoElement - Elemento de video fuente.
-     * @param {HTMLCanvasElement} canvasElement - Canvas donde se dibujarán los resultados.
-     * @param {Function} onBatchReady - Callback para enviar los landmarks detectados.
+     * Initializes the MediaPipe Holistic detection engine.
+     * @param {HTMLVideoElement} videoElement - Source video element.
+     * @param {HTMLCanvasElement} canvasElement - Canvas where results will be drawn.
+     * @param {Function} onBatchReady - Callback to send detected landmarks.
      */
     constructor(videoElement, canvasElement, onBatchReady) {
         this.videoElement = videoElement;
@@ -46,7 +46,7 @@ export class MediaPipeEngine {
     }
 
     /**
-     * Inicia la captura de cámara y el bucle de renderizado visual.
+     * Starts the camera capture and visual rendering loop.
      */
     start() {
         this.camera.start();
@@ -55,9 +55,9 @@ export class MediaPipeEngine {
 
 
     /**
-     * Bucle de renderizado independiente para estadísticas (FPS).
-     * Decisión: Se usa requestAnimationFrame para asegurar que el contador se actualice fluidamente
-     * sin importar el procesamiento de la cámara.
+     * Independent rendering loop for statistics (FPS).
+     * Decision: requestAnimationFrame is used to ensure the counter updates smoothly
+     * regardless of camera processing.
      */
     renderLoop() {
 
@@ -74,10 +74,10 @@ export class MediaPipeEngine {
     }
 
     /**
-     * Procesa los resultados de MediaPipe y los dibuja en el canvas.
-     * Decisión: Se dibujan conectores y puntos clave (pose y manos) con colores
-     * específicos para dar feedback visual inmediato al usuario.
-     * @param {Object} results - Los resultados devueltos por el modelo Holistic.
+     * Processes MediaPipe results and draws them on the canvas.
+     * Decision: Connectors and keypoints (pose and hands) are drawn with specific
+     * colors to provide immediate visual feedback to the user.
+     * @param {Object} results - The results returned by the Holistic model.
      */
     onResults(results) {
         this.canvasCtx.save();
@@ -106,11 +106,11 @@ export class MediaPipeEngine {
     }
 
     /**
-     * Extrae y normaliza las coordenadas de los landmarks de interés.
-     * Decisión: Solo se extraen X, Y, Z para reducir el tamaño del payload JSON
-     * enviado por WebSocket.
-     * @param {Object} results - Resultados crudos de MediaPipe.
-     * @returns {Object} Un objeto estructurado con pose, mano izquierda y mano derecha.
+     * Extracts and normalizes the coordinates of the landmarks of interest.
+     * Decision: Only X, Y, Z are extracted to reduce the size of the JSON payload
+     * sent via WebSocket.
+     * @param {Object} results - Raw MediaPipe results.
+     * @returns {Object} A structured object with pose, left hand, and right hand.
      */
     extractLandmarks(results) {
 

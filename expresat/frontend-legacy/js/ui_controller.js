@@ -1,5 +1,5 @@
 // ui_controller.js
-// Maneja Partículas del fondo y animaciones ScrollReveal
+// Handles background particles and ScrollReveal animations
 
 document.addEventListener('DOMContentLoaded', () => {
     initParticles();
@@ -7,10 +7,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /**
- * Inicializa el sistema de partículas de fondo en el canvas.
- * Decisión: Se utiliza un canvas 2D para renderizar partículas dinámicas que reaccionan al tamaño de la pantalla.
- * El número de partículas se reduce en dispositivos móviles para optimizar el rendimiento de la CPU/GPU.
- * Incluye un efecto de conexiones (nodos) que aparecen cuando las partículas están cerca.
+ * Initializes the background particle system on the canvas.
+ * Decision: A 2D canvas is used to render dynamic particles that react to screen size.
+ * The number of particles is reduced on mobile devices to optimize CPU/GPU performance.
+ * Includes a connection (nodes) effect that appears when particles are close.
  */
 function initParticles() {
     const canvas = document.getElementById('bg');
@@ -30,7 +30,7 @@ function initParticles() {
             this.vx = (Math.random() - 0.5) * 0.5;
             this.vy = (Math.random() - 0.5) * 0.5;
             this.size = Math.random() * 2 + 1;
-            // Mezcla de cian y purpura
+            // Cyan and purple mix
             this.color = Math.random() > 0.5 ? 'rgba(0, 243, 255, 0.4)' : 'rgba(157, 78, 221, 0.4)';
         }
         update() {
@@ -58,7 +58,7 @@ function initParticles() {
             p.draw();
         });
         
-        // Dibujar conexiones tenues
+        // Draw faint connections
         for(let i=0; i<particles.length; i++) {
             for(let j=i+1; j<particles.length; j++) {
                 let dx = particles[i].x - particles[j].x;
@@ -86,10 +86,10 @@ function initParticles() {
 }
 
 /**
- * Configura las animaciones de revelación al hacer scroll.
- * Decisión: Se utiliza IntersectionObserver por su alta eficiencia en comparación
- * con escuchar el evento 'scroll' directamente. Activa la clase 'active' cuando
- * el elemento entra un 10% en el viewport.
+ * Configures scroll reveal animations.
+ * Decision: IntersectionObserver is used for its high efficiency compared
+ * to listening to the 'scroll' event directly. Activates the 'active' class when
+ * the element enters 10% into the viewport.
  */
 function initScrollReveal() {
     const reveals = document.querySelectorAll('.reveal');
