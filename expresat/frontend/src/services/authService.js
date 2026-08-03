@@ -1,7 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-
-// The anon key is the correct and safe key for all frontend auth operations.
-// It is a public key — never use the service_role key in the browser.
 // All Supabase Auth methods (login, register, logout, etc.) work with the anon key by design.
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
