@@ -7,8 +7,12 @@
 /* ==================== GLASS PANEL ==================== */
 .glass-panel {
   background: var(--glass-bg);
-  backdrop-filter: blur(15px);
-  -webkit-backdrop-filter: blur(15px);
+  /* Reduced blur radius (8px) for GPU performance optimization */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  will-change: transform;
+  transform: translateZ(0);
+  contain: layout style;
   border: 1px solid var(--glass-border);
   border-radius: 16px;
   box-shadow: var(--panel-shadow);
@@ -16,7 +20,7 @@
 }
 
 .glass-panel:hover {
-  transform: translateY(-2px);
+  transform: translateY(-2px) translateZ(0);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
 }
 

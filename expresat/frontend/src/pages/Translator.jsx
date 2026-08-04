@@ -67,8 +67,10 @@ const Translator = () => {
       if (apiRef.current && apiRef.current.ws) {
         apiRef.current.ws.close();
       }
-      if (engineRef.current && engineRef.current.camera) {
-        engineRef.current.camera.stop();
+      if (engineRef.current) {
+        // Detiene la cámara y cancela el renderLoop + listeners de visibilidad
+        if (engineRef.current.camera) engineRef.current.camera.stop();
+        engineRef.current.destroy();
       }
       // Resume background particles when camera stops
       window.dispatchEvent(new CustomEvent('camera-active', { detail: false }));

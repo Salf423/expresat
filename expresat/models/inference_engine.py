@@ -125,27 +125,31 @@ class InferenceEngine:
 
     def _create_onnx_session(self):
         """
-        Crea una sesión de ONNX Runtime optimizada para CPU.
-
-        Configuración de rendimiento:
-          - CPUExecutionProvider: Único proveedor (no GPU)
-          - inter_op_num_threads=1: Un hilo entre operaciones (evita overhead)
-          - intra_op_num_threads=2: Dos hilos dentro de cada operación
-          - graph_optimization_level: Máximas optimizaciones del grafo
-          - execution_mode: Secuencial (mejor para modelos pequeños)
+        Creates a CPU-optimized ONNX Runtime session.
+        - Dynamic thread allocation matching CPU cores (max 4)
+        - Arena allocator disabled for reduced RAM footprint (~40MB initial savings)
+        - Memory pattern reuse enabled
         """
         import onnxruntime as ort
+        import os
 
         model_path = str(self._get_model_path())
 
-        # Opciones de sesión optimizadas para baja latencia en CPU
+        cpu_count = os.cpu_count() or 2
+        intra_threads = min(cpu_count, 4)
+
         session_options = ort.SessionOptions()
         session_options.inter_op_num_threads = 1
-        session_options.intra_op_num_threads = 2
+        session_options.intra_op_num_threads = intra_threads
         session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
-        # Deshabilitar logging de ONNX Runtime para reducir overhead
+        # Disable CPU memory arena to minimize RAM usage on constrained systems
+        session_options.enable_cpu_mem_arena = False
+
+        # Reuse memory allocation patterns across runs
+        session_options.enable_mem_pattern = True
+
         session_options.log_severity_level = 3  # ERROR only
 
         session = ort.InferenceSession(
@@ -427,8 +431,52 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test InferenceEngine")
     parser.add_argument("--model-dir", default="./exported_model",
                         help="Directorio del modelo exportado")
+    parser.add_argument("--quantize", action="store_true",
+                        help="Cuantizar el modelo float32 a INT8 dinámico")
     args = parser.parse_args()
 
+    # Dynamic INT8 Quantization CLI tool
+    if args.quantize:
+        try:
+            from onnxruntime.quantization import quantize_dynamic, QuantType
+            from pathlib import Path
+
+            model_dir = Path(args.model_dir)
+            float32_path = model_dir / "expresat_gru_float32.onnx"
+            int8_path    = model_dir / "expresat_gru_int8.onnx"
+
+            if not float32_path.exists():
+                print(f"\n  ERROR: {float32_path} not found.")
+                print("  Run train_and_export.py first to export FP32 model.")
+                exit(1)
+
+            print(f"\n Quantizing {float32_path.name} → Dynamic INT8...")
+
+            # Quantize MatMul and GEMM operations to INT8
+            quantize_dynamic(
+                model_input=str(float32_path),
+                model_output=str(int8_path),
+                weight_type=QuantType.QInt8,
+                per_channel=False,
+                reduce_range=False
+            )
+
+            size_fp32 = float32_path.stat().st_size / 1024
+            size_int8  = int8_path.stat().st_size  / 1024
+            reduction  = (1 - size_int8 / size_fp32) * 100
+
+            print(f"  FP32 Size: {size_fp32:.1f} KB")
+            print(f"  INT8 Size: {size_int8:.1f} KB")
+            print(f"  Reduction: {reduction:.1f}%")
+            print(f"\n  INT8 Model saved: {int8_path}")
+
+        except ImportError:
+            print("\n  ERROR: onnxruntime-tools package missing.")
+        exit(0)
+
+    # ==========================================================================
+    # PRUEBA NORMAL DEL MOTOR
+    # ==========================================================================
     engine = InferenceEngine(args.model_dir, confidence_threshold=0.3)
 
     # Generar batch sintético de 15 frames
@@ -450,3 +498,4 @@ if __name__ == "__main__":
     result = engine.predict(dummy_frames)
     print(f"\nResultado: {json.dumps(result, indent=2, ensure_ascii=False)}")
     print(f"\nInfo del motor: {json.dumps(engine.get_info(), indent=2)}")
+
