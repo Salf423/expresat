@@ -35,30 +35,16 @@ const Translator = () => {
     });
 
     if (videoRef.current && canvasRef.current && !engineRef.current) {
-      const engine = new MediaPipeEngine(videoRef.current, canvasRef.current, (landmarks) => {
-        apiService.sendLandmarks(landmarks);
-      });
-
-      // Track FPS without breaking the original render loop
-      engine.frameCount = 0;
-      engine.lastFpsTime = performance.now();
-
-      const originalRenderLoop = engine.renderLoop.bind(engine);
-      engine.renderLoop = () => {
-        engine.frameCount++;
-        const now = performance.now();
-        if (now - engine.lastFpsTime >= 1000) {
-          setFps(engine.frameCount);
-          engine.frameCount = 0;
-          engine.lastFpsTime = now;
-        }
-        // Call the original render loop so MediaPipe actually processes frames
-        originalRenderLoop();
-      };
+      const engine = new MediaPipeEngine(
+        videoRef.current,
+        canvasRef.current,
+        (landmarks) => { apiService.sendLandmarks(landmarks); },
+        (currentFps) => { setFps(currentFps); }  // called once/sec with real MediaPipe FPS
+      );
 
       engine.start();
       engineRef.current = engine;
-      
+
       // Dispatch event to pause background particles
       window.dispatchEvent(new CustomEvent('camera-active', { detail: true }));
     }

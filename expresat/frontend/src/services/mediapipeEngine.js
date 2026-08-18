@@ -3,30 +3,38 @@ export class MediaPipeEngine {
      * Initializes the MediaPipe Holistic detection engine.
      * @param {HTMLVideoElement} videoElement - Source video element.
      * @param {HTMLCanvasElement} canvasElement - Canvas where results will be drawn.
-     * @param {Function} onBatchReady - Callback to send detected landmarks.
+     * @param {Function} onBatchReady - Callback invoked (throttled) to send detected landmarks.
+     * @param {Function} [onFps] - Optional. Called once per second with the real FPS count.
      */
-    constructor(videoElement, canvasElement, onBatchReady) {
+    constructor(videoElement, canvasElement, onBatchReady, onFps = null) {
         this.videoElement = videoElement;
         this.canvasElement = canvasElement;
         this.canvasCtx = canvasElement.getContext('2d');
         this.onBatchReady = onBatchReady;
+        this.onFps = onFps;
+
+        // Detection rate: how often MediaPipe processes a frame (15 FPS cap)
         this.targetFPS = 15;
         this.frameInterval = 1000 / this.targetFPS;
         this.lastFrameTime = 0;
-        this.frameCount = 0;
-        this.lastFpsTime = performance.now();
-        this.fpsElement = document.getElementById('fps-counter');
+
+        // Landmark send rate: throttle WebSocket payloads to 2 per second (500 ms)
+        this.sendInterval = 500;
+        this.lastSendTime = 0;
+
+        // FPS tracking — counts actual MediaPipe result callbacks, not rAF ticks
+        this._fpsFrameCount = 0;
+        this._fpsLastTime = performance.now();
 
         // Pause state control for background tab management
         this._isPaused = false;
-        this._renderLoopId = null;
 
         this.holistic = new window.Holistic({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
         });
 
         this.holistic.setOptions({
-            // Lite model complexity (0) reduces CPU usage by ~30%
+            // Lite model (0) reduces CPU usage ~30-60% vs full model
             modelComplexity: 0,
             smoothLandmarks: true,
             enableSegmentation: false,
@@ -61,52 +69,32 @@ export class MediaPipeEngine {
     }
 
     /**
-     * Starts the camera capture and visual rendering loop.
+     * Starts the camera capture. No separate render loop needed —
+     * all drawing happens inside the onResults callback, driven by MediaPipe.
      */
     start() {
         this.camera.start();
-        this.renderLoop();
     }
 
     /**
      * Clean up resources and event listeners on component unmount.
      */
     destroy() {
-        if (this._renderLoopId) {
-            cancelAnimationFrame(this._renderLoopId);
-            this._renderLoopId = null;
-        }
         document.removeEventListener('visibilitychange', this._handleVisibility);
     }
 
     /**
-     * FPS counter render loop. Pauses updates when tab is hidden.
-     */
-    renderLoop() {
-        if (!document.hidden) {
-            this.frameCount++;
-            const now = performance.now();
-            if (now - this.lastFpsTime >= 1000) {
-                if (this.fpsElement) {
-                    this.fpsElement.innerText = `FPS: ${this.frameCount}`;
-                }
-                this.frameCount = 0;
-                this.lastFpsTime = now;
-            }
-        }
-        this._renderLoopId = window.requestAnimationFrame(() => this.renderLoop());
-    }
-
-    /**
-     * Processes MediaPipe results and draws them on the canvas.
-     * Decision: Connectors and keypoints (pose and hands) are drawn with specific
-     * colors to provide immediate visual feedback to the user.
+     * Processes MediaPipe results:
+     *  1. Draws video frame + skeleton overlays on canvas (~15/sec).
+     *  2. Updates FPS counter once per second via onFps callback.
+     *  3. Throttles landmark payloads to the backend (max 2/sec).
+     *
      * @param {Object} results - The results returned by the Holistic model.
      */
     onResults(results) {
+        // --- 1. Draw on canvas (every processed frame, up to 15/sec) ---
         this.canvasCtx.save();
         this.canvasCtx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
-        
         this.canvasCtx.drawImage(results.image, 0, 0, this.canvasElement.width, this.canvasElement.height);
 
         if (results.poseLandmarks) {
@@ -123,21 +111,32 @@ export class MediaPipeEngine {
         }
         this.canvasCtx.restore();
 
-        const payload = this.extractLandmarks(results);
-        if (this.onBatchReady) {
-            this.onBatchReady(payload);
+        // --- 2. FPS tracking: count real MediaPipe results per second ---
+        this._fpsFrameCount++;
+        const now = performance.now();
+        if (now - this._fpsLastTime >= 1000) {
+            if (this.onFps) this.onFps(this._fpsFrameCount);
+            this._fpsFrameCount = 0;
+            this._fpsLastTime = now;
+        }
+
+        // --- 3. Throttled landmark send: max 2 payloads per second ---
+        if (now - this.lastSendTime >= this.sendInterval) {
+            this.lastSendTime = now;
+            const payload = this.extractLandmarks(results);
+            if (this.onBatchReady) {
+                this.onBatchReady(payload);
+            }
         }
     }
 
     /**
      * Extracts and normalizes the coordinates of the landmarks of interest.
-     * Decision: Only X, Y, Z are extracted to reduce the size of the JSON payload
-     * sent via WebSocket.
+     * Only X, Y, Z are extracted to reduce the size of the JSON payload sent via WebSocket.
      * @param {Object} results - Raw MediaPipe results.
      * @returns {Object} A structured object with pose, left hand, and right hand.
      */
     extractLandmarks(results) {
-
         const extract = (landmarks) => {
             if (!landmarks) return null;
             return landmarks.map(lm => ({ x: lm.x, y: lm.y, z: lm.z }));
