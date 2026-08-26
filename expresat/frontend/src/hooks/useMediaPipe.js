@@ -105,6 +105,10 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
     const streamRef      = useRef(null);
     const rafIdRef       = useRef(null);
 
+    // Frame-drop guard: true while the Worker is processing a frame.
+    // Prevents queue build-up on slow devices (backpressure control).
+    const workerBusyRef  = useRef(false);
+
     // Timing refs
     const lastFrameRef   = useRef(0);
     const lastSendRef    = useRef(0);
@@ -150,6 +154,9 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             }
 
             if (type === 'results') {
+                // Worker finished — allow the next frame to be sent
+                workerBusyRef.current = false;
+
                 const { pose, hands, handedness, timestamp } = event.data;
 
                 // Apply EMA filter to smooth out jitter
@@ -194,9 +201,11 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                 return;
             }
 
-            // Throttle to targetFPS
-            if (now - lastFrameRef.current >= frameInterval) {
+            // Throttle to targetFPS AND skip if Worker is still processing
+            // the previous frame (backpressure / frame-drop guard).
+            if (now - lastFrameRef.current >= frameInterval && !workerBusyRef.current) {
                 lastFrameRef.current = now;
+                workerBusyRef.current = true; // mark busy before the async createImageBitmap
 
                 // createImageBitmap is async but extremely fast for video frames.
                 // We don't await it to avoid blocking the rVFC callback.
@@ -205,7 +214,10 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                         { type: 'process', imageBitmap: bitmap, timestamp: now },
                         [bitmap] // Transfer ownership — zero-copy
                     );
-                }).catch(() => {/* frame skipped if video not ready */});
+                }).catch(() => {
+                    // Frame skipped (video not ready) — release the busy lock
+                    workerBusyRef.current = false;
+                });
             }
 
             // Schedule next capture
@@ -257,10 +269,12 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: {
-                        width: { ideal: 640 },
+                        width:  { ideal: 640 },
                         height: { ideal: 480 },
                         facingMode: 'user',
-                        frameRate: { ideal: 30, max: 30 },
+                        // Cap at 15 fps — matches our inference rate, reduces
+                        // CPU/GPU load from unnecessary frame decoding on slow devices.
+                        frameRate: { ideal: 15, max: 15 },
                     },
                     audio: false,
                 });

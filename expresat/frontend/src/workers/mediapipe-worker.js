@@ -38,6 +38,25 @@ let poseLandmarker = null;
 let initialized = false;
 let initPromise = null;
 
+// ─── Hand-visibility heuristic ───────────────────────────────────────────────
+// Pose landmark indices that indicate a hand may be in frame:
+//   13, 14 = left/right elbow  |  15, 16 = left/right wrist
+// If any of these is detected (y < 1.05, visibility > 0.3) we run HandLandmarker.
+const HAND_INDICATOR_INDICES = [13, 14, 15, 16];
+
+/**
+ * Returns true if the pose suggests at least one hand could be visible.
+ * @param {Array<{x,y,z,visibility}>|null} poseLandmarks
+ */
+function handsLikelyVisible(poseLandmarks) {
+    if (!poseLandmarks || poseLandmarks.length === 0) return true; // no pose → run both to be safe
+    for (const idx of HAND_INDICATOR_INDICES) {
+        const lm = poseLandmarks[idx];
+        if (lm && (lm.visibility ?? 1) > 0.3 && lm.y < 1.05) return true;
+    }
+    return false;
+}
+
 // ─── Initialization ───────────────────────────────────────────────────────────
 async function initialize() {
     if (initPromise) return initPromise;
@@ -89,10 +108,16 @@ function processFrame(imageBitmap, timestamp) {
     if (!initialized) return;
 
     try {
-        // Both models run on the same ImageBitmap — VIDEO mode requires
-        // monotonically increasing timestamps in milliseconds.
-        const handResults = handLandmarker.detectForVideo(imageBitmap, timestamp);
+        // 1. Always run Pose — it's the cheaper model and drives the hand heuristic.
         const poseResults = poseLandmarker.detectForVideo(imageBitmap, timestamp);
+        const poseLandmarks = poseResults.landmarks[0] ?? null;
+
+        // 2. Run HandLandmarker only when the Pose indicates hands may be visible.
+        //    On slow devices this skips ~10-20 ms of GPU work per skipped frame.
+        let handResults = { landmarks: [], handedness: [] };
+        if (handsLikelyVisible(poseLandmarks)) {
+            handResults = handLandmarker.detectForVideo(imageBitmap, timestamp);
+        }
 
         // Free the bitmap memory immediately after inference
         imageBitmap.close();
@@ -103,7 +128,7 @@ function processFrame(imageBitmap, timestamp) {
         self.postMessage({
             type: 'results',
             // Pose: array of 33 NormalizedLandmark, or empty
-            pose: poseResults.landmarks[0] ?? null,
+            pose: poseLandmarks,
             // Hands: array of arrays (up to 2), each 21 NormalizedLandmark
             hands: handResults.landmarks,
             // Handedness: [{ categoryName: 'Left'|'Right', score }]
