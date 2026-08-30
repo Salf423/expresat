@@ -1,30 +1,74 @@
-## Conceptos Clave
+## Key Concepts
 
-- **WebSocket**: Un protocolo que permite la comunicación bidireccional entre el cliente y el servidor.
-- **FastAPI**: Un framework moderno y rápido para construir APIs con Python.
-- **Inferencia**: Proceso de deducir o predecir información a partir de datos de entrada, en este caso, utilizando un modelo de lenguaje de señas.
+- **WebSocket**: A protocol that enables two-way communication between client and server.
+- **FastAPI**: A modern, fast framework for building APIs with Python.
+- **Inference**: The process of inferring or predicting information from input data, in this case, using a sign language model.
 
-## Estructura del Código
+## Code Structure
 
-El código se organiza en una clase llamada `ConnectionManager`, que se encarga de gestionar las conexiones WebSocket. A continuación, se describen los métodos principales de esta clase:
+The code is organized into a class called `ConnectionManager`, which manages WebSocket connections. Below are the main methods of this class:
 
-1. **`__init__`**: Inicializa la lista de conexiones activas y el predictor de lenguaje de señas.
-2. **`connect`**: Acepta una nueva conexión WebSocket y la añade a la lista de conexiones activas.
-3. **`disconnect`**: Elimina una conexión de la lista de conexiones activas.
-4. **`send_personal_message`**: Envía un mensaje JSON a un cliente específico.
-5. **`broadcast`**: Envía un mensaje JSON a todos los clientes conectados.
-6. **`handle_message`**: Maneja los mensajes entrantes, respondiendo a tipos específicos de mensajes como 'ping' y 'inference'.
+1. **`__init__`**: Initializes the active connections list and the sign language predictor.
+2. **`connect`**: Accepts a new WebSocket connection and adds it to the active connections list.
+3. **`disconnect`**: Removes a connection from the active connections list.
+4. **`send_personal_message`**: Sends a JSON message to a specific client.
+5. **`broadcast`**: Sends a JSON message to all connected clients.
+6. **`handle_message`**: Handles incoming messages, responding to specific message types like 'ping' and 'inference'.
 
-## Ejemplos de Código
+## Code Examples
 
-A continuación, se presenta el código completo con explicaciones sobre su funcionamiento:
+Below is the complete code with explanations of how it works:
 
-language-python
+```python
+from fastapi import WebSocket
+import json
+import sys
+import os
 
-`from fastapi import WebSocket import json import sys import os  # Añadimos el directorio padre al path para importar el modelo de predicción sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) from models.inference import SignLanguagePredictor  class ConnectionManager:     def __init__(self):         self.active_connections: list[WebSocket] = []  # Lista de conexiones activas         self.predictor = SignLanguagePredictor()  # Inicializa el predictor de lenguaje de señas      async def connect(self, websocket: WebSocket):         await websocket.accept()  # Acepta la conexión WebSocket         self.active_connections.append(websocket)  # Añade la conexión a la lista      def disconnect(self, websocket: WebSocket):         if websocket in self.active_connections:             self.active_connections.remove(websocket)  # Elimina la conexión de la lista      async def send_personal_message(self, message: dict, websocket: WebSocket):         await websocket.send_json(message)  # Envía un mensaje JSON al cliente específico      async def broadcast(self, message: dict):         for connection in self.active_connections:             await connection.send_json(message)  # Envía un mensaje a todos los clientes conectados      async def handle_message(self, data: dict, websocket: WebSocket):         msg_type = data.get('type')  # Obtiene el tipo de mensaje                  if msg_type == 'ping':             await self.send_personal_message({'type': 'pong'}, websocket)  # Responde a un 'ping'                      elif msg_type == 'inference':             landmarks = data.get('payload')  # Obtiene los datos de entrada             translation_result = self.predictor.process_frame(landmarks)  # Procesa los datos                          if translation_result:                 # Si el modelo devolvió una palabra                 await self.send_personal_message({                     'type': 'translation',                     'payload': translation_result                 }, websocket)`
+# Add parent directory to path to import prediction model
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from models.inference import SignLanguagePredictor
 
-### Explicación del Código
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []  # List of active connections
+        self.predictor = SignLanguagePredictor()  # Initialize sign language predictor
 
-- **Importaciones**: Se importan las librerías necesarias, incluyendo `WebSocket` de FastAPI y el modelo `SignLanguagePredictor`.
-- **Gestión de Conexiones**: La clase `ConnectionManager` mantiene un registro de todas las conexiones activas y permite la comunicación con cada cliente.
-- **Manejo de Mensajes**: El método `handle_message` es crucial, ya que determina cómo responder a diferentes tipos de mensajes. Por ejemplo, si recibe un 'ping', responde con un 'pong', y si recibe un 'inference', procesa los datos de entrada y envía la traducción de vuelta al cliente.
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()  # Accept WebSocket connection
+        self.active_connections.append(websocket)  # Add connection to list
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)  # Remove connection from list
+
+    async def send_personal_message(self, message: dict, websocket: WebSocket):
+        await websocket.send_json(message)  # Send JSON message to specific client
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            await connection.send_json(message)  # Send message to all connected clients
+
+    async def handle_message(self, data: dict, websocket: WebSocket):
+        msg_type = data.get('type')  # Get message type
+
+        if msg_type == 'ping':
+            await self.send_personal_message({'type': 'pong'}, websocket)  # Respond to 'ping'
+
+        elif msg_type == 'inference':
+            landmarks = data.get('payload')  # Get input data
+            translation_result = self.predictor.process_frame(landmarks)  # Process data
+
+            if translation_result:
+                # If the model returned a word
+                await self.send_personal_message({
+                    'type': 'translation',
+                    'payload': translation_result
+                }, websocket)
+```
+
+### Code Explanation
+
+- **Imports**: Necessary libraries are imported, including FastAPI's `WebSocket` and the `SignLanguagePredictor` model.
+- **Connection Management**: The `ConnectionManager` class maintains a registry of all active connections and handles communication with each client.
+- **Message Handling**: The `handle_message` method is crucial, as it determines how to respond to different message types. For example, if it receives a 'ping', it responds with a 'pong'; if it receives an 'inference', it processes input data and sends the translation back to the client.

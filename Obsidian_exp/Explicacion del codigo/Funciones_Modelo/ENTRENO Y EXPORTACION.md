@@ -1,48 +1,86 @@
+## Key Concepts
 
-## Conceptos Clave
+- **GRU**: A variant of recurrent neural networks that is parameter-efficient compared to LSTM (Long Short-Term Memory).
+- **Quantization**: Process of reducing model weight precision from float32 to int8, decreasing model size and improving inference latency.
+- **ONNX**: Open Neural Network Exchange, a format that enables interoperability between different machine learning frameworks.
 
-- **GRU**: Una variante de las redes neuronales recurrentes que es más eficiente en términos de parámetros en comparación con LSTM (Long Short-Term Memory).
-- **Cuantización**: Proceso que reduce la precisión de los pesos del modelo de float32 a int8, lo que disminuye el tamaño del modelo y mejora la latencia en la inferencia.
-- **ONNX**: Open Neural Network Exchange, un formato que permite la interoperabilidad entre diferentes frameworks de aprendizaje automático.
+## Code Structure
 
-## Estructura del Código
+The code is organized into several sections including:
 
-El código se organiza en varias secciones que incluyen:
+1. **Imports**: Loading required libraries.
+2. **Constant Definitions**: Model architecture parameters and synthetic data configurations.
+3. **GRU Model**: Implementation of the neural network.
+4. **Synthetic Dataset**: Data generation for training.
+5. **Training**: Function to train the model.
+6. **Quantization**: Application of dynamic quantization.
+7. **ONNX Export**: Functions to export the model to ONNX format.
+8. **Latency Benchmark**: Measuring model performance.
+9. **Main Function**: Workflow orchestration.
 
-1. **Importaciones**: Carga de bibliotecas necesarias.
-2. **Definición de constantes**: Parámetros de la arquitectura del modelo y datos sintéticos.
-3. **Modelo GRU**: Implementación de la red neuronal.
-4. **Dataset sintético**: Generación de datos para el entrenamiento.
-5. **Entrenamiento**: Función que entrena el modelo.
-6. **Cuantización**: Aplicación de la cuantización dinámica.
-7. **Exportación a ONNX**: Funciones para exportar el modelo a formato ONNX.
-8. **Benchmark de latencia**: Medición del rendimiento del modelo.
-9. **Función principal**: Orquestación del flujo de trabajo.
+## Code Examples
 
-## Ejemplos de Código
+Below are code snippets illustrating the key parts of the script.
 
-A continuación, se presentan fragmentos de código que ilustran las partes más importantes del script.
+### GRU Model Definition
 
-### Definición del Modelo GRU
+```python
+class SignLanguageGRU(nn.Module):
+    def __init__(self, input_size: int = NUM_FEATURES,
+                 hidden_size: int = 64,
+                 num_layers: int = 1,
+                 num_classes: int = len(DEFAULT_LABELS),
+                 dropout: float = 0.3):
+        super().__init__()
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size, 32),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(32, num_classes)
+        )
 
-language-python
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        output, h_n = self.gru(x)
+        last_hidden = h_n[-1]
+        logits = self.classifier(last_hidden)
+        return logits
+```
 
-`class SignLanguageGRU(nn.Module):     def __init__(self, input_size: int = NUM_FEATURES,                  hidden_size: int = 64,                  num_layers: int = 1,                  num_classes: int = len(DEFAULT_LABELS),                  dropout: float = 0.3):         super().__init__()         self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)         self.classifier = nn.Sequential(             nn.Linear(hidden_size, 32),             nn.ReLU(),             nn.Dropout(dropout),             nn.Linear(32, num_classes)         )      def forward(self, x: torch.Tensor) -> torch.Tensor:         output, h_n = self.gru(x)         last_hidden = h_n[-1]         logits = self.classifier(last_hidden)         return logits`
+This snippet defines the GRU model architecture, which includes a GRU layer and a classification head.
 
-Este fragmento define la arquitectura del modelo GRU, que incluye una capa GRU y una cabeza de clasificación.
+### Model Training
 
-### Entrenamiento del Modelo
+```python
+def train_model(model: nn.Module, epochs: int = 50, lr: float = 1e-3,
+                batch_size: int = 64, device: str = "cpu") -> nn.Module:
+    model = model.to(device)
+    model.train()
+    dataset = SyntheticSignDataset()
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=lr)
 
-language-python
+    for epoch in range(epochs):
+        for batch_x, batch_y in dataloader:
+            batch_x = batch_x.to(device)
+            batch_y = batch_y.to(device)
+            optimizer.zero_grad()
+            logits = model(batch_x)
+            loss = criterion(logits, batch_y)
+            loss.backward()
+            optimizer.step()
+```
 
-`def train_model(model: nn.Module, epochs: int = 50, lr: float = 1e-3,                 batch_size: int = 64, device: str = "cpu") -> nn.Module:     model = model.to(device)     model.train()     dataset = SyntheticSignDataset()     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)     criterion = nn.CrossEntropyLoss()     optimizer = optim.AdamW(model.parameters(), lr=lr)      for epoch in range(epochs):         for batch_x, batch_y in dataloader:             batch_x = batch_x.to(device)             batch_y = batch_y.to(device)             optimizer.zero_grad()             logits = model(batch_x)             loss = criterion(logits, batch_y)             loss.backward()             optimizer.step()`
+This snippet demonstrates how the model is trained using a synthetic dataset.
 
-Este fragmento muestra cómo se entrena el modelo utilizando un conjunto de datos sintético.
+### ONNX Export
 
-### Exportación a ONNX
+```python
+def export_to_onnx(model: nn.Module, output_path: str):
+    model.eval()
+    dummy_input = torch.randn(1, SEQUENCE_LENGTH, NUM_FEATURES)
+    torch.onnx.export(model, dummy_input, output_path, export_params=True, opset_version=17)
+```
 
-language-python
-
-`def export_to_onnx(model: nn.Module, output_path: str):     model.eval()     dummy_input = torch.randn(1, SEQUENCE_LENGTH, NUM_FEATURES)     torch.onnx.export(model, dummy_input, output_path, export_params=True, opset_version=17)`
-
-Aquí se ilustra cómo se exporta el modelo entrenado a formato ONNX, lo que permite su uso en diferentes plataformas.
+Here it illustrates how the trained model is exported to ONNX format, enabling its use across different platforms.

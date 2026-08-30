@@ -1,198 +1,196 @@
-## PROPÓSITO GENERAL
+## GENERAL PURPOSE
 
-El frontend es una **aplicación React de tiempo real** que:
+The frontend is a **real-time React application** that:
 
-1. Captura video desde la cámara del usuario
-2. Extrae landmarks (puntos clave) en tiempo real usando **MediaPipe Holistic**
-3. Envía esos landmarks al backend vía **WebSocket**
-4. Recibe traducciones y las muestra en pantalla
+1. Captures video from the user's camera
+2. Extracts keypoint landmarks in real time using **MediaPipe Holistic**
+3. Sends those landmarks to the backend via **WebSocket**
+4. Receives translations and displays them on screen
 
-**Arquitectura**: React 19 + Vite + React Router + Context API (sin Redux/Zustand)
+**Architecture**: React 19 + Vite + React Router + Context API (no Redux/Zustand)
 
 ---
 
-## ESTRUCTURA DE ARCHIVOS (COMPLETA)
+## FILE STRUCTURE (COMPLETE)
 
-
+```
 expresat/frontend/
 ├── src/
-│   ├── App.jsx                    # Raíz: define rutas principales
-│   ├── main.jsx                   # Punto entrada: renderiza App en #root
+│   ├── App.jsx                    # Root: defines main routes
+│   ├── main.jsx                   # Entry point: renders App inside #root
 │   │
-│   ├── pages/                     # 5 páginas principales (React Router)
-│   │   ├── Home.jsx              # Landing page (bienvenida)
-│   │   ├── Translator.jsx        # ⭐ PÁGINA PRINCIPAL (captura + traducción)
-│   │   ├── Auth.jsx              # Login/Register con Supabase
-│   │   ├── Learn.jsx             # Tutoriales de señas
-│   │   └── About.jsx             # Info del proyecto
+│   ├── pages/                     # 5 main pages (React Router)
+│   │   ├── Home.jsx              # Landing page (welcome)
+│   │   ├── Translator.jsx        # ⭐ MAIN PAGE (capture + translation)
+│   │   ├── Auth.jsx              # Login/Register with Supabase
+│   │   ├── Learn.jsx             # Sign language tutorials
+│   │   └── About.jsx             # Project info
 │   │
-│   ├── components/               # Componentes reutilizables
-│   │   ├── Navbar.jsx            # Barra de navegación (header)
-│   │   ├── Footer.jsx            # Pie de página
-│   │   ├── ThemeToggle.jsx       # Botón tema oscuro/claro
-│   │   └── EnvironmentSelector.jsx # Selector dev/prod API
+│   ├── components/               # Reusable components
+│   │   ├── Navbar.jsx            # Navigation bar (header)
+│   │   ├── Footer.jsx            # Footer
+│   │   ├── ThemeToggle.jsx       # Dark/light theme button
+│   │   └── EnvironmentSelector.jsx # Dev/prod API selector
 │   │
-│   ├── services/                 # Servicios/capas de abstracción
-│   │   ├── apiService.js         # ⭐ WebSocket al backend
+│   ├── services/                 # Service/abstraction layer
+│   │   ├── apiService.js         # ⭐ Backend WebSocket
 │   │   ├── authService.js        # Supabase auth (login/signup)
-│   │   └── mediapipeEngine.js    # ⭐ Detección de landmarks MediaPipe
+│   │   └── mediapipeEngine.js    # ⭐ MediaPipe landmark detection
 │   │
 │   ├── context/                  # React Context API
-│   │   └── ThemeContext.jsx      # Contexto para tema oscuro/claro
+│   │   └── ThemeContext.jsx      # Dark/light theme context
 │   │
-│   ├── styles/                   # (vacío en repo, estilos en CSS inline)
-│   ├── assets/                   # Imágenes, iconos
-│   ├── index.css                 # Estilos globales (CSS Variables)
-│   └── App.css                   # Estilos específicos App
+│   ├── styles/                   # (empty in repo, styles in inline CSS)
+│   ├── assets/                   # Images, icons
+│   ├── index.css                 # Global styles (CSS Variables)
+│   └── App.css                   # App-specific styles
 │
-├── public/                        # Archivos estáticos
-├── index.html                     # HTML principal (carga React)
+├── public/                        # Static files
+├── index.html                     # Main HTML (loads React)
 ├── package.json                   # Dependencies
-├── vite.config.js                # Config Vite (sin cambios relevantes)
-└── .oxlintrc.json                # Configuración linter Oxlint
+├── vite.config.js                # Vite config
+└── .oxlintrc.json                # Oxlint linter configuration
+```
 
+---
 
-## PUNTO CRÍTICO: Página Translator.jsx
+## CRITICAL POINT: Translator.jsx Page
 
-### **FLUJO COMPLETO DE TRADUCCIÓN**
+### **COMPLETE TRANSLATION FLOW**
 
-
-
+```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 1. useEffect se ejecuta AL MONTAR el componente                 │
+│ 1. useEffect runs ON MOUNTING the component                     │
 ├─────────────────────────────────────────────────────────────────┤
-│   • Obtiene URL WebSocket del localStorage (dev vs prod)         │
-│   • Crea instancia de ApiService                                 │
-│   • Conecta con token 'mock_token'                               │
-│   • Registra callbacks para status y mensajes                    │
-│   • Crea instancia de MediaPipeEngine                            │
-│   • Inicia captura de cámara                                     │
+│   • Retrieves WebSocket URL from localStorage (dev vs prod)     │
+│   • Creates ApiService instance                                 │
+│   • Connects with token 'mock_token'                            │
+│   • Registers callbacks for status and messages                 │
+│   • Creates MediaPipeEngine instance                            │
+│   • Starts camera capture                                       │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 2. MediaPipeEngine.start() inicia loop de captura                │
+│ 2. MediaPipeEngine.start() initiates capture loop               │
 ├─────────────────────────────────────────────────────────────────┤
-│   • Camera captura frames @ 15 FPS (cada 66ms)                   │
-│   • Holistic procesa cada frame y extrae landmarks               │
-│   • onResults() dibuja en canvas y extrae coordenadas            │
-│   • Llama onBatchReady() → apiService.sendLandmarks()            │
+│   • Camera captures frames @ 15 FPS (every 66ms)                │
+│   • Holistic processes each frame and extracts landmarks        │
+│   • onResults() draws on canvas and extracts coordinates        │
+│   • Calls onBatchReady() → apiService.sendLandmarks()           │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 3. ApiService envía landmarks vía WebSocket                      │
+│ 3. ApiService sends landmarks via WebSocket                     │
 ├─────────────────────────────────────────────────────────────────┤
-│   • Payload: { type: 'inference', payload: landmarks }           │
-│   • WebSocket abierto (readyState === OPEN)                      │
-│   • Envía cada frame individual (stream mode)                    │
-│   • Backend acumula en buffer hasta 15 frames                    │
+│   • Payload: { type: 'inference', payload: landmarks }          │
+│   • WebSocket open (readyState === OPEN)                        │
+│   • Sends each individual frame (stream mode)                   │
+│   • Backend accumulates in buffer up to 15 frames               │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 4. Backend procesa y devuelve traducción                         │
+│ 4. Backend processes and returns translation                    │
 ├─────────────────────────────────────────────────────────────────┤
-│   • Mensaje: { type: 'translation', payload: {...} }             │
-│   • ApiService.onmessage() recibe y parsea JSON                  │
-│   • Extrae data.payload (contiene label, confidence, etc)        │
-│   • Llama onMessageCallback() → setTranslation()                 │
+│   • Message: { type: 'translation', payload: {...} }            │
+│   • ApiService.onmessage() receives and parses JSON             │
+│   • Extracts data.payload (contains label, confidence, etc.)    │
+│   • Calls onMessageCallback() → setTranslation()                │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 5. UI Actualiza en tiempo real                                   │
+│ 5. UI Updates in Real Time                                      │
 ├─────────────────────────────────────────────────────────────────┤
-│   • State 'translation' cambia → re-render                        │
-│   • Muestra palabra traducida en panel derecho                    │
-│   • Canvas dibuja landmarks y conectores en tiempo real           │
+│   • State 'translation' changes → re-render                     │
+│   • Displays translated word in right panel                     │
+│   • Canvas draws landmarks and connectors in real time          │
 └─────────────────────────────────────────────────────────────────┘
+```
 
+### **Translator.jsx Code Breakdown**
 
-### **Código Translator.jsx - Desglose**
-
-JavaScript
-
-
+```javascript
 const Translator = () => {
-  // ========== REFS para acceso directo a elementos del DOM ==========
-  const videoRef = useRef(null);          // Video element (oculto)
-  const canvasRef = useRef(null);         // Canvas donde se dibuja
-  const engineRef = useRef(null);         // Instancia MediaPipeEngine
-  const apiRef = useRef(null);            // Instancia ApiService
+  // ========== REFS for direct DOM access ==========
+  const videoRef = useRef(null);          // Video element (hidden)
+  const canvasRef = useRef(null);         // Canvas element for drawing
+  const engineRef = useRef(null);         // MediaPipeEngine instance
+  const apiRef = useRef(null);            // ApiService instance
 
-  // ========== STATES para actualizar la UI ==========
-  const [translation, setTranslation] = useState('');   // Palabra actual
-  const [status, setStatus] = useState('Desconectado'); // WebSocket status
+  // ========== STATES to update UI ==========
+  const [translation, setTranslation] = useState('');   // Current word
+  const [status, setStatus] = useState('Disconnected'); // WebSocket status
   const [statusClass, setStatusClass] = useState('status-offline');
-  const [fps, setFps] = useState(0);      // Frames por segundo
+  const [fps, setFps] = useState(0);      // Frames per second
 
-  // ========== INICIALIZACIÓN (se ejecuta UNA SOLA VEZ) ==========
+  // ========== INITIALIZATION (runs ONCE) ==========
   useEffect(() => {
-    // 1. Determinar URL del backend (localStorage o hardcode)
+    // 1. Determine backend URL (localStorage or fallback)
     const env = localStorage.getItem('apiEnv') || 'Local';
     const wsUrl = env === 'Local' 
       ? 'ws://127.0.0.1:8000/ws' 
       : 'wss://api.expresat.cloud/ws';
 
-    // 2. Crear y conectar WebSocket
+    // 2. Create and connect WebSocket
     const apiService = new ApiService(wsUrl);
     apiRef.current = apiService;
     apiService.connect('mock_token');
 
-    // 3. Registrar callback cuando estado WebSocket cambia
+    // 3. Register callback when WebSocket state changes
     apiService.onStatusChange((text, className) => {
       setStatus(text);
       setStatusClass(className);
     });
 
-    // 4. Registrar callback cuando llega traducción del servidor
+    // 4. Register callback when server translation arrives
     apiService.onMessage((text) => {
-      setTranslation(text);  // Aquí recibimos el label traducido
+      setTranslation(text);  // Received translated label
     });
 
-    // 5. Inicializar MediaPipe si no existe aún
+    // 5. Initialize MediaPipe if not created yet
     if (videoRef.current && canvasRef.current && !engineRef.current) {
       const engine = new MediaPipeEngine(
         videoRef.current, 
         canvasRef.current, 
         (landmarks) => {
-          // Callback: cuando MediaPipe detecta landmarks, enviar al servidor
+          // Callback: send landmarks to server when MediaPipe detects them
           apiService.sendLandmarks(landmarks);
         }
       );
 
-      // 6. Reemplazar renderLoop para contar FPS correctamente
-      //    (decisión: renderLoop original solo dibuja, no actualiza React)
+      // 6. Override renderLoop to measure FPS accurately
       const originalRenderLoop = engine.renderLoop.bind(engine);
       engine.renderLoop = () => {
         engine.frameCount++;
         const now = performance.now();
         if (now - engine.lastFpsTime >= 1000) {
-          setFps(engine.frameCount);  // Actualizar state cada 1 segundo
+          setFps(engine.frameCount);  // Update state every 1 second
           engine.frameCount = 0;
           engine.lastFpsTime = now;
         }
         window.requestAnimationFrame(() => engine.renderLoop());
       };
 
-      engine.start();  // Inicia captura de cámara
+      engine.start();  // Start camera capture
       engineRef.current = engine;
     }
 
-    // 7. CLEANUP: cerrar WebSocket y detener cámara al desmontar
+    // 7. CLEANUP: close WebSocket and stop camera on unmount
     return () => {
       if (apiRef.current?.ws) apiRef.current.ws.close();
       if (engineRef.current?.camera) engineRef.current.camera.stop();
     };
-  }, []);  // [] = solo ejecutar una vez al montar
+  }, []);  // [] = run only once on mount
 
-  // ========== RENDERIZADO UI ==========
+  // ========== UI RENDERING ==========
   return (
     <div className="container animate-fade-in" style={{...}}>
-      {/* Header con título y status */}
+      {/* Header with title and status */}
       <div style={{...}}>
-        <h1>Traductor LSM</h1>
+        <h1>LSM Translator</h1>
         <div className="glass-panel">
           {/* FPS Meter */}
           <span>FPS: <strong>{fps}</strong></span>
-          {/* Status indicador */}
+          {/* Status indicator */}
           <div style={{
             width: '10px', height: '10px', borderRadius: '50%',
             background: statusClass.includes('online') ? 'green' : 'red'
@@ -201,12 +199,12 @@ const Translator = () => {
         </div>
       </div>
 
-      {/* Grid 2 columnas: Video + Traducción */}
+      {/* 2-column Grid: Video + Translation */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))' }}>
         
         {/* VIDEO AREA */}
         <div className="glass-panel">
-          <h3>Cámara</h3>
+          <h3>Camera</h3>
           <div>
             <video ref={videoRef} style={{display: 'none'}}></video>
             <canvas ref={canvasRef} width={640} height={480}></canvas>
@@ -215,12 +213,12 @@ const Translator = () => {
 
         {/* TRANSLATION OUTPUT */}
         <div className="glass-panel">
-          <h3>Traducción</h3>
+          <h3>Translation</h3>
           <div>
             {translation ? (
               <p style={{fontSize: '2rem'}}>{translation}</p>
             ) : (
-              <p style={{color: 'grey'}}>Esperando señas...</p>
+              <p style={{color: 'grey'}}>Waiting for signs...</p>
             )}
           </div>
         </div>
@@ -228,50 +226,51 @@ const Translator = () => {
     </div>
   );
 };
+```
 
 ---
 
-## SERVICIO CRÍTICO #1: ApiService.js (WebSocket)
+## CRITICAL SERVICE #1: ApiService.js (WebSocket)
 
-### **Responsabilidades**
+### **Responsibilities**
 
-- Conectar al servidor WebSocket
-- Enviar landmarks al backend
-- Recibir traducciones
-- Manejar reconexiones automáticas
-- Medir latencia con ping/pong
+- Connect to WebSocket server
+- Send landmarks to backend
+- Receive translations
+- Handle automatic reconnections
+- Measure latency using ping/pong
 
-### **Estados de Conexión**
+### **Connection States**
 
-
+```javascript
 export class ApiService {
   constructor(url) {
     this.url = url;
     this.ws = null;                          // WebSocket instance
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
-    this.baseDelay = 1000;                  // 1 segundo entre intentos
-    this.onMessageCallback = null;          // Callback traducción
-    this.onStatusChangeCallback = null;     // Callback status
-    this.pingInterval = null;               // Intervalo para enviar pings
-    this.lastPingTime = 0;                  // Última vez que se envió ping
+    this.baseDelay = 1000;                  // 1 second delay between attempts
+    this.onMessageCallback = null;          // Translation callback
+    this.onStatusChangeCallback = null;     // Status callback
+    this.pingInterval = null;               // Interval for sending pings
+    this.lastPingTime = 0;                  // Last ping timestamp
   }
 
-  // ========== CONECTAR AL SERVIDOR ==========
+  // ========== CONNECT TO SERVER ==========
   connect(token) {
-    // URL con token como query param
+    // URL with token as query parameter
     const wsUrl = `${this.url}?token=${encodeURIComponent(token)}`;
     this.ws = new WebSocket(wsUrl);
 
-    this.updateStatus('Conectando...', 'status-offline');
+    this.updateStatus('Connecting...', 'status-offline');
 
-    // EVENT: Conexión exitosa
+    // EVENT: Successful connection
     this.ws.onopen = () => {
-      console.log('WebSocket Conectado');
+      console.log('WebSocket Connected');
       this.reconnectAttempts = 0;
-      this.updateStatus('Conectado', 'status-online');
+      this.updateStatus('Connected', 'status-online');
       
-      // Enviar ping cada 2 segundos para medir latencia
+      // Send ping every 2 seconds to measure latency
       this.pingInterval = setInterval(() => {
         if (this.ws.readyState === WebSocket.OPEN) {
           this.lastPingTime = performance.now();
@@ -280,29 +279,29 @@ export class ApiService {
       }, 2000);
     };
 
-    // EVENT: Mensaje recibido del servidor
+    // EVENT: Message received from server
     this.ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       
       if (data.type === 'pong') {
-        // Calcular latencia: diferencia desde que se envió ping
+        // Calculate latency: time elapsed since ping sent
         const latency = Math.round(performance.now() - this.lastPingTime);
         const latencyEl = document.getElementById('latency-counter');
-        if(latencyEl) latencyEl.innerText = `Latencia: ${latency} ms`;
+        if(latencyEl) latencyEl.innerText = `Latency: ${latency} ms`;
       } 
       else if (data.type === 'translation' && this.onMessageCallback) {
-        // ⭐ CRÍTICO: cuando llega traducción del servidor
+        // ⭐ CRITICAL: when server returns translation
         // data.payload = { label: "hola", confidence: 0.95, ... }
-        this.onMessageCallback(data.payload);  // Llama callback en Translator.jsx
+        this.onMessageCallback(data.payload);  // Calls callback in Translator.jsx
       }
     };
 
-    // EVENT: Desconexión
+    // EVENT: Disconnection
     this.ws.onclose = (event) => {
-      console.warn('WebSocket Desconectado');
-      this.updateStatus('Desconectado', 'status-offline');
+      console.warn('WebSocket Disconnected');
+      this.updateStatus('Disconnected', 'status-offline');
       clearInterval(this.pingInterval);
-      this.handleReconnect(token);  // Intentar reconectar
+      this.handleReconnect(token);  // Attempt reconnection
     };
 
     // EVENT: Error
@@ -312,32 +311,32 @@ export class ApiService {
     };
   }
 
-  // ========== RECONEXIÓN CON BACKOFF EXPONENCIAL ==========
+  // ========== EXPONENTIAL BACKOFF RECONNECTION ==========
   handleReconnect(token) {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      // Delay exponencial: 1s, 2s, 4s, 8s, 16s
+      // Exponential delay: 1s, 2s, 4s, 8s, 16s
       const delay = this.baseDelay * Math.pow(2, this.reconnectAttempts);
-      console.log(`Reconectando en ${delay}ms... (Intento ${this.reconnectAttempts + 1})`);
+      console.log(`Reconnecting in ${delay}ms... (Attempt ${this.reconnectAttempts + 1})`);
       
       setTimeout(() => {
         this.reconnectAttempts++;
         this.connect(token);
       }, delay);
     } else {
-      this.updateStatus('Fallo conexión', 'status-offline');
+      this.updateStatus('Connection failed', 'status-offline');
     }
   }
 
-  // ========== ACTUALIZAR STATUS EN LA UI ==========
+  // ========== UPDATE STATUS IN UI ==========
   updateStatus(text, className) {
     if (this.onStatusChangeCallback) {
       this.onStatusChangeCallback(text, className);
     }
   }
 
-  // ========== ENVIAR LANDMARKS AL SERVIDOR ==========
+  // ========== SEND LANDMARKS TO SERVER ==========
   sendLandmarks(landmarksData) {
-    // Solo enviar si WebSocket está abierto
+    // Only send if WebSocket is open
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({
         type: 'inference',
@@ -346,7 +345,7 @@ export class ApiService {
     }
   }
 
-  // ========== REGISTRAR CALLBACKS ==========
+  // ========== REGISTER CALLBACKS ==========
   onMessage(callback) {
     this.onMessageCallback = callback;
   }
@@ -355,16 +354,17 @@ export class ApiService {
     this.onStatusChangeCallback = callback;
   }
 }
+```
 
-### **Flujo de Mensajes WebSocket**
+### **WebSocket Message Flow**
 
-
-CLIENTE → SERVIDOR (Translator.jsx → ApiService → Backend)
+```
+CLIENT → SERVER (Translator.jsx → ApiService → Backend)
 {
   "type": "inference",
   "payload": {
     "pose": [
-      {"x": 0.5, "y": 0.3, "z": -0.1},  // 33 landmarks en total
+      {"x": 0.5, "y": 0.3, "z": -0.1},  // 33 landmarks total
       ...
     ],
     "leftHand": [
@@ -378,94 +378,97 @@ CLIENTE → SERVIDOR (Translator.jsx → ApiService → Backend)
   }
 }
 
-SERVIDOR → CLIENTE (Backend → ApiService → Translator.jsx)
+SERVER → CLIENT (Backend → ApiService → Translator.jsx)
 {
   "type": "translation",
-  "payload": "hola"                     // O puede ser:
+  "payload": "hola"                     // Or structured object:
   // {
   //   "label": "hola",
   //   "confidence": 0.95,
   //   "latency_ms": 2.02
   // }
 }
+```
 
-## SERVICIO CRÍTICO #2: MediaPipeEngine.js (Detección)
+---
 
-### **Responsabilidades**
+## CRITICAL SERVICE #2: MediaPipeEngine.js (Detection)
 
-- Inicializar MediaPipe Holistic
-- Capturar video desde cámara
-- Procesar frames en tiempo real
-- Extraer landmarks (pose + manos)
-- Dibujar en canvas (feedback visual)
-- Llamar callback cuando hay landmarks
+### **Responsibilities**
 
-### **Código Desglosado**
+- Initialize MediaPipe Holistic
+- Capture camera video stream
+- Process frames in real time
+- Extract landmarks (pose + hands)
+- Draw on canvas (visual feedback)
+- Invoke callback when landmarks are extracted
 
+### **Code Breakdown**
 
+```javascript
 export class MediaPipeEngine {
   constructor(videoElement, canvasElement, onBatchReady) {
     this.videoElement = videoElement;
     this.canvasElement = canvasElement;
     this.canvasCtx = canvasElement.getContext('2d');
-    this.onBatchReady = onBatchReady;  // Callback a ApiService.sendLandmarks()
+    this.onBatchReady = onBatchReady;  // Callback to ApiService.sendLandmarks()
 
-    // ========== CONFIGURACIÓN FPS ==========
-    this.targetFPS = 15;               // 15 frames por segundo
-    this.frameInterval = 1000 / 15;    // 66.67 ms entre frames
+    // ========== FPS CONFIGURATION ==========
+    this.targetFPS = 15;               // 15 frames per second
+    this.frameInterval = 1000 / 15;    // 66.67 ms between frames
     this.lastFrameTime = 0;
-    this.frameCount = 0;               // Para contar FPS
+    this.frameCount = 0;               // To measure FPS
     this.lastFpsTime = performance.now();
 
-    // ========== INICIALIZAR MEDIAPIPE HOLISTIC ==========
-    // Holistic detecta: pose (33 puntos) + manos izq/der (21 c/u) + cara (opcional)
+    // ========== INITIALIZE MEDIAPIPE HOLISTIC ==========
+    // Holistic detects: pose (33 points) + left/right hands (21 each) + face (optional)
     this.holistic = new window.Holistic({
       locateFile: (file) => 
         `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
     });
 
-    // Opciones de detección
+    // Detection options
     this.holistic.setOptions({
-      modelComplexity: 1,              // 0=lite, 1=full (más preciso)
-      smoothLandmarks: true,           // Suavizar detecciones
-      enableSegmentation: false,       // No necesitamos segmentación
+      modelComplexity: 1,              // 0=lite, 1=full (more precise)
+      smoothLandmarks: true,           // Smooth landmark detections
+      enableSegmentation: false,       // Segmentation not required
       smoothSegmentation: false,
-      refineFaceLandmarks: false,      // No necesitamos face details
-      minDetectionConfidence: 0.5,    // Umbral mínimo para detectar
-      minTrackingConfidence: 0.5      // Umbral mínimo para trackear
+      refineFaceLandmarks: false,      // Detailed face landmarks not required
+      minDetectionConfidence: 0.5,    // Minimum confidence for detection
+      minTrackingConfidence: 0.5      // Minimum confidence for tracking
     });
 
-    // Registrar callback cuando se detectan landmarks
+    // Register callback when landmarks are detected
     this.holistic.onResults((results) => this.onResults(results));
 
-    // ========== INICIALIZAR CÁMARA ==========
+    // ========== INITIALIZE CAMERA ==========
     this.camera = new window.Camera(this.videoElement, {
       onFrame: async () => {
-        // Throttle: procesar solo cada 66ms (15 FPS)
+        // Throttle: process only every 66ms (15 FPS)
         const now = performance.now();
         if (now - this.lastFrameTime >= this.frameInterval) {
           this.lastFrameTime = now;
-          // Enviar frame actual a Holistic para procesamiento
+          // Send current frame to Holistic for processing
           await this.holistic.send({ image: this.videoElement });
         }
       },
-      width: 640,   // Resolución video capturado
+      width: 640,   // Captured video resolution
       height: 480
     });
   }
 
-  // ========== INICIAR CAPTURA ==========
+  // ========== START CAPTURE ==========
   start() {
-    this.camera.start();  // Abre cámara y comienza loop onFrame
-    this.renderLoop();    // Inicia loop de renderizado
+    this.camera.start();  // Opens camera and starts onFrame loop
+    this.renderLoop();    // Starts render loop
   }
 
-  // ========== LOOP DE RENDERIZADO (para mostrar FPS en React) ==========
+  // ========== RENDER LOOP (for displaying FPS in React) ==========
   renderLoop() {
     this.frameCount++;
     const now = performance.now();
     
-    // Cada 1 segundo, actualizar contador FPS
+    // Update FPS counter every 1 second
     if (now - this.lastFpsTime >= 1000) {
       if (this.fpsElement) {
         this.fpsElement.innerText = `FPS: ${this.frameCount}`;
@@ -474,17 +477,17 @@ export class MediaPipeEngine {
       this.lastFpsTime = now;
     }
     
-    // Continuar loop
+    // Continue loop
     window.requestAnimationFrame(() => this.renderLoop());
   }
 
-  // ========== PROCESAR RESULTADOS DE MEDIAPIPE ==========
+  // ========== PROCESS MEDIAPIPE RESULTS ==========
   onResults(results) {
-    // 'results' contiene: { image, poseLandmarks, leftHandLandmarks, rightHandLandmarks, ... }
+    // 'results' contains: { image, poseLandmarks, leftHandLandmarks, rightHandLandmarks, ... }
 
     this.canvasCtx.save();
     
-    // Limpiar canvas y dibujar video frame
+    // Clear canvas and draw video frame
     this.canvasCtx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
     this.canvasCtx.drawImage(
       results.image, 
@@ -493,29 +496,29 @@ export class MediaPipeEngine {
       this.canvasElement.height
     );
 
-    // ========== DIBUJAR POSE ==========
+    // ========== DRAW POSE ==========
     if (results.poseLandmarks) {
-      // Conectores: líneas entre joints (hombro-codo, codo-muñeca, etc)
+      // Connectors: lines between joints (shoulder-elbow, elbow-wrist, etc.)
       window.drawConnectors(
         this.canvasCtx, 
         results.poseLandmarks, 
-        window.POSE_CONNECTIONS,  // Lista de pares de índices a conectar
-        { color: '#00f3ff', lineWidth: 4 }  // Cyan, grueso
+        window.POSE_CONNECTIONS,  // List of index pairs to connect
+        { color: '#00f3ff', lineWidth: 4 }  // Cyan, thick
       );
-      // Puntos: círculos en cada landmark
+      // Points: circles at each landmark
       window.drawLandmarks(
         this.canvasCtx, 
         results.poseLandmarks, 
-        { color: '#ffffff', lineWidth: 2 }  // Blanco
+        { color: '#ffffff', lineWidth: 2 }  // White
       );
     }
 
-    // ========== DIBUJAR MANO IZQUIERDA ==========
+    // ========== DRAW LEFT HAND ==========
     if (results.leftHandLandmarks) {
       window.drawConnectors(
         this.canvasCtx,
         results.leftHandLandmarks,
-        window.HAND_CONNECTIONS,  // 20 conexiones (dedos, palma)
+        window.HAND_CONNECTIONS,  // 20 connections (fingers, palm)
         { color: '#9d4edd', lineWidth: 5 }  // Purple
       );
       window.drawLandmarks(
@@ -525,7 +528,7 @@ export class MediaPipeEngine {
       );
     }
 
-    // ========== DIBUJAR MANO DERECHA ==========
+    // ========== DRAW RIGHT HAND ==========
     if (results.rightHandLandmarks) {
       window.drawConnectors(
         this.canvasCtx,
@@ -542,27 +545,27 @@ export class MediaPipeEngine {
 
     this.canvasCtx.restore();
 
-    // ========== EXTRAER Y ENVIAR LANDMARKS ==========
+    // ========== EXTRACT AND SEND LANDMARKS ==========
     const payload = this.extractLandmarks(results);
     if (this.onBatchReady) {
-      this.onBatchReady(payload);  // Llama a ApiService.sendLandmarks()
+      this.onBatchReady(payload);  // Calls ApiService.sendLandmarks()
     }
   }
 
-  // ========== EXTRAER SOLO COORDENADAS (x, y, z) ==========
+  // ========== EXTRACT ONLY COORDINATES (x, y, z) ==========
   extractLandmarks(results) {
-    // Helper: extrae x, y, z de cada landmark
+    // Helper: extracts x, y, z from each landmark
     const extract = (landmarks) => {
       if (!landmarks) return null;
       return landmarks.map(lm => ({ 
         x: lm.x, 
         y: lm.y, 
         z: lm.z 
-        // Nota: se descarta 'visibility' para reducir payload JSON
+        // Note: 'visibility' discarded to reduce JSON payload size
       }));
     };
 
-    // Retorna estructura normalizada
+    // Return normalized structure
     return {
       pose: extract(results.poseLandmarks),           // 33 landmarks
       leftHand: extract(results.leftHandLandmarks),   // 21 landmarks
@@ -570,66 +573,72 @@ export class MediaPipeEngine {
     };
   }
 }
-### **Visualización en Canvas**
+```
 
+### **Canvas Visualization**
 
+```
 ┌─────────────────────────────────────────┐
 │         CANVAS (640x480)                │
 ├─────────────────────────────────────────┤
 │                                         │
-│  ● (cabeza, cyan)                      │
-│  │ │ (conectores pose, cyan)           │
-│  ○─○ (hombros)                         │
-│  │ │ │ (brazos extendidos)             │
-│ ✓   ✓ (manos, purple con dedos)        │
+│  ● (head, cyan)                         │
+│  │ │ (pose connectors, cyan)            │
+│  ○─○ (shoulders)                        │
+│  │ │ │ (extended arms)                  │
+│ ✓   ✓ (hands, purple with fingers)      │
 │                                         │
 └─────────────────────────────────────────┘
 
-Colores:
-• Pose:     CYAN (#00f3ff)    - esqueleto principal
-• Manos:    PURPLE (#9d4edd)  - dedos y palma
-• Puntos:   WHITE (#ffffff)   - joints individuales
+Colors:
+• Pose:     CYAN (#00f3ff)    - main skeleton
+• Hands:    PURPLE (#9d4edd)  - fingers and palm
+• Points:   WHITE (#ffffff)   - individual joints
+```
 
+---
 
-## 🔐 SERVICIO #3: AuthService.js (Supabase Auth)
+## 🔐 SERVICE #3: AuthService.js (Supabase Auth)
 
-
+```javascript
 export class AuthService {
   async login(email, password) {
-    // Autentica usuario y obtiene JWT token
+    // Authenticates user and obtains JWT token
   }
 
   async register(email, password, fullName) {
-    // Registra nuevo usuario
+    // Registers new user
   }
 
   async resetPassword(email) {
-    // Envía email para reset
+    // Sends password reset email
   }
 
   async logout() {
-    // Cierra sesión actual
+    // Logs out current session
   }
 
   async getSession() {
-    // Obtiene sesión activa del usuario
+    // Retrieves active user session
   }
 
   onAuthStateChange(callback) {
-    // Suscribirse a cambios de autenticación
+    // Subscribe to authentication state changes
   }
 }
+```
 
-## CONTEXTO: ThemeContext.jsx
+---
 
-JavaScript
+## CONTEXT: ThemeContext.jsx
 
-// Context Global para tema oscuro/claro
+```javascript
+// Global context for dark/light theme
 const ThemeContext = createContext();
 
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(() => {
-    // Recuperar del localStorage o usar preferencia del sistema
+    // Retrieve from localStorage or fallback to system preference
     const saved = localStorage.getItem('theme');
     if (saved) return saved;
     return window.matchMedia('(prefers-color-scheme: dark)').matches 
@@ -638,7 +647,7 @@ export const ThemeProvider = ({ children }) => {
   });
 
   useEffect(() => {
-    // Aplicar tema al documento
+    // Apply theme to document
     if (theme === 'dark') {
       document.documentElement.setAttribute('data-theme', 'dark');
     } else {
@@ -659,28 +668,32 @@ export const ThemeProvider = ({ children }) => {
 };
 
 export const useTheme = () => useContext(ThemeContext);
+```
 
-**Uso en componentes**:
+**Usage in components**:
 
-
+```javascript
 const MyComponent = () => {
   const { theme, toggleTheme } = useTheme();
-  return <button onClick={toggleTheme}>Cambiar tema</button>;
+  return <button onClick={toggleTheme}>Toggle Theme</button>;
 };
+```
+
+---
 
 ## 🎯 ROUTING (React Router V7)
 
 ### **App.jsx**
 
-
+```javascript
 function App() {
   return (
     <ThemeProvider>
       <Router>
-        <div className="bg-blob blob-1"></div>  {/* Decoración */}
-        <div className="bg-blob blob-2"></div>  {/* Decoración */}
+        <div className="bg-blob blob-1"></div>  {/* Background decoration */}
+        <div className="bg-blob blob-2"></div>  {/* Background decoration */}
         
-        <Navbar />  {/* Header fijo */}
+        <Navbar />  {/* Fixed header */}
         
         <main>
           <Routes>
@@ -697,77 +710,80 @@ function App() {
     </ThemeProvider>
   );
 }
+```
 
+---
 
-## 🧵CICLO DE VIDA COMPLETO (Diagrama de Flujo)
+## 🧵 COMPLETE LIFECYCLE (Flowchart)
 
-Code
-
-
+```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 1. APP CARGA (index.html → main.jsx → App.jsx)                 │
+│ 1. APP LOADS (index.html → main.jsx → App.jsx)                  │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 2. ThemeProvider envuelve toda la app (contexto tema)           │
+│ 2. ThemeProvider wraps entire app (theme context)               │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 3. Router carga ruta inicial (/ = Home)                         │
+│ 3. Router loads initial route (/ = Home)                         │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 4. Navbar renderizado (fijo en top)                              │
+│ 4. Navbar rendered (fixed at top)                               │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 5. Usuario navega a /translator (clic en botón)                 │
+│ 5. User navigates to /translator (button click)                 │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 6. Translator.jsx monta (useEffect con [])                      │
+│ 6. Translator.jsx mounts (useEffect with [])                    │
 ├─────────────────────────────────────────────────────────────────┤
-│   • Conecta WebSocket                                            │
-│   • Inicializa MediaPipeEngine                                   │
-│   • Inicia captura de cámara                                     │
+│   • Connects WebSocket                                          │
+│   • Initializes MediaPipeEngine                                 │
+│   • Starts camera capture                                       │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 7. LOOP EN TIEMPO REAL                                           │
+│ 7. REAL-TIME LOOP                                               │
 ├─────────────────────────────────────────────────────────────────┤
-│   Cada 66ms (15 FPS):                                            │
-│   • Camera captura frame                                         │
-│   • Holistic procesa                                             │
-│   • onResults() extrae landmarks                                 │
-│   • sendLandmarks() → WebSocket → Backend                        │
-│   • Backend procesa y devuelve traducción                        │
-│   • onMessage() → setTranslation() → UI actualiza                │
+│   Every 66ms (15 FPS):                                          │
+│   • Camera captures frame                                       │
+│   • Holistic processes frame                                    │
+│   • onResults() extracts landmarks                              │
+│   • sendLandmarks() → WebSocket → Backend                       │
+│   • Backend processes and returns translation                   │
+│   • onMessage() → setTranslation() → UI updates                 │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 8. Usuario navega a otra página o recarga                       │
+│ 8. User navigates away or reloads page                          │
 └─────────────────────────────────────────────────────────────────┘
                                ⬇
 ┌─────────────────────────────────────────────────────────────────┐
-│ 9. CLEANUP (return de useEffect)                                │
+│ 9. CLEANUP (useEffect return callback)                          │
 ├─────────────────────────────────────────────────────────────────┤
-│   • Cierra WebSocket                                             │
-│   • Detiene cámara                                               │
-│   • Limpia refs                                                  │
+│   • Closes WebSocket                                            │
+│   • Stops camera                                                │
+│   • Cleans up refs                                              │
 └─────────────────────────────────────────────────────────────────┘
+```
 
-## SISTEMA DE ESTILOS
+---
 
-### **CSS Variables (index.css + App.css)**
+## STYLING SYSTEM
 
+### **CSS Variables (`index.css` + `App.css`)**
 
+```css
 :root {
-  /* Tema claro (defecto) */
-  --text: #6b6375;           /* Texto principal */
+  /* Light theme (default) */
+  --text: #6b6375;           /* Main text */
   --text-h: #08060d;         /* Headings */
-  --bg: #fff;                /* Fondo */
-  --border: #e5e4e7;        /* Bordes */
-  --accent: #aa3bff;        /* Color primario (purple) */
+  --bg: #fff;                /* Background */
+  --border: #e5e4e7;         /* Borders */
+  --accent: #aa3bff;         /* Primary color (purple) */
   --accent-bg: rgba(170, 59, 255, 0.1);
   --accent-border: rgba(170, 59, 255, 0.5);
   
@@ -778,7 +794,7 @@ Code
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Tema oscuro */
+    /* Dark theme */
     --text: #9ca3af;
     --text-h: #f3f4f6;
     --bg: #16171d;
@@ -786,9 +802,11 @@ Code
     --accent: #c084fc;
   }
 }
-### **Clases Reutilizables**
+```
 
+### **Reusable Classes**
 
+```css
 .container {
   max-width: 1200px;
   margin: 0 auto;
@@ -801,7 +819,7 @@ Code
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 12px;
   padding: 1.5rem;
-  /* Efecto glassmorphism */
+  /* Glassmorphism effect */
 }
 
 .btn-primary {
@@ -820,65 +838,65 @@ Code
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
-
-
-## ESTADO GLOBAL (Sin Redux/Zustand)
-
-La app usa **React Context API** para estado mínimo:
-
-- **ThemeContext**: tema oscuro/claro
-
-**¿Por qué no Redux?**
-
-- App es pequeña y componentes no están muy anidados
-- Context API es suficiente para este caso
-- Menos boilerplate, más simple de entender
+```
 
 ---
 
-## HOOKS USADOS
+## GLOBAL STATE (Without Redux/Zustand)
 
-|Hook|Dónde|Propósito|
-|---|---|---|
-|`useState`|Todos los componentes|Gestionar estado local|
-|`useEffect`|Translator.jsx|Iniciar/limpiar servicios|
-|`useRef`|Translator.jsx|Acceso directo a DOM|
-|`useContext`|ThemeToggle.jsx|Acceder a ThemeContext|
-|`useLocation`|Navbar.jsx|Detectar ruta activa|
+The app uses **React Context API** for minimal global state:
+
+- **ThemeContext**: dark/light theme
+
+**Why not Redux?**
+
+- App scope is small and component trees are shallow
+- Context API is sufficient for this use case
+- Less boilerplate, easier to maintain
+
+---
+
+## HOOKS USED
+
+| Hook | Where | Purpose |
+| --- | --- | --- |
+| `useState` | All components | Manage local component state |
+| `useEffect` | Translator.jsx | Initialize and cleanup services |
+| `useRef` | Translator.jsx | Direct DOM / instance access |
+| `useContext` | ThemeToggle.jsx | Access ThemeContext |
+| `useLocation` | Navbar.jsx | Detect active route |
 
 ---
 
 ## BUILD & DEPLOY
 
-### **Desarrollo Local**
+### **Local Development**
 
-bash
-
-
+```bash
 cd expresat/frontend
 npm install
 npm run dev
-# Acceder a http://localhost:5173
+# Access at http://localhost:5173
+```
 
+### **Production**
 
-### **Producción**
-
-bash
-
-
-npm run build  # Genera /dist
-# Deploy /dist a Netlify (automático vía netlify.toml)
+```bash
+npm run build  # Generates /dist
+# Deploy /dist to Netlify (automated via netlify.toml)
+```
 
 ### **Linting**
 
+```bash
+npm run lint  # Oxlint (faster than ESLint)
+```
 
-npm run lint  # Oxlint (más rápido que ESLint)
-
+---
 
 ## RESPONSIVE DESIGN
 
-CSS
-
+```css
 /* Mobile-first */
 @media (max-width: 768px) {
   .desktop-only { display: none; }
@@ -889,40 +907,44 @@ CSS
   }
   
   [style*="grid"] {
-    grid-template-columns: 1fr; /* Stack verticalmente */
+    grid-template-columns: 1fr; /* Vertical stacking */
   }
 }
-## INTEGRACIONES EXTERNAS
-
-|Servicio|Uso|Referencia|
-|---|---|---|
-|**Supabase**|Auth (login/signup)|authService.js|
-|**MediaPipe**|Detección landmarks|mediapipeEngine.js (CDN)|
-|**Lucide React**|Iconos UI|Components, Pages|
-|**React Router**|Navegación|App.jsx|
+```
 
 ---
 
-##  DECISIONES CLAVE EN EL FRONTEND
+## EXTERNAL INTEGRATIONS
 
-1. **WebSocket en lugar de HTTP**: Necesario para streaming en tiempo real (latencia baja)
-2. **MediaPipe CDN en lugar de npm**: Versión pre-compilada desde CDN para evitar bundling de WASM
-3. **Stream mode + buffer**: El frontend envía frame a frame, el backend acumula en buffer
-4. **Canvas en lugar de video visible**: Mayor control visual (dibuja landmarks)
-5. **React sin TypeScript**: Proyecto de prototipo rápido
-6. **Contexto simple en lugar de Redux**: App pequeña, no justifica complejidad
+| Service | Usage | Reference |
+| --- | --- | --- |
+| **Supabase** | Auth (login/signup) | authService.js |
+| **MediaPipe** | Landmark detection | mediapipeEngine.js (CDN) |
+| **Lucide React** | UI Icons | Components, Pages |
+| **React Router** | Navigation | App.jsx |
 
 ---
 
-##  PUNTOS CRÍTICOS PARA EL AGENTE
+## KEY FRONTEND DECISIONS
 
-1. **Translator.jsx es la página principal** - todo sucede aquí
-2. **MediaPipeEngine maneja captura** - 15 FPS throttled
-3. **ApiService maneja WebSocket** - stream mode (frame por frame)
-4. **Backend acumula 15 frames antes de inferencia** - cliente no necesita saber
-5. **Estado React mínimo**: translation, status, fps
-6. **Refs (no state) para**: video, canvas, engine, api
-7. **useEffect [] = una sola inicialización** - el cleanup detiene cámara/ws
-8. **Estilos CSS Variables** - tema oscuro/claro dinámico
-9. **No autenticación completamente funcional** - usa 'mock_token' por ahora
-10. **Glassmorphism UI** - backdrop-filter blur, rgba colors
+1. **WebSocket instead of HTTP**: Required for low-latency real-time streaming
+2. **MediaPipe CDN instead of npm**: Pre-compiled version loaded from CDN to avoid WASM bundler complexities
+3. **Stream mode + buffer**: Frontend streams frame by frame; backend buffers 15 frames
+4. **Canvas instead of visible video**: Greater visual control (draws overlay landmarks)
+5. **React without TypeScript**: Fast prototype development
+6. **Simple Context instead of Redux**: Small app scale does not justify extra complexity
+
+---
+
+## CRITICAL POINTS FOR THE AGENT
+
+1. **Translator.jsx is the main page** - core functionality lives here
+2. **MediaPipeEngine handles capture** - 15 FPS throttled
+3. **ApiService handles WebSocket** - stream mode (frame by frame)
+4. **Backend accumulates 15 frames before inference** - transparent to client
+5. **Minimal React state**: translation, status, fps
+6. **Refs (not state) used for**: video, canvas, engine, api
+7. **useEffect [] = single initialization** - cleanup stops camera and WebSocket
+8. **CSS Variables styling** - dynamic dark/light theme
+9. **Authentication not fully implemented** - uses 'mock_token' for now
+10. **Glassmorphism UI** - backdrop-filter blur, rgba translucent colors

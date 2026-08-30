@@ -1,63 +1,63 @@
 expresat/
-├── backend/                    # Servidor FastAPI + WebSocket
-│   ├── main.py                # Punto entrada, gestión de conexiones WebSocket
-│   ├── websockets_handler.py  # Manejador legacy (poco usado en v2)
+├── backend/                    # FastAPI + WebSocket server
+│   ├── main.py                # Entry point, WebSocket connection management
+│   ├── websockets_handler.py  # Legacy handler (rarely used in v2)
 │   ├── requirements.txt       # Dependencies: fastapi, uvicorn, onnxruntime, numpy
-│   └── requirements-train.txt # Deps adicionales: torch, torchvision (para entrenamiento)
+│   └── requirements-train.txt # Additional deps: torch, torchvision (for training)
 │
-├── models/                    # Motor de IA + entrenamiento
-│   ├── inference_engine.py    # Clase principal: carga ONNX, preprocesamiento, inferencia
-│   ├── train_and_export.py    # Pipeline: PyTorch → ONNX → cuantización INT8
-│   ├── inference.py           # Interfaz alternativa (deprecated)
-│   └── exported_model/        # Directorio con modelo entrenado
-│       ├── expresat_gru_int8.onnx      # Modelo cuantizado (preferido)
-│       ├── expresat_gru_float32.onnx   # Modelo sin cuantizar
-│       └── model_metadata.json         # Metadatos (labels, dimensiones, etc.)
+├── models/                    # AI Engine + training
+│   ├── inference_engine.py    # Main class: ONNX loading, preprocessing, inference
+│   ├── train_and_export.py    # Pipeline: PyTorch → ONNX → INT8 quantization
+│   ├── inference.py           # Alternative interface (deprecated)
+│   └── exported_model/        # Directory containing trained model
+│       ├── expresat_gru_int8.onnx      # Quantized model (preferred)
+│       ├── expresat_gru_float32.onnx   # Unquantized model
+│       └── model_metadata.json         # Metadata (labels, dimensions, etc.)
 │
 ├── frontend/                  # React + Vite + MediaPipe.js
 │   ├── src/
-│   │   ├── App.jsx            # Raíz de la app, rutas principales
-│   │   ├── App.css            # Estilos glassmorphism
-│   │   ├── main.jsx           # Punto entrada React
-│   │   ├── index.css          # Estilos globales
+│   │   ├── App.jsx            # App root, main routes
+│   │   ├── App.css            # Glassmorphism styles
+│   │   ├── main.jsx           # React entry point
+│   │   ├── index.css          # Global styles
 │   │   │
-│   │   ├── components/        # Componentes reutilizables
-│   │   │   ├── Navbar.jsx     # Barra superior, nav links
-│   │   │   ├── Footer.jsx     # Pie de página
-│   │   │   ├── ThemeToggle.jsx# Switch tema oscuro/claro
-│   │   │   └── EnvironmentSelector.jsx # Selector dev/prod
+│   │   ├── components/        # Reusable components
+│   │   │   ├── Navbar.jsx     # Top bar, nav links
+│   │   │   ├── Footer.jsx     # Page footer
+│   │   │   ├── ThemeToggle.jsx# Dark/light theme toggle
+│   │   │   └── EnvironmentSelector.jsx # Dev/prod selector
 │   │   │
-│   │   ├── pages/             # Páginas principales
+│   │   ├── pages/             # Main pages
 │   │   │   ├── Home.jsx       # Landing page
-│   │   │   ├── Translator.jsx # PÁGINA PRINCIPAL: cámara + traducción en tiempo real
-│   │   │   ├── Auth.jsx       # Login/signup con Supabase
-│   │   │   ├── Learn.jsx      # Tutoriales
-│   │   │   └── About.jsx      # Información del proyecto
+│   │   │   ├── Translator.jsx # MAIN PAGE: camera + real-time translation
+│   │   │   ├── Auth.jsx       # Login/signup with Supabase
+│   │   │   ├── Learn.jsx      # Tutorials
+│   │   │   └── About.jsx      # Project information
 │   │   │
-│   │   ├── services/          # Servicios / APIs
-│   │   │   ├── apiService.js  # Conexión WebSocket al backend
+│   │   ├── services/          # Services / APIs
+│   │   │   ├── apiService.js  # WebSocket connection to backend
 │   │   │   ├── authService.js # Supabase auth, JWT tokens
-│   │   │   └── mediapipeEngine.js # Inicialización de MediaPipe Holistic
+│   │   │   └── mediapipeEngine.js # MediaPipe Holistic initialization
 │   │   │
 │   │   ├── context/           # React Context API
-│   │   ├── styles/            # CSS modular
-│   │   └── assets/            # Imágenes, íconos
+│   │   ├── styles/            # Modular CSS
+│   │   └── assets/            # Images, icons
 │   │
-│   ├── index.html             # HTML de entrada
+│   ├── index.html             # Entry HTML
 │   ├── package.json           # Dependencies: react, vite, lucide-react, supabase-js
-│   ├── vite.config.js         # Config builder Vite
-│   └── .oxlintrc.json         # Configuración linter
+│   ├── vite.config.js         # Vite builder config
+│   └── .oxlintrc.json         # Linter configuration
 │
-├── frontend-legacy/           # Versión anterior (HTML vanilla + JS puro)
+├── frontend-legacy/           # Legacy version (Vanilla HTML + Pure JS)
 │
-├── docs/                      # Documentación
-│   ├── BACKEND_TECHNICAL_SPEC.md # Especificación completa de arquitectura IA
-│   └── deploy.md              # Instrucciones deployment
+├── docs/                      # Documentation
+│   ├── BACKEND_TECHNICAL_SPEC.md # Full AI architecture specification
+│   └── deploy.md              # Deployment instructions
 │
-├── supabase/                  # Config Supabase (auth, DB)
+├── supabase/                  # Supabase config (auth, DB)
 │
-├── netlify.toml               # Config deployment Netlify
+├── netlify.toml               # Netlify deployment config
 │
-├── exported_model/            # Symlink a models/exported_model/ (para acceso raíz)
+├── exported_model/            # Symlink to models/exported_model/ (for root access)
 │
-└── README.md                  # Documentación principal
+└── README.md                  # Main documentation

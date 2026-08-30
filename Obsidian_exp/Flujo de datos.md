@@ -1,5 +1,5 @@
-[Cámara] → [MediaPipe Holistic] → [15 frames de landmarks] 
+[Camera] → [MediaPipe Holistic] → [15 landmark frames] 
     ↓ (WebSocket)
-[Backend] → [Preprocesamiento NumPy] → [ONNX Runtime]
+[Backend] → [NumPy Preprocessing] → [ONNX Runtime]
     ↓
-[Softmax + Umbral confianza] → [Traducción al cliente]
+[Softmax + Confidence Threshold] → [Client Translation]

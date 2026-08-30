@@ -1,42 +1,64 @@
-## Conceptos Clave
+## Key Concepts
 
-1. **LSTM**: Un tipo de red neuronal recurrente que es capaz de aprender dependencias a largo plazo en secuencias de datos.
-2. **Puntos Clave**: Coordenadas que representan la posición de diferentes partes del cuerpo y las manos, extraídas de un sistema de detección como MediaPipe.
-3. **Secuencia**: Una serie de puntos clave que se utilizan como entrada para el modelo LSTM para hacer predicciones.
-4. **Umbral de Confianza**: Un valor que determina si la predicción realizada por el modelo es suficientemente confiable para ser considerada válida.
+1. **LSTM**: A type of recurrent neural network capable of learning long-term dependencies in sequence data.
+2. **Keypoints**: Coordinates representing positions of various body parts and hands, extracted by a detection system such as MediaPipe.
+3. **Sequence**: A series of keypoints used as input to the model to make predictions.
+4. **Confidence Threshold**: A value determining whether a prediction made by the model is sufficiently confident to be deemed valid.
 
-## Estructura del Código
+## Code Structure
 
-El código se organiza en una clase llamada `SignLanguagePredictor`, que contiene métodos para inicializar el modelo, extraer puntos clave y procesar cada frame de entrada. A continuación, se describen los componentes principales:
+The code is organized into a class named `SignLanguagePredictor`, containing methods to initialize the model, extract keypoints, and process each input frame. Below are the main components:
 
-- **`__init__`**: Inicializa la clase, carga el modelo (aunque en este caso está comentado), y establece parámetros como la longitud de la secuencia y el umbral de confianza.
-- **`extract_keypoints`**: Extrae y normaliza los puntos clave de un diccionario de landmarks proporcionado por MediaPipe.
-- **`process_frame`**: Procesa un frame de entrada, extrae los puntos clave, los agrega a la secuencia y realiza la inferencia si la secuencia está completa.
+- **`__init__`**: Initializes the class, loads the model (commented out in this case), and sets parameters such as sequence length and confidence threshold.
+- **`extract_keypoints`**: Extracts and normalizes keypoints from a landmark dictionary provided by MediaPipe.
+- **`process_frame`**: Processes an input frame, extracts keypoints, appends them to the sequence, and runs inference if the sequence is complete.
 
-## Ejemplos de Código
+## Code Examples
 
-Aquí hay un desglose de las partes más importantes del código:
+Here is a breakdown of the most important parts of the code:
 
-### Inicialización de la Clase
+### Class Initialization
 
-language-python
+```python
+class SignLanguagePredictor:
+    def __init__(self):
+        self.sequence = []
+        self.sequence_length = 30
+        self.threshold = 0.8
+        self.actions = ['Hola', 'Gracias', 'Por favor', 'Adios']
+```
 
-`class SignLanguagePredictor:     def __init__(self):         self.sequence = []         self.sequence_length = 30         self.threshold = 0.8         self.actions = ['Hola', 'Gracias', 'Por favor', 'Adios']`
+In this snippet, variables required for predictor operation are initialized. The `actions` list contains potential sign language gestures the model can predict.
 
-En este fragmento, se inicializan las variables necesarias para el funcionamiento del predictor. La lista `actions` contiene las posibles señas que el modelo puede predecir.
+### Keypoint Extraction
 
-### Extracción de Puntos Clave
+```python
+def extract_keypoints[[ENTRENO Y EXPORTACION]](self, landmarks_dict):
+    pose = np.array([[res['x'], res['y'], res['z']] for res in landmarks_dict['pose']]).flatten() if landmarks_dict.get('pose') else np.zeros(33*3)
+    lh = np.array([[res['x'], res['y'], res['z']] for res in landmarks_dict['leftHand']]).flatten() if landmarks_dict.get('leftHand') else np.zeros(21*3)
+    rh = np.array([[res['x'], res['y'], res['z']] for res in landmarks_dict['rightHand']]).flatten() if landmarks_dict.get('rightHand') else np.zeros(21*3)
+    return np.concatenate([pose, lh, rh])
+```
 
-language-python
+This method takes a landmark dictionary and extracts pose and hand coordinates, flattening them into a single NumPy array.
 
-`def extract_keypoints[[ENTRENO Y EXPORTACION]](self, landmarks_dict):     pose = np.array([[res['x'], res['y'], res['z']] for res in landmarks_dict['pose']]).flatten() if landmarks_dict.get('pose') else np.zeros(33*3)     lh = np.array([[res['x'], res['y'], res['z']] for res in landmarks_dict['leftHand']]).flatten() if landmarks_dict.get('leftHand') else np.zeros(21*3)     rh = np.array([[res['x'], res['y'], res['z']] for res in landmarks_dict['rightHand']]).flatten() if landmarks_dict.get('rightHand') else np.zeros(21*3)          return np.concatenate([pose, lh, rh])`
+### Frame Processing
 
-Este método toma un diccionario de landmarks y extrae las coordenadas de la pose y las manos, normalizándolas en un solo array de NumPy.
+```python
+def process_frame(self, landmarks_dict):
+    if not landmarks_dict:
+        return None
 
-### Procesamiento de Frames
+    keypoints = self.extract_keypoints(landmarks_dict)
+    self.sequence.append(keypoints)
+    self.sequence = self.sequence[-self.sequence_length:]
 
-language-python
+    if len(self.sequence) == self.sequence_length:
+        mock_res = random.choice(self.actions)
+        self.sequence = []
+        return f"Detected sign: {mock_res}"
 
-`def process_frame(self, landmarks_dict):     if not landmarks_dict:         return None                  keypoints = self.extract_keypoints(landmarks_dict)     self.sequence.append(keypoints)     self.sequence = self.sequence[-self.sequence_length:]          if len(self.sequence) == self.sequence_length:         mock_res = random.choice(self.actions)         self.sequence = []         return f"Seña detectada: {mock_res}"              return None`
+    return None
+```
 
-Aquí, el método procesa un frame, extrae los puntos clave y los agrega a la secuencia. Si la secuencia alcanza la longitud requerida, se simula una predicción aleatoria de las acciones.
+Here, the method processes a frame, extracts keypoints, and adds them to the sequence. If the sequence reaches the required length, a mock random prediction of the actions is returned.

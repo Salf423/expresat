@@ -1,291 +1,317 @@
+| Region | MediaPipe Landmarks | Coords | Total |
+| --- | --- | --- | --- |
+| **Upper Pose** | 0, 11-22 (head, shoulders, elbows, wrists) | x, y, z, visibility (4D) | 13 × 4 = **52** |
+| **Left Hand** | 0-20 (21 points) | x, y, z (3D) | 21 × 3 = **63** |
+| **Right Hand** | 0-20 (21 points) | x, y, z (3D) | 21 × 3 = **63** |
+| **TOTAL** | | | **178 features** |
 
-| Región             | Landmarks MediaPipe                        | Coords                   | Total           |
-| ------------------ | ------------------------------------------ | ------------------------ | --------------- |
-| **Pose Superior**  | 0, 11-22 (cabeza, hombros, codos, muñecas) | x, y, z, visibility (4D) | 13 × 4 = **52** |
-| **Mano Izquierda** | 0-20 (21 puntos)                           | x, y, z (3D)             | 21 × 3 = **63** |
-| **Mano Derecha**   | 0-20 (21 puntos)                           | x, y, z (3D)             | 21 × 3 = **63** |
-| **TOTAL**          |                                            |                          |                 |
-### **Arquitectura del Modelo**
+### **Model Architecture**
 
-**Nombre**: `SignLanguageGRU` (PyTorch)
+**Name**: `SignLanguageGRU` (PyTorch)
 
 - **Input**: `(batch, 15 frames, 178 features)`
-- **GRU Layer**: 64 hidden units, unidireccional (1 capa)
-- **Classifier Head**: Linear(64→32) + ReLU + Dropout(0.3) + Linear(32→num_clases)
-- **Total de parámetros**: ~12,000 (ultra-ligero)
-- **¿Por qué GRU?**: 25% menos parámetros que LSTM con mismo rendimiento en secuencias cortas (15 frames).
+- **GRU Layer**: 64 hidden units, unidirectional (1 layer)
+- **Classifier Head**: Linear(64→32) + ReLU + Dropout(0.3) + Linear(32→num_classes)
+- **Total Parameters**: ~12,000 (ultra-lightweight)
+- **Why GRU?**: 25% fewer parameters than LSTM with equal performance on short sequences (15 frames).
 
-**Optimización a ONNX**:
+**ONNX Optimization**:
 
-1. Exportar desde PyTorch con opset 17
-2. Aplicar cuantización dinámica INT8
-3. Resultado: **4 KB modelo + 193 KB datos** (95% más pequeño que float32)
+1. Export from PyTorch using opset 17
+2. Apply INT8 dynamic quantization
+3. Result: **4 KB model + 193 KB data** (95% smaller than float32)
 
-### **Preprocesamiento (Función `preprocess_batch` en inference_engine.py)**
+### **Preprocessing (`preprocess_batch` function in `inference_engine.py`)**
 
+```python
 # Input: raw_frames = [frame1, frame2, ..., frame15]
-# Cada frame: {"pose": [...], "leftHand": [...], "rightHand": [...]}
+# Each frame: {"pose": [...], "leftHand": [...], "rightHand": [...]}
 
 def preprocess_batch(raw_frames):
-    # 1. Extrae pose superior (13 landmarks × 4 coords) → 52D
-    # 2. Extrae mano izquierda (21 landmarks × 3 coords) → 63D
-    # 3. Extrae mano derecha (21 landmarks × 3 coords) → 63D
-    # 4. Normaliza respecto a hombros
-    # 5. Retorna tensor (1, 15, 178) dtype=float32
+    # 1. Extract upper pose (13 landmarks × 4 coords) → 52D
+    # 2. Extract left hand (21 landmarks × 3 coords) → 63D
+    # 3. Extract right hand (21 landmarks × 3 coords) → 63D
+    # 4. Normalize relative to shoulders
+    # 5. Return tensor (1, 15, 178) dtype=float32
+```
 
-### **Inferencia (Función `predict` en inference_engine.py)**
+### **Inference (`predict` function in `inference_engine.py`)**
 
+```python
 def predict(raw_frames: list[dict]) -> dict:
-    # 1. Preprocesa: raw_frames → tensor (1, 15, 178)
-    # 2. Ejecuta ONNX Runtime (thread-safe con lock)
-    # 3. Calcula softmax sobre logits
-    # 4. Aplica confidence_threshold (default 0.5)
-    # 5. Retorna:
+    # 1. Preprocess: raw_frames → tensor (1, 15, 178)
+    # 2. Run ONNX Runtime (thread-safe with lock)
+    # 3. Compute softmax over logits
+    # 4. Apply confidence_threshold (default 0.5)
+    # 5. Return:
     return {
-        "label": "hola",              # Clase predicha
-        "confidence": 0.95,           # Probabilidad
-        "latency_ms": 2.02,           # Tiempo total
-        "all_probabilities": {...}    # Top-5 predicciones
+        "label": "hola",              # Predicted class
+        "confidence": 0.95,           # Probability
+        "latency_ms": 2.02,           # Total execution time
+        "all_probabilities": {...}    # Top-5 predictions
     }
+```
+
 ## BACKEND (FastAPI + WebSocket)
 
-### **Archivo Principal: `expresat/backend/main.py`**
+### **Main File: `expresat/backend/main.py`**
 
-**Funciones Clave**:
+**Key Functions**:
 
-|Función|Propósito|
-|---|---|
-|`lifespan(app)`|Inicializa/limpia servidor; carga modelo ONNX al startup|
-|`ConnectionManager`|Gestiona conexiones WebSocket activas (list de clientes)|
-|`get_inference_engine()`|Getter para acceder al motor singleton globalmente|
-|`run_inference_async(frames)`|Offload inferencia a thread separado (no bloquea event loop)|
-|`verify_supabase_token(token)`|Verifica JWT del cliente (dev: acepta cualquier token)|
-|`@app.websocket("/ws/translate")`|Endpoint principal; soporta batch mode + stream mode|
-|`@app.websocket("/ws")`|Legacy; redirige a `/ws/translate`|
-|`@app.get("/health")`|Health check con info del modelo|
-|`@app.get("/labels")`|Retorna lista de señas reconocidas|
+| Function | Purpose |
+| --- | --- |
+| `lifespan(app)` | Initializes/cleans up server; loads ONNX model at startup |
+| `ConnectionManager` | Manages active WebSocket connections (client list) |
+| `get_inference_engine()` | Getter to access global engine singleton |
+| `run_inference_async(frames)` | Offloads inference to a separate thread (non-blocking for event loop) |
+| `verify_supabase_token(token)` | Verifies client JWT (dev mode: accepts any token) |
+| `@app.websocket("/ws/translate")` | Main endpoint; supports batch mode + stream mode |
+| `@app.websocket("/ws")` | Legacy endpoint; redirects to `/ws/translate` |
+| `@app.get("/health")` | Health check returning model metadata |
+| `@app.get("/labels")` | Returns list of recognized sign labels |
 
-### **Protocolo WebSocket**
+### **WebSocket Protocol**
 
-**Cliente → Servidor**:
-json
-// BATCH MODE (recomendado)
+**Client → Server**:
+```json
+// BATCH MODE (recommended)
 {"type": "inference", "payload": [frame1, frame2, ..., frame15]}
 
-// STREAM MODE (retrocompatible)
+// STREAM MODE (backwards-compatible)
 {"type": "inference", "payload": frame_dict}
 
 // PING
 {"type": "ping"}
+```
 
-**Servidor → Cliente**:
-json:
+**Server → Client**:
+```json
 {"type": "translation", "payload": {"label": "hola", "confidence": 0.95, ...}}
 {"type": "pong"}
-{"type": "error", "payload": "mensaje"}
+{"type": "error", "payload": "message"}
+```
 
-### **Variables de Entorno**
+### **Environment Variables**
 
-SUPABASE_URL        # URL de proyecto Supabase
-SUPABASE_KEY        # Service role key o anon key
-MODEL_DIR           # Path a exported_model/ (default: ../models/exported_model)
-CONFIDENCE_THRESHOLD # Mínimo de confianza (default: 0.5)
-CORS_ORIGINS        # Dominios permitidos (default: "*")
-PORT                # Puerto (default: 8000)
-HOST                # Host (default: 0.0.0.0)
+```env
+SUPABASE_URL         # Supabase project URL
+SUPABASE_KEY         # Service role key or anon key
+MODEL_DIR            # Path to exported_model/ (default: ../models/exported_model)
+CONFIDENCE_THRESHOLD # Minimum confidence threshold (default: 0.5)
+CORS_ORIGINS         # Allowed origins (default: "*")
+PORT                 # Port number (default: 8000)
+HOST                 # Host address (default: 0.0.0.0)
+```
 
-### **Ejecución**
-# Instalación
+### **Execution**
+
+```bash
+# Installation
 cd expresat/backend
 pip install -r requirements.txt
 
-# Ejecución
+# Execution
 uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
-# NOTA: --workers 1 porque el modelo ONNX se carga una sola vez en memoria
+# NOTE: --workers 1 because the ONNX model is loaded once in memory
 
 # Health check
 curl http://localhost:8000/health
+```
 
-## MODELOS (Entrenamiento & Exportación)
+## MODELS (Training & Export)
 
-### **Archivo Principal: `expresat/models/train_and_export.py`**
+### **Main File: `expresat/models/train_and_export.py`**
 
-**Pipeline Completo**:
+**Full Pipeline**:
 
+```bash
 python train_and_export.py \
     --epochs 50 \
     --output ./exported_model \
     --labels "hola" "gracias" "adios" ... \
     --benchmark
+```
 
-**Pasos Internos**:
+**Internal Steps**:
 
-1. **Construir modelo** → `SignLanguageGRU()`
-2. **Entrenar** → 3000 muestras sintéticas, 50 épocas, loss = CrossEntropyLoss
-3. **Exportar a ONNX** → `expresat_gru_float32.onnx` (opset 17)
-4. **Cuantizar INT8** → `expresat_gru_int8.onnx` (4x más pequeño)
-5. **Guardar metadatos** → `model_metadata.json` (labels, arquitectura, etc.)
-6. **Benchmark** → Mide latencia en 100 corridas
+1. **Build model** → `SignLanguageGRU()`
+2. **Train** → 3000 synthetic samples, 50 epochs, loss = CrossEntropyLoss
+3. **Export to ONNX** → `expresat_gru_float32.onnx` (opset 17)
+4. **Quantize INT8** → `expresat_gru_int8.onnx` (4x smaller)
+5. **Save metadata** → `model_metadata.json` (labels, architecture, etc.)
+6. **Benchmark** → Measure latency over 100 runs
 
-**Salida de Archivos**:
+**File Output**:
 
+```
 exported_model/
-├── expresat_gru.pt              # Checkpoint PyTorch
-├── expresat_gru_float32.onnx    # Modelo sin cuantizar
-├── expresat_gru_int8.onnx       # Modelo cuantizado (usado en prod)
-└── model_metadata.json          # Metadatos JSON
+├── expresat_gru.pt              # PyTorch checkpoint
+├── expresat_gru_float32.onnx    # Unquantized model
+├── expresat_gru_int8.onnx       # Quantized model (used in production)
+└── model_metadata.json          # JSON Metadata
+```
 
 ### **InferenceEngine (`expresat/models/inference_engine.py`)**
 
-**Métodos Principales**:
+**Main Methods**:
 
-|Método|Input|Output|
-|---|---|---|
-|`__init__(model_dir, threshold)`|Path al modelo|Sesión ONNX cargada|
-|`preprocess_batch(raw_frames)`|15 frames de MediaPipe|Tensor (1, 15, 178)|
-|`_extract_pose_upper(pose)`|33 landmarks pose|Array (52,)|
-|`_extract_hand(hand)`|21 landmarks mano|Array (63,)|
-|`_normalize_to_shoulders(features, pose)`|Features + pose|Features normalizados|
-|`predict(raw_frames)`|15 frames|{"label", "confidence", "latency_ms", ...}|
-|`get_info()`|-|Info del motor (para health checks)|
-
+| Method | Input | Output |
+| --- | --- | --- |
+| `__init__(model_dir, threshold)` | Path to model directory | Loaded ONNX session |
+| `preprocess_batch(raw_frames)` | 15 MediaPipe frames | Tensor (1, 15, 178) |
+| `_extract_pose_upper(pose)` | 33 pose landmarks | Array (52,) |
+| `_extract_hand(hand)` | 21 hand landmarks | Array (63,) |
+| `_normalize_to_shoulders(features, pose)` | Features + pose | Normalized features |
+| `predict(raw_frames)` | 15 frames | {"label", "confidence", "latency_ms", ...} |
+| `get_info()` | - | Engine info (for health checks) |
 
 ## FRONTEND (React + Vite + MediaPipe.js)
 
-### **Páginas Principales**
+### **Main Pages**
 
-|Página|Archivo|Descripción|
-|---|---|---|
-|**Home**|`pages/Home.jsx`|Landing page, bienvenida|
-|**Translator**|`pages/Translator.jsx`|**PRINCIPAL**: captura cámara en tiempo real|
-|**Auth**|`pages/Auth.jsx`|Login/signup con Supabase|
-|**Learn**|`pages/Learn.jsx`|Tutoriales de señas|
-|**About**|`pages/About.jsx`|Info del proyecto|
+| Page | File | Description |
+| --- | --- | --- |
+| **Home** | `pages/Home.jsx` | Landing page, welcome screen |
+| **Translator** | `pages/Translator.jsx` | **MAIN**: Real-time camera stream capture |
+| **Auth** | `pages/Auth.jsx` | Login/signup with Supabase |
+| **Learn** | `pages/Learn.jsx` | Sign language tutorials |
+| **About** | `pages/About.jsx` | Project information |
 
-### **Componentes Reutilizables**
+### **Reusable Components**
 
-|Componente|Propósito|
-|---|---|
-|`Navbar.jsx`|Navegación, links a páginas|
-|`Footer.jsx`|Pie de página, info legal|
-|`ThemeToggle.jsx`|Switch tema oscuro/claro|
-|`EnvironmentSelector.jsx`|Selector dev/prod API|
+| Component | Purpose |
+| --- | --- |
+| `Navbar.jsx` | Navigation, page links |
+| `Footer.jsx` | Footer, legal info |
+| `ThemeToggle.jsx` | Dark/light theme toggle |
+| `EnvironmentSelector.jsx` | Dev/prod API selector |
 
-### **Servicios (APIs/Integraciones)**
+### **Services (APIs/Integrations)**
 
-|Servicio|Función|
-|---|---|
-|`apiService.js`|**CRÍTICO**: WebSocket al backend, envía landmarks|
-|`authService.js`|Login Supabase, obtiene JWT token|
-|`mediapipeEngine.js`|Inicializa MediaPipe Holistic, extrae landmarks del video|
+| Service | Function |
+| --- | --- |
+| `apiService.js` | **CRITICAL**: Backend WebSocket connection, sends landmarks |
+| `authService.js` | Supabase login, retrieves JWT token |
+| `mediapipeEngine.js` | Initializes MediaPipe Holistic, extracts video landmarks |
 
-### **Flujo Principal en Translator.jsx**
+### **Main Flow in `Translator.jsx`**
 
-1. Inicializar MediaPipe Holistic
-2. Abrir cámara, capturar frames en tiempo real
-3. Para cada frame:
-   - Extraer landmarks con MediaPipe
-   - Acumular en buffer de 15 frames
-   - Cuando buffer lleno: enviar vía WebSocket al backend
-4. Recibir traducción del servidor
-5. Mostrar label en UI
+1. Initialize MediaPipe Holistic
+2. Open camera, capture real-time frames
+3. For each frame:
+   - Extract landmarks with MediaPipe
+   - Accumulate in 15-frame buffer
+   - When buffer is full: send via WebSocket to backend
+4. Receive translation from server
+5. Display label in UI
 
-### **Stack Frontend**
+### **Frontend Stack**
 
 - **Framework**: React 19.2.7
 - **Build Tool**: Vite 8.1.0
 - **Routing**: React Router 7.18.0
-- **UI Kit**: Lucide React 1.21.0 (iconos)
+- **UI Kit**: Lucide React 1.21.0 (icons)
 - **Backend**: Supabase JS 2.109.0 (auth + real-time)
 - **Linter**: Oxlint 1.69.0
 
-### **Ejecución**
+### **Execution**
 
+```bash
 cd expresat/frontend
 npm install
-npm run dev        # Dev server con hot-reload
-npm run build      # Build para producción
-npm run lint       # Lint código
+npm run dev        # Dev server with hot-reload
+npm run build      # Build for production
+npm run lint       # Lint code
+```
 
-## CARACTERÍSTICAS TÉCNICAS
+## TECHNICAL FEATURES
 
 ### **Performance**
 
-|Métrica|Valor|
-|---|---|
-|Tiempo Inferencia ONNX|2.02 ms|
-|Latencia WebSocket (end-to-end)|~85 ms|
-|Tamaño Modelo (INT8)|4 KB|
-|Consumo RAM Backend|< 100 MB|
-|FPS Captura|15 FPS|
-|Buffer de Secuencia|15 frames = 1 segundo|
+| Metric | Value |
+| --- | --- |
+| ONNX Inference Time | 2.02 ms |
+| WebSocket Latency (end-to-end) | ~85 ms |
+| Model Size (INT8) | 4 KB |
+| Backend RAM Usage | < 100 MB |
+| Capture FPS | 15 FPS |
+| Sequence Buffer | 15 frames = 1 second |
 
-### **Dependencias Críticas**
+### **Critical Dependencies**
 
 **Backend** (`requirements.txt`):
-
-fastapi==0.115.12          # Framework web asíncrono
+```text
+fastapi==0.115.12          # Asynchronous web framework
 uvicorn==0.34.3            # ASGI server
-onnxruntime==1.22.0        # Motor inferencia (CPU-only)
-numpy==2.2.6               # Procesamiento numérico
+onnxruntime==1.22.0        # Inference engine (CPU-only)
+numpy==2.2.6               # Numerical processing
 websockets==15.0.1         # WebSocket support
-pydantic==2.11.3           # Validación datos
+pydantic==2.11.3           # Data validation
+```
 
 **Frontend** (`package.json`):
-
+```text
 react                      # UI library
 vite                       # Build tool
 react-router-dom           # Routing
 @supabase/supabase-js      # Auth + DB
-lucide-react               # Iconos
+lucide-react               # Icons
+```
 
-## AUTENTICACIÓN (Supabase)
+## AUTHENTICATION (Supabase)
 
-- **Sistema**: JWT tokens vía Supabase
-- **Flujo**:
-    1. Usuario login en `Auth.jsx`
-    2. Recibe token JWT
-    3. Envía token en query param WebSocket: `ws://backend/ws/translate?token=xxx`
-    4. Backend valida token (dev: acepta cualquiera)
-- **Archivo**: `expresat/frontend/src/services/authService.js`
+- **System**: JWT tokens via Supabase
+- **Flow**:
+    1. User logs in on `Auth.jsx`
+    2. Receives JWT token
+    3. Sends token as WebSocket query parameter: `ws://backend/ws/translate?token=xxx`
+    4. Backend validates token (dev mode: accepts any)
+- **File**: `expresat/frontend/src/services/authService.js`
 
 ---
 
-## DOCUMENTACIÓN TÉCNICA
+## TECHNICAL DOCUMENTATION
 
-**Archivo Clave**: `expresat/docs/BACKEND_TECHNICAL_SPEC.md`
+**Key File**: `expresat/docs/BACKEND_TECHNICAL_SPEC.md`
 
-Contiene:
+Contains:
 
-- Arquitectura de alto nivel
-- Feature engineering detallado
-- Normalización shoulder-relative
-- Protocolo WebSocket
-- Métricas de rendimiento
-- Instrucciones para entrenar con datos reales
+- High-level architecture
+- Detailed feature engineering
+- Shoulder-relative normalization
+- WebSocket protocol
+- Performance metrics
+- Instructions for training with real data
 
 ---
 
 ## QUICK START
 
- 1. Backend cd expresat/backend pip install -r requirements.txt uvicorn main:app --reload
+1. Backend:
+```bash
+cd expresat/backend
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
 
-2. Frontend (en otra terminal) cd expresat/frontend npm install npm run dev
+2. Frontend (in another terminal):
+```bash
+cd expresat/frontend
+npm install
+npm run dev
+```
 
-3. Abrir http://localhost:5173
+3. Open `http://localhost:5173`
+4. Navigate to "Translator" page
+5. Allow camera access
+6. Perform signs in front of the camera
 
-4. Ir a página "Translator"
+## KEY CONCEPTS TO REMEMBER
 
-5. Permitir acceso a cámara
-
-6. Hacer señas frente a cámara
-
-## CONCEPTOS CLAVE PARA RECORDAR
-
-- **MediaPipe Holistic**: Detecta pose + manos en video en tiempo real
-- **GRU**: Red recurrente ligera (menos parámetros que LSTM)
-- **ONNX Runtime**: Motor optimizado para ejecutar modelos en CPU sin PyTorch
-- **Cuantización INT8**: Reduce modelo 4x sin perder precisión significativa
-- **Shoulder-relative normalization**: Hace modelo invariante a posición/escala del usuario
-- **Batch mode**: 15 frames juntos → más eficiente que frame por frame
-- **Singleton pattern**: Modelo ONNX cargado UNA SOLA VEZ en startup
+- **MediaPipe Holistic**: Detects pose + hands in real-time video
+- **GRU**: Lightweight recurrent network (fewer parameters than LSTM)
+- **ONNX Runtime**: Optimized engine for executing models on CPU without PyTorch
+- **INT8 Quantization**: Reduces model size by 4x without significant loss of accuracy
+- **Shoulder-relative normalization**: Makes model invariant to user position and scale
+- **Batch mode**: 15 frames sent together → more efficient than frame-by-frame
+- **Singleton pattern**: ONNX model loaded ONCE at startup
