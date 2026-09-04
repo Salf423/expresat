@@ -1,0 +1,41 @@
+# Build artifacts
+build/
+install/
+*.o
+*.a
+*.so
+*.dll
+*.exe
+
+# vcpkg (bootstrapped en CI, no se commitea)
+vcpkg/
+
+# ONNX Runtime prebuilt (se descarga en CI)
+third_party/onnxruntime/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# IDE
+.vscode/settings.json
+.idea/
+*.user
+*.suo
+.DS_Store
+
+# Android
+android/.gradle/
+android/app/build/
+android/app/libs/*.aar
+android/local.properties
+
+# Modelos (demasiado grandes, usar LFS o descargar separado)
+# Comenta esta línea si quieres versionar los modelos pequeños
+# models/
+
+# Logs y temporales
+*.log
+.cache/

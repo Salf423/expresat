@@ -1,9 +1,9 @@
-| Region | MediaPipe Landmarks | Coords | Total |
-| --- | --- | --- | --- |
-| **Upper Pose** | 0, 11-22 (head, shoulders, elbows, wrists) | x, y, z, visibility (4D) | 13 × 4 = **52** |
-| **Left Hand** | 0-20 (21 points) | x, y, z (3D) | 21 × 3 = **63** |
-| **Right Hand** | 0-20 (21 points) | x, y, z (3D) | 21 × 3 = **63** |
-| **TOTAL** | | | **178 features** |
+| Region         | MediaPipe Landmarks                        | Coords                   | Total            |
+| -------------- | ------------------------------------------ | ------------------------ | ---------------- |
+| **Upper Pose** | 0, 11-22 (head, shoulders, elbows, wrists) | x, y, z, visibility (4D) | 13 × 4 = **52**  |
+| **Left Hand**  | 0-20 (21 points)                           | x, y, z (3D)             | 21 × 3 = **63**  |
+| **Right Hand** | 0-20 (21 points)                           | x, y, z (3D)             | 21 × 3 = **63**  |
+| **TOTAL**      |                                            |                          | **178 features** |
 
 ### **Model Architecture**
 

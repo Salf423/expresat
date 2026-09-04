@@ -1,0 +1,21 @@
+{
+  "name": "expresat-native",
+  "version": "1.0.0",
+  "description": "Expresat — Sign language recognition, native C++ layer",
+  "dependencies": [
+    {
+      "name": "glfw3",
+      "platform": "!android"
+    },
+    {
+      "name": "opengl",
+      "platform": "!android"
+    },
+    {
+      "name": "opencv4",
+      "features": ["core", "imgproc", "videoio", "highgui"],
+      "platform": "!android"
+    }
+  ],
+  "builtin-baseline": "REPLACE_WITH_VCPKG_COMMIT_HASH"
+}
