@@ -73,6 +73,10 @@ export class MediaPipeEngine {
      * all drawing happens inside the onResults callback, driven by MediaPipe.
      */
     start() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            console.error('getUserMedia no es soportado o el contexto no es seguro (se requiere HTTPS).');
+            return;
+        }
         this.camera.start();
     }
 

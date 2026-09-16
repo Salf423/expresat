@@ -267,6 +267,10 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
         // ── 5. Start camera ───────────────────────────────────────────────────
         async function startCamera() {
             try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('getUserMedia no es soportado o el contexto no es seguro (se requiere HTTPS).');
+                }
+
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         width:  { ideal: 640 },

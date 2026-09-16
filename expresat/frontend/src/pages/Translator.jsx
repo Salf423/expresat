@@ -86,6 +86,7 @@ const Translator = () => {
               style={{ display: 'none' }}
               playsInline
               muted
+              autoPlay
             ></video>
             <canvas
               ref={canvasRef}
