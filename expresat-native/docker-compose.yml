@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  expresat:
+    build: .
+    image: expresat-native:latest
+    container_name: expresat_desktop
+    environment:
+      - DISPLAY=${DISPLAY}
+      - XDG_RUNTIME_DIR=/run/user/1000
+    volumes:
+      # Mount X11 Unix socket for GUI access
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Mount Xauthority for authentication (often needed for local connections)
+      - ${XAUTHORITY:-$HOME/.Xauthority}:/root/.Xauthority:ro
+    devices:
+      # Pass through the primary webcam
+      - /dev/video0:/dev/video0
+      # Pass through GPU for OpenGL hardware acceleration (optional but recommended)
+      - /dev/dri:/dev/dri
+    network_mode: host
+    ipc: host

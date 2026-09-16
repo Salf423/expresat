@@ -290,7 +290,7 @@ export class ApiService {
         if(latencyEl) latencyEl.innerText = `Latency: ${latency} ms`;
       } 
       else if (data.type === 'translation' && this.onMessageCallback) {
-        // ⭐ CRITICAL: when server returns translation
+        // CRITICAL: when server returns translation
         // data.payload = { label: "hola", confidence: 0.95, ... }
         this.onMessageCallback(data.payload);  // Calls callback in Translator.jsx
       }

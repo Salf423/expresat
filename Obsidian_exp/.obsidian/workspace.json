@@ -111,12 +111,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Websocket.md",
+                "file": "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Websocket"
+              "title": "ENTRENO Y EXPORTACION"
             }
           },
           {
@@ -130,7 +130,7 @@
             }
           }
         ],
-        "currentTab": 1
+        "currentTab": 7
       }
     ],
     "direction": "vertical"
@@ -291,17 +291,17 @@
       "bases:Crear nueva base": false
     }
   },
-  "active": "dc4f0d6e17083c9c",
+  "active": "e7b8ab68689b387c",
   "lastOpenFiles": [
-    "Explicacion del codigo/Funciones_Modelo/INFERENCIA.md",
-    "Explicacion del codigo/Backend/Main python.md",
-    "Plan de negocio de EXPRESAT.md",
     "Caracteristicas.md",
+    "Websocket.md",
+    "Plan de negocio de EXPRESAT.md",
     "Flujo de datos.md",
     "Estructura del proyecto.md",
-    "Explicacion del codigo/Frontend.md",
-    "Websocket.md",
+    "Explicacion del codigo/Backend/Main python.md",
+    "Explicacion del codigo/Funciones_Modelo/INFERENCIA.md",
     "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
+    "Explicacion del codigo/Frontend.md",
     "Explicacion del codigo/Backend",
     "Explicacion del codigo/Funciones_Modelo",
     "Explicacion del codigo"
