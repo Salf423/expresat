@@ -111,12 +111,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
+                "file": "Deploys.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "ENTRENO Y EXPORTACION"
+              "title": "Deploys"
             }
           },
           {
@@ -293,6 +293,9 @@
   },
   "active": "e7b8ab68689b387c",
   "lastOpenFiles": [
+    "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
+    "Deploys.md",
+    "Explicacion del codigo/Backend/Main C++.md",
     "Caracteristicas.md",
     "Websocket.md",
     "Plan de negocio de EXPRESAT.md",
@@ -300,7 +303,6 @@
     "Estructura del proyecto.md",
     "Explicacion del codigo/Backend/Main python.md",
     "Explicacion del codigo/Funciones_Modelo/INFERENCIA.md",
-    "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
     "Explicacion del codigo/Frontend.md",
     "Explicacion del codigo/Backend",
     "Explicacion del codigo/Funciones_Modelo",

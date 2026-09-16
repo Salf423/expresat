@@ -376,6 +376,7 @@ async def websocket_legacy(websocket: WebSocket, token: str = Query(None)):
 # REST ENDPOINTS — Health checks and utilities
 # =============================================================================
 
+@app.head("/")
 @app.get("/")
 async def health_check():
     """Basic server health check."""
@@ -387,6 +388,7 @@ async def health_check():
     }
 
 
+@app.head("/health")
 @app.get("/health")
 async def detailed_health():
     """Detailed health check with model information."""

@@ -2,7 +2,7 @@
 
 - **GRU**: A variant of recurrent neural networks that is parameter-efficient compared to LSTM (Long Short-Term Memory).
 - **Quantization**: Process of reducing model weight precision from float32 to int8, decreasing model size and improving inference latency.
-- **ONNX**: Open Neural Network Exchange, a format that enables interoperability between different machine learning frameworks.
+- **ONNX**: Open Neural Network Exchange, a format that enables interoperability. Here, it is specifically used to export the trained PyTorch GRU model so it can be loaded natively by the C++ `expresat-native` engine via ONNX Runtime.
 
 ## Code Structure
 
