@@ -21,10 +21,29 @@ export class ApiService {
      * Decisión: El token JWT se envía en la URL para simplificar la autenticación en el handshake inicial.
      * Configura manejadores para eventos open, message, close y error.
      * Incluye un sistema de 'ping/pong' para calcular la latencia en tiempo real.
+     * Hace un fetch a /health primero para despertar el contenedor de Render.
      * @param {string} token - Token de acceso de Supabase.
      */
-    connect(token) {
-        const wsUrl = `${this.url}?token=${encodeURIComponent(token)}`;
+    async connect(token) {
+        // Formatear la URL base eliminando la barra final si existe
+        const baseUrl = this.url.endsWith('/') ? this.url.slice(0, -1) : this.url;
+        
+        // Construir HTTP URL para el health check (por si la url viene como ws:// o wss://)
+        const httpUrl = baseUrl.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://');
+        
+        // Construir WS URL para WebSocket (reemplazando http:// por ws:// y https:// por wss://)
+        const wsBaseUrl = baseUrl.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://');
+        
+        this.updateStatus('Despertando servidor...', 'status-offline');
+        
+        try {
+            // Hacemos ping a /health para despertar a Render si está dormido
+            await fetch(`${httpUrl}/health`);
+        } catch (error) {
+            console.warn('El health check falló o está tardando, continuando con la conexión WS...', error);
+        }
+
+        const wsUrl = `${wsBaseUrl}/ws/translate?token=${encodeURIComponent(token)}`;
         this.ws = new WebSocket(wsUrl);
 
         this.updateStatus('Conectando...', 'status-offline');
