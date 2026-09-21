@@ -136,20 +136,37 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
         const ctx = canvas.getContext('2d');
         filterRef.current = new LandmarkEMAFilter(alpha);
 
-        // ── 1. Create Worker ──────────────────────────────────────────────────
-        const worker = new Worker(
-            new URL('../workers/mediapipe-worker.js', import.meta.url),
-            { type: 'module' }
-        );
-        workerRef.current = worker;
+        // ── 1. Start camera IMMEDIATELY, independent of Worker state ─────────
+        // 🔑 Key fix: camera must stream to canvas regardless of whether
+        //    MediaPipe loads successfully. This prevents the black screen when
+        //    the Worker fails to initialize (e.g. WASM 404 in production).
+        startCamera();
 
-        // ── 2. Handle Worker messages ─────────────────────────────────────────
+        // ── 2. Create Worker ──────────────────────────────────────────────────
+        let worker;
+        try {
+            worker = new Worker(
+                new URL('../workers/mediapipe-worker.js', import.meta.url),
+                { type: 'module' }
+            );
+            workerRef.current = worker;
+        } catch (err) {
+            console.error('[useMediaPipe] Failed to create Worker:', err);
+            // Camera is already running from startCamera() above — just return cleanup.
+            return () => {
+                streamRef.current?.getTracks().forEach(t => t.stop());
+            };
+        }
+
+        // ── 3. Handle Worker messages ─────────────────────────────────────────
         worker.onmessage = (event) => {
             const { type } = event.data;
 
             if (type === 'ready') {
-                console.log('[useMediaPipe] Worker ready — starting camera');
-                startCamera();
+                // Worker is initialized — begin sending frames for inference.
+                // Camera is already running at this point.
+                console.log('[useMediaPipe] Worker ready — inference enabled');
+                rafIdRef.current = video.requestVideoFrameCallback(captureFrame);
                 return;
             }
 
@@ -182,18 +199,18 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             }
 
             if (type === 'error') {
-                console.warn('[useMediaPipe] Worker error:', event.data.message);
+                // Worker error is non-fatal — camera keeps showing image.
+                // Inference is simply disabled until the worker recovers.
+                console.warn('[useMediaPipe] Worker error (inference disabled):', event.data.message);
             }
         };
 
         worker.onerror = (e) => {
-            console.error('[useMediaPipe] Worker uncaught error:', e);
+            console.error('[useMediaPipe] Worker uncaught error (inference disabled):', e);
+            // Camera draw loop is unaffected — user still sees their image.
         };
 
-        // Worker starts initializing immediately on load (see worker file).
-        // 'ready' message will trigger startCamera().
-
-        // ── 3. Camera capture loop ────────────────────────────────────────────
+        // ── 4. Camera capture loop (sends frames to Worker for inference) ─────
         function captureFrame(now, _meta) {
             if (document.hidden) {
                 // Reschedule — visibility listener will re-enable when visible
@@ -224,7 +241,7 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             rafIdRef.current = video.requestVideoFrameCallback(captureFrame);
         }
 
-        // ── 4. Draw loop (runs every rAF tick, reads resultsRef) ─────────────
+        // ── 5. Draw loop (runs at rAF rate, always — even if Worker failed) ──
         // Decoupled from inference: canvas updates at display refresh rate
         // while inference runs at targetFPS.
         let drawRafId;
@@ -240,7 +257,8 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             ctx.save();
             ctx.clearRect(0, 0, w, h);
 
-            // Draw video frame
+            // Always draw the raw video frame — this is what the user sees.
+            // Even if MediaPipe fails entirely, the camera feed is visible.
             if (video.readyState >= 2) {
                 ctx.drawImage(video, 0, 0, w, h);
             }
@@ -264,7 +282,9 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             ctx.restore();
         }
 
-        // ── 5. Start camera ───────────────────────────────────────────────────
+        // ── 6. Acquire camera and start draw loop ─────────────────────────────
+        // captureFrame is NOT started here — it starts when Worker sends 'ready'.
+        // drawLoop starts immediately so the user sees the camera image right away.
         async function startCamera() {
             try {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -285,10 +305,14 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
 
                 streamRef.current = stream;
                 video.srcObject = stream;
+
+                // play() must be called before requestVideoFrameCallback works.
+                // On mobile, autoPlay + muted + playsInline attributes on the
+                // <video> element are required for this to resolve without user gesture.
                 await video.play();
 
-                // Start both loops
-                rafIdRef.current = video.requestVideoFrameCallback(captureFrame);
+                // Draw loop starts immediately — user sees camera image at once.
+                // captureFrame (inference) will be activated by Worker 'ready' event.
                 drawLoop();
 
             } catch (err) {
@@ -296,7 +320,7 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             }
         }
 
-        // ── 6. Cleanup on unmount ─────────────────────────────────────────────
+        // ── 7. Cleanup on unmount ─────────────────────────────────────────────
         return () => {
             // Stop capture loop
             if (rafIdRef.current != null) {

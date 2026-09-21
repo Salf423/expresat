@@ -80,14 +80,18 @@ const Translator = () => {
             position: 'relative', width: '100%', flex: 1, background: '#000', borderRadius: '12px', overflow: 'hidden',
             display: 'flex', justifyContent: 'center', alignItems: 'center'
           }}>
-            {/* video is hidden — the hook reads from it but canvas is the visible output */}
+            {/* video feeds the canvas — MUST NOT use display:none on mobile     */}
+            {/* (WebKit won't decode frames if the element is display:none).      */}
+            {/* autoPlay + playsInline + muted + controls={false} are all required */}
+            {/* for video.play() to resolve without a user gesture on iOS/Android. */}
             <video
               ref={videoRef}
-              style={{ display: 'none' }}
+              style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+              autoPlay
               playsInline
               muted
-              autoPlay
-            ></video>
+              controls={false}
+            />
             <canvas
               ref={canvasRef}
               width={640}

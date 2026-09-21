@@ -24,7 +24,11 @@ import {
 } from '@mediapipe/tasks-vision';
 
 // ─── Model URLs (CDN — no bundle overhead) ───────────────────────────────────
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm';
+// ⚠️  Version MUST be pinned. Without a fixed version, jsDelivr may redirect
+//     to a different release or Netlify may return the SPA's index.html for
+//     the unversioned path, causing FilesetResolver to fail with
+//     "ModuleFactory not set" because it can't parse HTML as a WASM binary.
+const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
 
 const HAND_MODEL_URL =
     'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
