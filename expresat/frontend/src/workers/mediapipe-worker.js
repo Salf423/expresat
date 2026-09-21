@@ -23,13 +23,20 @@ import {
     FilesetResolver,
 } from '@mediapipe/tasks-vision';
 
-// ─── Model URLs (CDN — no bundle overhead) ───────────────────────────────────
-// ⚠️  Version MUST be pinned. Without a fixed version, jsDelivr may redirect
-//     to a different release or Netlify may return the SPA's index.html for
-//     the unversioned path, causing FilesetResolver to fail with
-//     "ModuleFactory not set" because it can't parse HTML as a WASM binary.
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+// ─── WASM CDN URL ─────────────────────────────────────────────────────────────
+// ⚠️  CRITICAL: The CDN version MUST match the installed npm package version.
+//
+//   Installed:  @mediapipe/tasks-vision@1.0.1  (check package.json)
+//   CDN WASM:   @mediapipe/tasks-vision@1.0.1  ← must be identical
+//
+// Mismatch between the JS runtime (bundled by Vite from node_modules) and the
+// WASM binaries (fetched from CDN at runtime) causes FilesetResolver to fail
+// with "ModuleFactory not set" because the WASM module signature doesn't match.
+//
+// If you upgrade the npm package, update this URL to match.
+const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
 
+// ─── Model URLs (versioned Google Storage paths) ──────────────────────────────
 const HAND_MODEL_URL =
     'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
@@ -67,7 +74,9 @@ async function initialize() {
 
     initPromise = (async () => {
         try {
+            console.log('[mediapipe-worker] Loading WASM from:', WASM_URL);
             const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+            console.log('[mediapipe-worker] WASM loaded — creating landmarkers...');
 
             // Both models created in parallel to halve load time
             [handLandmarker, poseLandmarker] = await Promise.all([
@@ -97,8 +106,10 @@ async function initialize() {
             ]);
 
             initialized = true;
+            console.log('[mediapipe-worker] Ready.');
             self.postMessage({ type: 'ready' });
         } catch (err) {
+            console.error('[mediapipe-worker] Init failed:', err);
             self.postMessage({ type: 'error', message: `Worker init failed: ${err.message}` });
             throw err;
         }

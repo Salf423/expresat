@@ -1,7 +1,9 @@
 export class ApiService {
     /**
      * Inicializa el servicio de API con soporte para WebSockets.
-     * @param {string} url - La URL del endpoint de WebSocket.
+     * @param {string} url - La URL base del servidor (puede ser http/https/ws/wss,
+     *   con o sin path). Internamente se extrae sólo el origin para construir los
+     *   endpoints correctos, evitando duplicación de rutas.
      * Configura parámetros de reconexión exponencial para manejar caídas de red de forma resiliente.
      */
     constructor(url) {
@@ -20,39 +22,62 @@ export class ApiService {
      * Establece la conexión WebSocket con el servidor.
      * Decisión: El token JWT se envía en la URL para simplificar la autenticación en el handshake inicial.
      * Configura manejadores para eventos open, message, close y error.
-     * Incluye un sistema de 'ping/pong' para calcular la latencia en tiempo real.
      * Hace un fetch a /health primero para despertar el contenedor de Render.
      * @param {string} token - Token de acceso de Supabase.
      */
     async connect(token) {
-        // Formatear la URL base eliminando la barra final si existe
-        const baseUrl = this.url.endsWith('/') ? this.url.slice(0, -1) : this.url;
-        
-        // Construir HTTP URL para el health check (por si la url viene como ws:// o wss://)
-        const httpUrl = baseUrl.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://');
-        
-        // Construir WS URL para WebSocket (reemplazando http:// por ws:// y https:// por wss://)
-        const wsBaseUrl = baseUrl.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://');
-        
-        this.updateStatus('Despertando servidor...', 'status-offline');
-        
+        // ── URL Sanitization via new URL() ────────────────────────────────────
+        // new URL().origin strips ALL path/query/hash from the env var,
+        // so it doesn't matter if VITE_WS_URL contains a path like /ws/translate:
+        // we ALWAYS derive health and WS endpoints from the bare origin only.
+        //
+        //   'https://expresat.onrender.com'            → origin = 'https://expresat.onrender.com'
+        //   'wss://expresat.onrender.com/ws/translate' → origin = 'https://expresat.onrender.com'
+        //   'http://127.0.0.1:8000'                    → origin = 'http://127.0.0.1:8000'
+        //
+        // new URL() does not accept ws:// / wss:// — normalise to http(s) first.
+        const rawUrl = this.url;
+        const httpNormalised = rawUrl
+            .replace(/^wss:\/\//i, 'https://')
+            .replace(/^ws:\/\//i,  'http://');
+
+        let origin;
         try {
-            // Hacemos ping a /health para despertar a Render si está dormido
-            await fetch(`${httpUrl}/health`);
-        } catch (error) {
-            console.warn('El health check falló o está tardando, continuando con la conexión WS...', error);
+            origin = new URL(httpNormalised).origin; // e.g. 'https://expresat.onrender.com'
+        } catch {
+            console.error('[ApiService] URL inválida en la configuración:', rawUrl);
+            this.updateStatus('Error de configuración', 'status-offline');
+            return;
         }
 
-        const wsUrl = `${wsBaseUrl}/ws/translate?token=${encodeURIComponent(token)}`;
-        this.ws = new WebSocket(wsUrl);
+        // Derive WebSocket protocol from the HTTP origin
+        const wsProtocol = origin.startsWith('https') ? 'wss:' : 'ws:';
+        const host = new URL(origin).host; // 'expresat.onrender.com' | '127.0.0.1:8000'
 
+        // Final endpoints — paths are HARDCODED here, never taken from the env var.
+        const healthUrl = `${origin}/health`;
+        const wsUrl     = `${wsProtocol}//${host}/ws/translate?token=${encodeURIComponent(token)}`;
+
+        console.log('[ApiService] health check →', healthUrl);
+        console.log('[ApiService] websocket    →', wsUrl);
+
+        // ── Wake-up Render container ───────────────────────────────────────────
+        this.updateStatus('Despertando servidor...', 'status-offline');
+        try {
+            await fetch(healthUrl);
+        } catch (error) {
+            console.warn('[ApiService] Health check falló, continuando con WS...', error);
+        }
+
+        // ── Open WebSocket ─────────────────────────────────────────────────────
+        this.ws = new WebSocket(wsUrl);
         this.updateStatus('Conectando...', 'status-offline');
 
         this.ws.onopen = () => {
             console.log('WebSocket Conectado');
             this.reconnectAttempts = 0;
             this.updateStatus('Conectado', 'status-online');
-            
+
             this.pingInterval = setInterval(() => {
                 if (this.ws.readyState === WebSocket.OPEN) {
                     this.lastPingTime = performance.now();
@@ -66,7 +91,7 @@ export class ApiService {
             if (data.type === 'pong') {
                 const latency = Math.round(performance.now() - this.lastPingTime);
                 const latencyEl = document.getElementById('latency-counter');
-                if(latencyEl) latencyEl.innerText = `Latencia: ${latency} ms`;
+                if (latencyEl) latencyEl.innerText = `Latencia: ${latency} ms`;
             } else if (data.type === 'translation' && this.onMessageCallback) {
                 this.onMessageCallback(data.payload);
             }
