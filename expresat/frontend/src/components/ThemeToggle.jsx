@@ -4,15 +4,32 @@ import { Sun, Moon } from 'lucide-react';
 
 const ThemeToggle = () => {
   const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
 
   return (
     <button 
+      type="button"
       onClick={toggleTheme} 
       className="btn-icon" 
-      aria-label="Toggle Theme"
-      title={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+      aria-label={isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+      title={isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+      style={{
+        width: '40px',
+        height: '40px',
+        borderRadius: 'var(--radius-full)',
+        border: '1px solid var(--panel-border)',
+        background: 'var(--panel-bg)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        cursor: 'pointer',
+        transition: 'all var(--transition-fast)'
+      }}
     >
-      {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+      {isDark ? (
+        <Sun size={19} color="#fbbf24" style={{ transition: 'transform 0.3s ease' }} />
+      ) : (
+        <Moon size={19} color="var(--accent-secondary)" style={{ transition: 'transform 0.3s ease' }} />
+      )}
     </button>
   );
 };

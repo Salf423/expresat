@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Mail, Lock, LogIn, UserPlus, User, Eye, EyeOff, CheckCircle, ArrowLeft } from 'lucide-react';
+import { Mail, Lock, LogIn, UserPlus, User, Eye, EyeOff, CheckCircle2, ArrowLeft, KeyRound, AlertCircle } from 'lucide-react';
 import { AuthService } from '../services/authService';
 import logoImg from '../assets/logo.png';
 
 const Auth = () => {
-  const [mode, setMode] = useState('login');
+  const [mode, setMode] = useState('login'); // 'login' | 'register' | 'forgot'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -17,8 +17,8 @@ const Auth = () => {
 
   const authService = new AuthService();
 
-  const validateEmail = (email) => {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const validateEmail = (val) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
   };
 
   const calculatePasswordStrength = (pass) => {
@@ -32,10 +32,10 @@ const Auth = () => {
 
   const getStrengthConfig = (score) => {
     if (score === 0) return { label: '', color: 'transparent', width: '0%' };
-    if (score === 1) return { label: 'Débil', color: '#ef4444', width: '25%' };
-    if (score === 2) return { label: 'Regular', color: '#eab308', width: '50%' };
-    if (score === 3) return { label: 'Fuerte', color: '#22c55e', width: '75%' };
-    return { label: 'Muy Fuerte', color: '#16a34a', width: '100%' };
+    if (score === 1) return { label: 'Débil', color: 'var(--error-color)', width: '25%' };
+    if (score === 2) return { label: 'Regular', color: 'var(--warning-color)', width: '50%' };
+    if (score === 3) return { label: 'Fuerte', color: 'var(--success-color)', width: '75%' };
+    return { label: 'Excelente', color: 'var(--success-color)', width: '100%' };
   };
 
   const handleSubmit = async (e) => {
@@ -44,7 +44,7 @@ const Auth = () => {
     setSuccess('');
 
     if (!validateEmail(email)) {
-      setError('Por favor, ingresa un correo electrónico válido.');
+      setError('Por favor ingresa un correo electrónico válido.');
       return;
     }
 
@@ -54,7 +54,7 @@ const Auth = () => {
         return;
       }
       if (calculatePasswordStrength(password) < 4) {
-        setError('La contraseña debe tener al menos 8 caracteres, una mayúscula, un número y un carácter especial.');
+        setError('La contraseña debe tener mínimo 8 caracteres, una mayúscula, un número y un carácter especial.');
         return;
       }
       if (password !== confirmPassword) {
@@ -76,7 +76,7 @@ const Auth = () => {
         window.location.href = '/translator';
       } else if (mode === 'register') {
         await authService.register(email, password, fullName);
-        setSuccess('¡Registro exitoso! Por favor revisa tu bandeja de entrada para confirmar tu correo electrónico.');
+        setSuccess('¡Registro exitoso! Revisa tu correo electrónico para confirmar tu cuenta.');
         setMode('login');
       } else if (mode === 'forgot') {
         await authService.resetPassword(email);
@@ -84,7 +84,7 @@ const Auth = () => {
         setMode('login');
       }
     } catch (err) {
-      setError(err.message || 'Error de autenticación');
+      setError(err.message || 'Error de autenticación. Intenta nuevamente.');
     } finally {
       setLoading(false);
     }
@@ -94,164 +94,287 @@ const Auth = () => {
   const strengthConfig = getStrengthConfig(strength);
 
   return (
-    <div className="container animate-fade-in" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh', padding: '4rem 1.5rem' }}>
-      <div className="glass-panel" style={{ width: '100%', maxWidth: '420px', padding: '2.5rem' }}>
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <img src={logoImg} alt="ExpresaT Logo" style={{ height: '60px', width: 'auto', objectFit: 'contain', marginBottom: '1rem' }} />
-          <h2 className="gradient-text" style={{ fontSize: '1.8rem', marginBottom: '0.5rem' }}>
+    <div
+      className="container animate-fade-in"
+      style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        flex: 1,
+        padding: '3rem 1.5rem'
+      }}
+    >
+      <div className="glass-panel auth-card" style={{ maxWidth: '440px' }}>
+        {/* Header */}
+        <div className="auth-header">
+          <img
+            src={logoImg}
+            alt="ExpresaT"
+            className="auth-logo"
+          />
+          <h1
+            className="gradient-text"
+            style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '0.4rem' }}
+          >
             {mode === 'login' && 'Bienvenido de vuelta'}
             {mode === 'register' && 'Crea tu cuenta'}
             {mode === 'forgot' && 'Recuperar contraseña'}
-          </h2>
-          <p style={{ color: 'var(--text-muted)' }}>
-            {mode === 'login' && 'Inicia sesión para continuar'}
-            {mode === 'register' && 'Únete a ExpresaT'}
-            {mode === 'forgot' && 'Te enviaremos instrucciones'}
+          </h1>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>
+            {mode === 'login' && 'Ingresa tus credenciales para acceder a tus preferencias'}
+            {mode === 'register' && 'Únete a la plataforma inclusiva de traducción LSM'}
+            {mode === 'forgot' && 'Te enviaremos las instrucciones de recuperación'}
           </p>
         </div>
 
+        {/* Error Alert */}
         {error && (
-          <div style={{
-            background: 'rgba(239, 68, 68, 0.1)',
-            color: 'var(--error-color)',
-            padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', textAlign: 'center', fontSize: '0.9rem',
-            border: '1px solid rgba(239, 68, 68, 0.2)'
-          }}>
-            {error}
+          <div className="alert alert--error" role="alert" style={{ marginBottom: '1.5rem' }}>
+            <AlertCircle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <span>{error}</span>
           </div>
         )}
 
+        {/* Success Alert */}
         {success && (
-          <div style={{
-            background: 'rgba(34, 197, 94, 0.1)',
-            color: 'var(--success-color)',
-            padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', textAlign: 'center', fontSize: '0.9rem',
-            border: '1px solid rgba(34, 197, 94, 0.2)'
-          }}>
-            {success}
+          <div className="alert alert--success" role="status" style={{ marginBottom: '1.5rem' }}>
+            <CheckCircle2 size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <span>{success}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="auth-form" noValidate>
+          {/* Full Name (Only on Register) */}
           {mode === 'register' && (
-            <div style={{ position: 'relative' }}>
-              <User size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input
-                type="text"
-                placeholder="Nombre completo"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                style={{
-                  width: '100%', padding: '0.8rem 1rem 0.8rem 3rem', borderRadius: '8px',
-                  background: 'rgba(0,0,0,0.05)', border: '1px solid var(--panel-border)',
-                  color: 'var(--text-color)', fontSize: '1rem', outline: 'none'
-                }}
-              />
+            <div className="form-field">
+              <label htmlFor="fullName" className="form-label">
+                Nombre Completo
+              </label>
+              <div style={{ position: 'relative' }}>
+                <span className="form-field__icon">
+                  <User size={18} />
+                </span>
+                <input
+                  id="fullName"
+                  type="text"
+                  placeholder="Ej. Ana Morales"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="form-input"
+                  required
+                />
+              </div>
             </div>
           )}
 
-          <div style={{ position: 'relative' }}>
-            <Mail size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-            <input
-              type="email"
-              placeholder="Correo electrónico"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={{
-                width: '100%', padding: '0.8rem 1rem 0.8rem 3rem', borderRadius: '8px',
-                background: 'rgba(0,0,0,0.05)', border: '1px solid var(--panel-border)',
-                color: 'var(--text-color)', fontSize: '1rem', outline: 'none'
-              }}
-            />
+          {/* Email */}
+          <div className="form-field">
+            <label htmlFor="email" className="form-label">
+              Correo Electrónico
+            </label>
+            <div style={{ position: 'relative' }}>
+              <span className="form-field__icon">
+                <Mail size={18} />
+              </span>
+              <input
+                id="email"
+                type="email"
+                placeholder="correo@ejemplo.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="form-input"
+                autoComplete="email"
+                required
+              />
+            </div>
           </div>
 
+          {/* Password (Login & Register) */}
           {mode !== 'forgot' && (
-            <div style={{ position: 'relative' }}>
-              <Lock size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                placeholder="Contraseña"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{
-                  width: '100%', padding: '0.8rem 3rem 0.8rem 3rem', borderRadius: '8px',
-                  background: 'rgba(0,0,0,0.05)', border: '1px solid var(--panel-border)',
-                  color: 'var(--text-color)', fontSize: '1rem', outline: 'none'
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
-              >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
+            <div className="form-field">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label htmlFor="password" className="form-label">
+                  Contraseña
+                </label>
+                {mode === 'login' && (
+                  <button
+                    type="button"
+                    onClick={() => { setMode('forgot'); setError(''); setSuccess(''); }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--accent-primary)',
+                      cursor: 'pointer',
+                      fontSize: '0.8rem',
+                      padding: 0
+                    }}
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                )}
+              </div>
+              <div style={{ position: 'relative' }}>
+                <span className="form-field__icon">
+                  <Lock size={18} />
+                </span>
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="form-input"
+                  style={{ paddingRight: '2.75rem' }}
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  className="btn-icon form-field__action"
+                  style={{ padding: '0.25rem', width: '28px', height: '28px' }}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+
+              {/* Password Strength Indicator */}
+              {mode === 'register' && password.length > 0 && (
+                <div style={{ marginTop: '0.4rem' }}>
+                  <div
+                    style={{
+                      height: '4px',
+                      width: '100%',
+                      background: 'var(--panel-border)',
+                      borderRadius: 'var(--radius-full)',
+                      overflow: 'hidden'
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: '100%',
+                        width: strengthConfig.width,
+                        background: strengthConfig.color,
+                        transition: 'all 0.3s ease'
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginTop: '0.35rem',
+                      fontSize: '0.75rem',
+                      color: 'var(--text-muted)'
+                    }}
+                  >
+                    <span style={{ color: strengthConfig.color, fontWeight: 600 }}>{strengthConfig.label}</span>
+                    <span>8+ caract., mayúscula, núm., símbolo</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {mode === 'register' && password.length > 0 && (
-            <div style={{ marginTop: '-0.5rem', marginBottom: '0.5rem' }}>
-              <div style={{ height: '4px', width: '100%', background: 'var(--panel-border)', borderRadius: '2px', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: strengthConfig.width, background: strengthConfig.color, transition: 'all 0.3s' }}></div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.3rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                <span>{strengthConfig.label}</span>
-                <span>(8+ chars, Mayús, Núm, Especial)</span>
-              </div>
-            </div>
-          )}
-
+          {/* Confirm Password (Only on Register) */}
           {mode === 'register' && (
-            <div style={{ position: 'relative' }}>
-              <CheckCircle size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                placeholder="Confirmar contraseña"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                style={{
-                  width: '100%', padding: '0.8rem 1rem 0.8rem 3rem', borderRadius: '8px',
-                  background: 'rgba(0,0,0,0.05)', border: '1px solid var(--panel-border)',
-                  color: 'var(--text-color)', fontSize: '1rem', outline: 'none'
-                }}
-              />
+            <div className="form-field">
+              <label htmlFor="confirmPassword" className="form-label">
+                Confirmar Contraseña
+              </label>
+              <div style={{ position: 'relative' }}>
+                <span className="form-field__icon">
+                  <KeyRound size={18} />
+                </span>
+                <input
+                  id="confirmPassword"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="form-input"
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
             </div>
           )}
 
-          {mode === 'login' && (
-            <div style={{ textAlign: 'right', marginTop: '-0.5rem' }}>
-              <button
-                type="button"
-                onClick={() => { setMode('forgot'); setError(''); setSuccess(''); }}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.85rem' }}
-              >
-                ¿Olvidaste tu contraseña?
-              </button>
-            </div>
-          )}
-
-          <button type="submit" className="btn-primary" style={{ width: '100%', padding: '1rem', marginTop: '0.5rem', fontSize: '1rem', display: 'flex', justifyContent: 'center', gap: '0.5rem' }} disabled={loading}>
-            {loading ? 'Procesando...' : (
-              mode === 'login' ? <><LogIn size={18} /> Iniciar Sesión</> :
-                mode === 'register' ? <><UserPlus size={18} /> Registrarse</> :
-                  <><Mail size={18} /> Enviar enlace</>
+          {/* Submit Button */}
+          <button
+            type="submit"
+            className={`btn-primary ${loading ? 'btn-primary--loading' : ''}`}
+            disabled={loading}
+            style={{ width: '100%', padding: '0.85rem', marginTop: '0.5rem', fontSize: '0.95rem' }}
+          >
+            {!loading && mode === 'login' && (
+              <>
+                <LogIn size={18} />
+                <span>Iniciar Sesión</span>
+              </>
+            )}
+            {!loading && mode === 'register' && (
+              <>
+                <UserPlus size={18} />
+                <span>Crear Cuenta</span>
+              </>
+            )}
+            {!loading && mode === 'forgot' && (
+              <>
+                <Mail size={18} />
+                <span>Enviar Instrucciones</span>
+              </>
             )}
           </button>
         </form>
 
-        <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+        {/* Mode Switcher */}
+        <div
+          style={{
+            textAlign: 'center',
+            marginTop: '2rem',
+            paddingTop: '1.5rem',
+            borderTop: '1px solid var(--border-color)'
+          }}
+        >
           {mode !== 'login' ? (
             <button
+              type="button"
               onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
-              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', margin: '0 auto' }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                transition: 'color var(--transition-fast)'
+              }}
+              onMouseOver={(e) => e.currentTarget.style.color = 'var(--text-color)'}
+              onMouseOut={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
             >
-              <ArrowLeft size={16} /> Volver a Iniciar Sesión
+              <ArrowLeft size={16} />
+              <span>Volver a Iniciar Sesión</span>
             </button>
           ) : (
             <button
+              type="button"
               onClick={() => { setMode('register'); setError(''); setSuccess(''); }}
-              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'underline' }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--accent-primary)',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                textDecoration: 'none'
+              }}
+              onMouseOver={(e) => e.currentTarget.style.textDecoration = 'underline'}
+              onMouseOut={(e) => e.currentTarget.style.textDecoration = 'none'}
             >
               ¿No tienes cuenta? Regístrate aquí
             </button>

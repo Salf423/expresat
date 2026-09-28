@@ -14,19 +14,20 @@ function App() {
   return (
     <ThemeProvider>
       <Router>
-        <BackgroundParticles />
-        
-        <Navbar />
-        <main>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/translator" element={<Translator />} />
-            <Route path="/learn" element={<Learn />} />
-            <Route path="/about" element={<About />} />
-            <Route path="/auth" element={<Auth />} />
-          </Routes>
-        </main>
-        <Footer />
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
+          <BackgroundParticles />
+          <Navbar />
+          <main style={{ flex: '1 0 auto', paddingTop: '80px', display: 'flex', flexDirection: 'column' }}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/translator" element={<Translator />} />
+              <Route path="/learn" element={<Learn />} />
+              <Route path="/about" element={<About />} />
+              <Route path="/auth" element={<Auth />} />
+            </Routes>
+          </main>
+          <Footer />
+        </div>
       </Router>
     </ThemeProvider>
   );

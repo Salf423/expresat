@@ -25,13 +25,18 @@
             "id": "697953536875490f",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Vista gráfica"
+              "type": "markdown",
+              "state": {
+                "file": "Estructura del proyecto.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Estructura del proyecto"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -90,7 +95,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 200
   },
   "right": {
     "id": "4789d7d4a89fab31",
@@ -192,22 +197,22 @@
       "bases:Crear nueva base": false
     }
   },
-  "active": "84e3e3d46e69f650",
+  "active": "697953536875490f",
   "lastOpenFiles": [
+    "Skills/UI_UX_y_Frontend.md",
+    "Estructura del proyecto.md",
+    "Skills/DevOps_CI_CD_y_Despliegue.md",
+    "Skills/Backend_APIs_y_Sistemas.md",
+    "Skills/Auditoria_Seguridad_y_Calidad.md",
+    "Skills/00_Matriz_General_Skills.md",
+    "Explicacion del codigo/Dataset_Generator/01_Arquitectura_y_Compilacion.md",
     "Explicacion del codigo/Dataset_Generator/02_Extraccion_y_Normalizacion.md",
     "README.md",
     "00_INDICE_MAESTRO.md",
     "Skills/Estrategia_Producto_y_Negocio.md",
-    "Skills/DevOps_CI_CD_y_Despliegue.md",
     "Skills/MachineLearning_y_Vision.md",
-    "Skills/Backend_APIs_y_Sistemas.md",
     "Skills/Gestion_y_Revision_de_Skills.md",
-    "Skills/Auditoria_Seguridad_y_Calidad.md",
-    "Skills/UI_UX_y_Frontend.md",
-    "Skills/00_Matriz_General_Skills.md",
     "Skills",
-    "Explicacion del codigo/Dataset_Generator/01_Arquitectura_y_Compilacion.md",
-    "Estructura del proyecto.md",
     "Explicacion del codigo/Funciones_Modelo/INFERENCIA.md",
     "Explicacion del codigo/Dataset_Generator/05_Serializacion_JSON_y_CICD.md",
     "Explicacion del codigo/Dataset_Generator/04_Interfaz_Grafica_ImGui.md",
