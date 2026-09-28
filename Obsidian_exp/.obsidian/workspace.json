@@ -22,104 +22,6 @@
             }
           },
           {
-            "id": "dc4f0d6e17083c9c",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Caracteristicas.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "Caracteristicas"
-            }
-          },
-          {
-            "id": "83f45f79e9b7c87a",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Flujo de datos.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "Flujo de datos"
-            }
-          },
-          {
-            "id": "4dc92e1e616e12fe",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Caracteristicas.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "Caracteristicas"
-            }
-          },
-          {
-            "id": "f22336f7a09cac52",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "ENTRENO Y EXPORTACION"
-            }
-          },
-          {
-            "id": "2350967c3c6a7e38",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Explicacion del codigo/Funciones_Modelo/INFERENCIA.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "INFERENCIA"
-            }
-          },
-          {
-            "id": "2a96870f22bb4b28",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Explicacion del codigo/Funciones_Modelo/INFERENCIA.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "INFERENCIA"
-            }
-          },
-          {
-            "id": "e7b8ab68689b387c",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Deploys.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "Deploys"
-            }
-          },
-          {
             "id": "697953536875490f",
             "type": "leaf",
             "state": {
@@ -129,8 +31,7 @@
               "title": "Vista gráfica"
             }
           }
-        ],
-        "currentTab": 7
+        ]
       }
     ],
     "direction": "vertical"
@@ -291,19 +192,35 @@
       "bases:Crear nueva base": false
     }
   },
-  "active": "e7b8ab68689b387c",
+  "active": "84e3e3d46e69f650",
   "lastOpenFiles": [
-    "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
+    "Explicacion del codigo/Dataset_Generator/02_Extraccion_y_Normalizacion.md",
+    "README.md",
+    "00_INDICE_MAESTRO.md",
+    "Skills/Estrategia_Producto_y_Negocio.md",
+    "Skills/DevOps_CI_CD_y_Despliegue.md",
+    "Skills/MachineLearning_y_Vision.md",
+    "Skills/Backend_APIs_y_Sistemas.md",
+    "Skills/Gestion_y_Revision_de_Skills.md",
+    "Skills/Auditoria_Seguridad_y_Calidad.md",
+    "Skills/UI_UX_y_Frontend.md",
+    "Skills/00_Matriz_General_Skills.md",
+    "Skills",
+    "Explicacion del codigo/Dataset_Generator/01_Arquitectura_y_Compilacion.md",
+    "Estructura del proyecto.md",
+    "Explicacion del codigo/Funciones_Modelo/INFERENCIA.md",
+    "Explicacion del codigo/Dataset_Generator/05_Serializacion_JSON_y_CICD.md",
+    "Explicacion del codigo/Dataset_Generator/04_Interfaz_Grafica_ImGui.md",
+    "Explicacion del codigo/Dataset_Generator/03_Motor_Aumentacion_Sintetica.md",
+    "Explicacion del codigo/Frontend/Vite_React.md",
+    "Explicacion del codigo/Frontend/Legacy_Vanilla.md",
+    "Explicacion del codigo/Dataset_Generator/Cpp_Generator.md",
     "Deploys.md",
+    "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
     "Explicacion del codigo/Backend/Main C++.md",
     "Caracteristicas.md",
     "Websocket.md",
     "Plan de negocio de EXPRESAT.md",
-    "Flujo de datos.md",
-    "Estructura del proyecto.md",
-    "Explicacion del codigo/Backend/Main python.md",
-    "Explicacion del codigo/Funciones_Modelo/INFERENCIA.md",
-    "Explicacion del codigo/Frontend.md",
     "Explicacion del codigo/Backend",
     "Explicacion del codigo/Funciones_Modelo",
     "Explicacion del codigo"

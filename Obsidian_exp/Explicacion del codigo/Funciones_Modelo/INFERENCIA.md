@@ -1,82 +1,78 @@
-## Key Concepts
+---
+title: "Explicación del Código: Motor de Inferencia en Tiempo Real"
+description: "Implementación detallada de la inferencia en C++ y Python: carga de sesiones ONNX Runtime, normalización respecto a hombros y evaluación de umbral de confianza."
+version: "2.0.0"
+category: "Código / IA & Inferencia"
+status: "Producción"
+target_agents: ["ml-engineer", "cpp-pro", "fastapi-pro"]
+recommended_skills:
+  - "[[../../Skills/MachineLearning_y_Vision|MachineLearning_y_Vision]] (`ml-engineer`)"
+  - "[[../../Skills/Backend_APIs_y_Sistemas|Backend_APIs_y_Sistemas]] (`cpp-pro`, `fastapi-pro`)"
+related_docs:
+  - "[[../../00_INDICE_MAESTRO]]"
+  - "[[Training_and_Inference]]"
+  - "[[ENTRENO Y EXPORTACION]]"
+  - "[[../Backend/Main C++]]"
+  - "[[../../Caracteristicas]]"
+---
 
-1. **GRU (Gated Recurrent Unit)**: The model architecture used to learn sequence dependencies in sign language gestures. It's more efficient than LSTM, providing lower latency for real-time inference.
-2. **ONNX Runtime**: A high-performance inference engine used to execute the `.onnx` model natively in C++ across Desktop and Android targets.
-3. **Keypoints (Landmarks)**: 178 features extracted per frame (pose upper body, left hand, right hand coordinates) normalized relative to the shoulders.
-4. **Sequence Buffer**: A rolling window of frames (Sequence Length = 15) maintained in memory to provide temporal context to the GRU model.
+# ⚡ Explicación del Código: Motor de Inferencia en Tiempo Real
 
-## Code Structure
+> **Navegación:** [[../../00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Explicación del Código** > **Modelos** > **Inferencia**
 
-The inference logic is encapsulated within the `InferenceThread` class in C++. Below are its main responsibilities:
+La inferencia de señas en **ExpresaT** está diseñada para ejecutarse en CPUs estándar con una latencia de ~2 milisegundos, tanto en Python (`inference_engine.py`) como en C++ (`InferenceThread`).
 
-- **Initialization (`__init__` / Constructor)**: Loads the `.onnx` model into memory, configures ONNX Runtime session options (threading, optimization), and prepares the rolling sequence buffer.
-- **Landmark Extraction (`extract_landmarks`)**: (Pending transition to MediaPipe Tasks API in C++) Extracts body and hand landmarks from a given OpenCV frame.
-- **Sequence Preprocessing (`preprocess_sequence`)**: Flattens the accumulated 15 frames into a continuous 1D float array of size `15 * 178`, required by the ONNX model input shape `[1, 15, 178]`.
-- **Inference (`run_onnx`)**: Pushes the preprocessed tensor into the ONNX Runtime session and receives the raw prediction logits.
-- **Post-processing (`softmax`)**: Converts logits into normalized confidence scores to determine if the `CONFIDENCE_THRESHOLD` has been met.
+---
 
-## Code Examples
+## 1. Conceptos Clave
 
-### Inference Thread Loop
+1. **Inferencia ONNX Runtime:** Ejecución del grafo cuantizado `expresat_gru_int8.onnx` con soporte multi-hilo en CPU.
+2. **Buffer de Secuencia (Ventana Temporal):** Acumulación circular de 15 fotogramas contiguos (1 segundo a 15 FPS) para alimentar la red recurrente.
+3. **Filtro de Umbral de Confianza (*Confidence Threshold*):** Las predicciones sólo se emiten si la probabilidad calculada tras el *Softmax* supera el valor configurado (por defecto `0.50` en desarrollo y `0.80` en entornos de alta exigencia).
+
+---
+
+## 2. Bucle de Inferencia en C++ (`expresat-native/core/inference_thread.cpp`)
 
 ```cpp
 void InferenceThread::run(const std::atomic<bool> &running) {
     while (running) {
         cv::Mat current_frame;
-        // 1. Pop from queue (Wait-free)
+        // 1. Extraer fotograma de la cola lock-free (sin bloqueo de mutex)
         if (!frame_queue_.pop(current_frame)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
             continue;
         }
 
-        // 2. Extract landmarks
+        // 2. Extraer puntos clave anatómicos (178D)
         LandmarkFrame lm_frame = extract_landmarks(current_frame);
 
-        // 3. Push to circular buffer (15 frames)
+        // 3. Insertar en el buffer circular de 15 frames
         push_landmark_frame(std::move(lm_frame));
 
         if (frames_accumulated_ < SEQUENCE_LENGTH) continue;
 
-        // 4. Preprocess -> tensor [1, 15, 178]
+        // 4. Aplanar buffer a un tensor continuo de dimensiones [1, 15, 178]
         auto input_tensor = preprocess_sequence();
 
-        // 5. ONNX Inference
+        // 5. Inferencia con ONNX Runtime C++ API
         auto logits = run_onnx(input_tensor);
 
-        // 6. Post-processing: softmax + top-5
+        // 6. Post-procesado: Softmax + Top-5 probabilidades
         std::vector<float> probs = softmax(logits);
-        
-        // ... threshold checking and publishing to ResultBus
+        int best_class = std::distance(probs.begin(), std::max_element(probs.begin(), probs.end()));
+
+        if (probs[best_class] >= confidence_threshold_) {
+            result_bus_.publish(labels_[best_class]);
+        }
     }
 }
 ```
 
-This represents the core loop of the C++ inference engine. Notice how the logic accumulates frames until it reaches `SEQUENCE_LENGTH` before running `run_onnx`. This ensures the model always receives the correct temporal window.
+---
 
-### ONNX Model Execution
+## 🤖 Asignación de Agentes y Skills Recomendadas
 
-```cpp
-std::vector<float> InferenceThread::run_onnx(const std::array<float, SEQUENCE_LENGTH * NUM_FEATURES>& input) {
-    std::vector<int64_t> input_dims = {1, SEQUENCE_LENGTH, NUM_FEATURES};
-
-    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    auto input_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, const_cast<float*>(input.data()), input.size(),
-        input_dims.data(), input_dims.size()
-    );
-
-    const char* input_names[] = { ort_->input_name.c_str() };
-    const char* output_names[] = { ort_->output_name.c_str() };
-
-    auto output_tensors = ort_->session->Run(
-        Ort::RunOptions{nullptr}, input_names, &input_tensor, 1, output_names, 1
-    );
-
-    float* floatarr = output_tensors.front().GetTensorMutableData<float>();
-    size_t out_count = output_tensors.front().GetTensorTypeAndShapeInfo().GetElementCount();
-
-    return std::vector<float>(floatarr, floatarr + out_count);
-}
-```
-
-This method bridges our application's `std::array` with the `Ort::Value::CreateTensor` wrapper and invokes the model in a single call.
+- **Para Inferencia Nativa C++:** Invocar **`cpp-pro`** (ver [[../../Skills/Backend_APIs_y_Sistemas]]).
+- **Para Inferencia Asíncrona Python:** Invocar **`fastapi-pro`** y **`async-python-patterns`**.
+- **Para Precisión y Métrica del Modelo:** Invocar **`ml-engineer`** (ver [[../../Skills/MachineLearning_y_Vision]]).

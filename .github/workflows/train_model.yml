@@ -1,0 +1,131 @@
+name: Train & Export Model
+
+on:
+  push:
+    paths:
+      - 'expresat-dataset-generator/dataset/**.json'
+      - 'expresat/models/train_and_export.py'
+      - '.github/workflows/train_model.yml'
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: 'Training epochs'
+        required: false
+        default: '50'
+
+jobs:
+  train-and-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install onnx onnxruntime numpy
+
+      - name: Validate dataset JSON files
+        run: |
+          python - <<'EOF'
+          import json, pathlib, sys
+
+          dataset_dir = pathlib.Path("expresat-dataset-generator/dataset")
+          if not dataset_dir.exists():
+              print("No dataset directory found. Skipping training.")
+              sys.exit(0)
+
+          label_files = list(dataset_dir.glob("*.json"))
+          if not label_files:
+              print("No label JSON files found. Skipping training.")
+              sys.exit(0)
+
+          errors = []
+          labels = []
+          for f in label_files:
+              if f.name == "dataset.json":
+                  continue
+              try:
+                  data = json.loads(f.read_text())
+                  assert "label" in data and "data" in data, "Missing required fields"
+                  assert len(data["data"]) > 0, "Empty data array"
+                  assert data["feature_dim"] in (178, 52, 63, 126), f"Unexpected feature_dim: {data['feature_dim']}"
+                  labels.append(data["label"])
+                  print(f"  ✓ {f.name}: {data['num_samples']} samples, {data['feature_dim']}D, {data['sequence_length']} frames")
+              except Exception as e:
+                  errors.append(f"{f}: {e}")
+
+          if errors:
+              print("\nValidation errors:")
+              for e in errors:
+                  print(f"  ✗ {e}")
+              sys.exit(1)
+
+          print(f"\nLabels found: {labels}")
+          # Write labels list for next step
+          with open("/tmp/labels.txt", "w") as f:
+              f.write("\n".join(labels))
+          EOF
+
+      - name: Train and export model
+        run: |
+          LABELS=$(cat /tmp/labels.txt | tr '\n' ' ')
+          EPOCHS="${{ github.event.inputs.epochs || '50' }}"
+
+          echo "Training with labels: $LABELS"
+          echo "Epochs: $EPOCHS"
+
+          # The training script reads from the dataset directory
+          python expresat/models/train_and_export.py \
+            --epochs "$EPOCHS" \
+            --output ./exported_model \
+            --labels $LABELS
+        env:
+          PYTHONPATH: expresat
+
+      - name: Verify exported artifacts
+        run: |
+          echo "=== Exported model files ==="
+          ls -lh exported_model/
+          python - <<'EOF'
+          import onnxruntime as ort
+          import numpy as np
+
+          session = ort.InferenceSession(
+              "exported_model/expresat_gru_int8.onnx",
+              providers=["CPUExecutionProvider"]
+          )
+          input_name = session.get_inputs()[0].name
+          dummy = np.random.randn(1, 15, 178).astype(np.float32)
+          outputs = session.run(None, {input_name: dummy})
+          print(f"✓ ONNX inference OK — output shape: {outputs[0].shape}")
+          EOF
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: expresat-model-${{ github.sha }}
+          path: |
+            exported_model/expresat_gru_int8.onnx
+            exported_model/model_metadata.json
+          retention-days: 30
+
+      - name: Commit model back to repository
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name  "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add exported_model/expresat_gru_int8.onnx \
+                  exported_model/model_metadata.json
+          git diff --cached --quiet || \
+            git commit -m "ci: update trained model [skip ci]" && \
+            git push

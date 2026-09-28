@@ -1,38 +1,48 @@
-## Key Concepts
+---
+title: "Explicación del Código: Pipeline de Entrenamiento y Exportación ONNX"
+description: "Desglose técnico paso a paso de train_and_export.py: arquitectura PyTorch SignLanguageGRU, DataLoader sintético, exportación con opset 17 y cuantización dinámica INT8."
+version: "2.0.0"
+category: "Código / IA & Entrenamiento"
+status: "Producción"
+target_agents: ["ml-engineer", "mlops-engineer"]
+recommended_skills:
+  - "[[../../Skills/MachineLearning_y_Vision|MachineLearning_y_Vision]] (`ml-engineer`, `mlops-engineer`)"
+related_docs:
+  - "[[../../00_INDICE_MAESTRO]]"
+  - "[[Training_and_Inference]]"
+  - "[[INFERENCIA]]"
+  - "[[../../Caracteristicas]]"
+---
 
-- **GRU**: A variant of recurrent neural networks that is parameter-efficient compared to LSTM (Long Short-Term Memory).
-- **Quantization**: Process of reducing model weight precision from float32 to int8, decreasing model size and improving inference latency.
-- **ONNX**: Open Neural Network Exchange, a format that enables interoperability. Here, it is specifically used to export the trained PyTorch GRU model so it can be loaded natively by the C++ `expresat-native` engine via ONNX Runtime.
+# 🏋️ Explicación del Código: Entrenamiento y Exportación ONNX
 
-## Code Structure
+> **Navegación:** [[../../00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Explicación del Código** > **Modelos** > **Entrenamiento y Exportación**
 
-The code is organized into several sections including:
+El script `expresat/models/train_and_export.py` es el pipeline automatizado de entrenamiento supervisado y serialización de modelos de **ExpresaT**.
 
-1. **Imports**: Loading required libraries.
-2. **Constant Definitions**: Model architecture parameters and synthetic data configurations.
-3. **GRU Model**: Implementation of the neural network.
-4. **Synthetic Dataset**: Data generation for training.
-5. **Training**: Function to train the model.
-6. **Quantization**: Application of dynamic quantization.
-7. **ONNX Export**: Functions to export the model to ONNX format.
-8. **Latency Benchmark**: Measuring model performance.
-9. **Main Function**: Workflow orchestration.
+---
 
-## Code Examples
+## 1. Definición de la Red Neuronal (`SignLanguageGRU`)
 
-Below are code snippets illustrating the key parts of the script.
-
-### GRU Model Definition
+La arquitectura implementa una celda recurrente GRU acoplada a un clasificador lineal:
 
 ```python
+import torch
+import torch.nn as nn
+
 class SignLanguageGRU(nn.Module):
-    def __init__(self, input_size: int = NUM_FEATURES,
+    def __init__(self, input_size: int = 178,
                  hidden_size: int = 64,
                  num_layers: int = 1,
-                 num_classes: int = len(DEFAULT_LABELS),
+                 num_classes: int = 5,
                  dropout: float = 0.3):
         super().__init__()
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
+        self.gru = nn.GRU(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True
+        )
         self.classifier = nn.Sequential(
             nn.Linear(hidden_size, 32),
             nn.ReLU(),
@@ -41,46 +51,51 @@ class SignLanguageGRU(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x shape: (batch_size, 15, 178)
         output, h_n = self.gru(x)
+        # Extraemos el último estado oculto temporal
         last_hidden = h_n[-1]
         logits = self.classifier(last_hidden)
         return logits
 ```
 
-This snippet defines the GRU model architecture, which includes a GRU layer and a classification head.
+---
 
-### Model Training
+## 2. Exportación a ONNX y Cuantización INT8
 
-```python
-def train_model(model: nn.Module, epochs: int = 50, lr: float = 1e-3,
-                batch_size: int = 64, device: str = "cpu") -> nn.Module:
-    model = model.to(device)
-    model.train()
-    dataset = SyntheticSignDataset()
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=lr)
-
-    for epoch in range(epochs):
-        for batch_x, batch_y in dataloader:
-            batch_x = batch_x.to(device)
-            batch_y = batch_y.to(device)
-            optimizer.zero_grad()
-            logits = model(batch_x)
-            loss = criterion(logits, batch_y)
-            loss.backward()
-            optimizer.step()
-```
-
-This snippet demonstrates how the model is trained using a synthetic dataset.
-
-### ONNX Export
+Para desacoplar el modelo del entorno de desarrollo PyTorch y permitir su ejecución en servidores de bajo coste o dispositivos nativos:
 
 ```python
-def export_to_onnx(model: nn.Module, output_path: str):
+import torch.onnx
+from onnxruntime.quantization import quantize_dynamic, QuantType
+
+def export_and_quantize(model: nn.Module, float_path: str, int8_path: str):
     model.eval()
-    dummy_input = torch.randn(1, SEQUENCE_LENGTH, NUM_FEATURES)
-    torch.onnx.export(model, dummy_input, output_path, export_params=True, opset_version=17)
+    dummy_input = torch.randn(1, 15, 178)
+
+    # 1. Exportación ONNX Float32
+    torch.onnx.export(
+        model,
+        dummy_input,
+        float_path,
+        export_params=True,
+        opset_version=17,
+        input_names=["input"],
+        output_names=["output"],
+        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}}
+    )
+
+    # 2. Cuantización dinámica a enteros de 8 bits (INT8)
+    quantize_dynamic(
+        model_input=float_path,
+        model_output=int8_path,
+        weight_type=QuantType.QInt8
+    )
 ```
 
-Here it illustrates how the trained model is exported to ONNX format, enabling its use across different platforms.
+---
+
+## 🤖 Asignación de Agentes y Skills Recomendadas
+
+- **Para Ajustes de Hiperparámetros y Entrenamiento:** Invocar **`ml-engineer`** (ver [[../../Skills/MachineLearning_y_Vision]]).
+- **Para Integración con CI/CD de GitHub Actions:** Invocar **`mlops-engineer`** y **`github-actions-templates`** (ver [[../../Skills/DevOps_CI_CD_y_Despliegue]]).

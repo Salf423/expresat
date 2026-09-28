@@ -1,26 +1,53 @@
-## Key Concepts
+---
+title: "Explicación del Código: Motor de Inferencia Nativo en C++ (ONNX Runtime)"
+description: "Arquitectura interna del motor de ejecución en C++17: sesiones optimizadas de ONNX Runtime, colas circulares lock-free SPSC y paralelismo de CPU."
+version: "2.0.0"
+category: "Código / Backend Nativo C++"
+status: "Producción"
+target_agents: ["cpp-pro", "systems-engineer", "ml-engineer"]
+recommended_skills:
+  - "[[../../Skills/Backend_APIs_y_Sistemas|Backend_APIs_y_Sistemas]] (`cpp-pro`, `memory-safety-patterns`)"
+  - "[[../../Skills/MachineLearning_y_Vision|MachineLearning_y_Vision]] (`ml-engineer`)"
+related_docs:
+  - "[[../../00_INDICE_MAESTRO]]"
+  - "[[Python_FastAPI]]"
+  - "[[../Frontend]]"
+  - "[[../../Flujo de datos]]"
+  - "[[../Funciones_Modelo/INFERENCIA]]"
+---
 
-- **Native C++ Engine**: A high-performance inference engine built in C++17, replacing the legacy Python/FastAPI/WebSocket backend.
-- **ONNX Runtime (C++ API)**: Used for executing the exported GRU model natively, providing massive latency reductions compared to Python PyTorch.
-- **Lock-Free Concurrency**: The system uses atomic ring buffers and buses to communicate between the UI/Camera thread and the Inference thread without blocking.
-- **MediaPipe Tasks**: (Planned) Replaces the Python MediaPipe Holistic pipeline with the C++ MediaPipe Tasks API for landmark extraction.
+# ⚡ Explicación del Código: Motor de Inferencia Nativo en C++ (ONNX Runtime)
 
-## Code Structure
+> **Navegación:** [[../../00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Explicación del Código** > **Backend** > **Main C++**
 
-The native backend (`expresat-native/core`) is organized into several key components:
+El subsistema nativo (`expresat-native/core`) constituye la implementación en C++17 de alto rendimiento de **ExpresaT**. Proporciona un motor de inferencia desacoplado de la red, diseñado para operar tanto en escritorios convencionales como en arquitecturas ARM en teléfonos Android.
 
-1. **`inference_thread.h` / `.cpp`**: The core class managing the ONNX Runtime session, preprocessing landmark sequences, and running model inference.
-2. **`frame_queue.h`**: A wait-free SPSC (Single-Producer Single-Consumer) ring buffer that safely passes webcam frames from the camera thread to the inference thread.
-3. **`result_bus.h`**: An atomic bus allowing the inference thread to publish the latest predictions and the UI thread to read them asynchronously.
-4. **`landmark_types.h`**: Defines the data structures for hand and pose landmarks (178 total features per frame).
+---
 
-## Code Examples
+## 1. Conceptos Clave
 
-### Inference Thread Initialization
+- **C++17 con RAII:** Gestión determinista de recursos del sistema operativo sin recolección de basura (*garbage collection*).
+- **ONNX Runtime (C++ API):** API nativa de bajo nivel que ejecuta el grafo cuantizado `expresat_gru_int8.onnx` con instrucciones vectorizadas SIMD (AVX2/NEON).
+- **Concurrencia Lock-Free:** Empleo de colas circulares atómicas Single-Producer Single-Consumer (SPSC) para transferir video e inferencias entre hilos sin bloqueos por exclusión mutua (*mutex contention*).
 
+---
+
+## 2. Componentes Principales (`expresat-native/core`)
+
+1. **`inference_thread.h` / `.cpp`:** Administra el ciclo de vida de la sesión ONNX Runtime, preprocesamiento y ejecución del tensor `[1, 15, 178]`.
+2. **`frame_queue.h`:** Búfer de anillo wait-free donde la cámara inserta fotogramas y el hilo de inferencia los extrae.
+3. **`result_bus.h`:** Bus atómico donde se publica el resultado de la traducción más reciente para que el hilo de interfaz ImGui lo lea de forma asíncrona.
+4. **`landmark_types.h`:** Definición estricta de estructuras para las 178 dimensiones corporales.
+
+---
+
+## 3. Fragmentos Clave de Código
+
+### Configuración Optimizada de la Sesión ONNX Runtime
 ```cpp
-// In inference_thread.cpp
+// En inference_thread.cpp
 InferenceThread::OrtState::OrtState() {
+    // Configuración para latencia mínima en CPUs multi-core
     opts.SetInterOpNumThreads(1);
     opts.SetIntraOpNumThreads(
         static_cast<int>(std::min(4u, std::thread::hardware_concurrency()))
@@ -32,40 +59,22 @@ InferenceThread::OrtState::OrtState() {
 }
 ```
 
-This snippet initializes the ONNX Runtime environment, optimizing thread usage and graph execution specifically for local desktop/mobile constraints.
-
-### Thread Safe Inter-communication
-
-The system strictly separates video capture and inference processing. Instead of web sockets, the components talk using lock-free structures.
-
+### Preprocesamiento y Ejecución del Tensor
 ```cpp
-// 1. In main.cpp (Camera Thread):
-cv::Mat frame;
-cap >> frame;
-g_frame_queue.push(frame); // Non-blocking push
-
-// 2. In inference_thread.cpp (Inference Thread):
-cv::Mat current_frame;
-if (frame_queue_.pop(current_frame)) {
-    // Process frame...
-    LandmarkFrame lm_frame = extract_landmarks(current_frame);
-    push_landmark_frame(std::move(lm_frame));
-    // ... run ONNX inference
-    result_bus_.publish(prediction_string);
-}
-```
-
-### Preprocessing and ONNX Execution
-
-Once a sequence of 15 frames is accumulated, the engine flattens it into a `[1, 15, 178]` float tensor and feeds it to the model.
-
-```cpp
-// 5. ONNX Inference
+// Flattens the circular buffer to [1, 15, 178]
 auto input_tensor = preprocess_sequence();
 auto logits = run_onnx(input_tensor);
 
-// 6. Post-processing: softmax + top-5
+// Softmax + top-5 probability distribution
 std::vector<float> probs = softmax(logits);
+if (probs[max_idx] >= confidence_threshold_) {
+    result_bus_.publish(labels_[max_idx]);
+}
 ```
 
-By keeping the inference out of the main thread and moving from Python to Native C++, the system achieves significantly higher framerates and lower battery usage on mobile.
+---
+
+## 🤖 Asignación de Agentes y Skills Recomendadas
+
+- **Para Optimización de Memoria y Concurrencia:** Invocar **`cpp-pro`** y **`memory-safety-patterns`** (ver [[../../Skills/Backend_APIs_y_Sistemas]]).
+- **Para Integración con Redes y Modelos ONNX:** Invocar **`ml-engineer`** (ver [[../../Skills/MachineLearning_y_Vision]]).

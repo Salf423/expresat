@@ -1,0 +1,14 @@
+# Build directories
+build*/
+cmake-build-*/
+
+# Third-party dependencies
+third_party/imgui/
+third_party/glad/
+third_party/*.zip
+
+# Runtime config
+imgui.ini
+
+# Generated datasets (can be committed if intentional)
+# dataset/*.json
