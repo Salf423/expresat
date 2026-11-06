@@ -368,6 +368,12 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                             "type": "translation",
                             "payload": result
                         }, websocket)
+                    elif result.get("debug") and DEMO_MODE:
+                        # [DEMO] Telemetría diagnóstica en tiempo real (mano quieta / reposo)
+                        await manager.send_personal({
+                            "type": "telemetry",
+                            "payload": result
+                        }, websocket)
 
                 except Exception as e:
                     print(f"  Inference error: {e}")

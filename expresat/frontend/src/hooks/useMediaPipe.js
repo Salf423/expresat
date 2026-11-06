@@ -117,6 +117,9 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
     // FPS tracking
     const fpsCountRef    = useRef(0);
     const fpsTimeRef     = useRef(performance.now());
+    // FPS watchdog: if no results arrive within 2s, report 0 so the counter
+    // doesn't freeze on a stale positive value from a previous session.
+    const fpsWatchdogRef = useRef(null);
 
     // Latest smoothed results — written by Worker message handler,
     // read by the draw loop. No useState → zero re-renders from here.
@@ -185,10 +188,20 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                 fpsCountRef.current++;
                 const now = performance.now();
                 if (now - fpsTimeRef.current >= 1000) {
+                    // Report the frames counted in this 1-second window
                     onFpsRef.current?.(fpsCountRef.current);
                     fpsCountRef.current = 0;
                     fpsTimeRef.current = now;
                 }
+
+                // Reset the watchdog: we just got a live result
+                clearTimeout(fpsWatchdogRef.current);
+                fpsWatchdogRef.current = setTimeout(() => {
+                    // No results for 2 seconds → Worker stalled or not ready yet
+                    onFpsRef.current?.(0);
+                    fpsCountRef.current = 0;
+                    fpsTimeRef.current = performance.now();
+                }, 2000);
 
                 // Accumulate frames into a 15-frame sliding window (1.0s at 15 FPS)
                 const currentFramePayload = buildPayload(smoothed);
@@ -349,6 +362,9 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             // Reset filter and frame buffer state
             filterRef.current?.reset();
             frameBufferRef.current = [];
+
+            // Cancel FPS watchdog
+            clearTimeout(fpsWatchdogRef.current);
         };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps

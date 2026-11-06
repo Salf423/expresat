@@ -15,6 +15,21 @@ const Translator = () => {
   const [copied, setCopied] = useState(false);
   // [DEMO] Estado para reflejar el modo demo en la interfaz visual
   const [isDemo, setIsDemo] = useState(true);
+  // [DEBUG] Panel de diagnóstico oculto — activar con Ctrl+Shift+D
+  const [debugVisible, setDebugVisible] = useState(false);
+  const [debugData, setDebugData] = useState(null);
+
+  // [DEBUG] Atajo de teclado Ctrl+Shift+D para mostrar/ocultar panel
+  React.useEffect(() => {
+    const handleKey = (e) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+        e.preventDefault();
+        setDebugVisible((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   // [DEMO] Sincronizar estado inicial de DEMO_MODE consultando /health
   React.useEffect(() => {
@@ -72,6 +87,11 @@ const Translator = () => {
       if (msg?.is_demo !== undefined) {
         setIsDemo(Boolean(msg.is_demo));
       }
+
+      // [DEBUG] Capturar telemetría de diagnóstico por frame
+      if (msg?.debug) {
+        setDebugData(msg.debug);
+      }
     });
 
     apiRef.current = api;
@@ -117,27 +137,7 @@ const Translator = () => {
               Traductor LSM
             </h1>
             <span className="chip" style={{ fontSize: '0.75rem' }}>En Vivo</span>
-            {/* [DEMO] Indicador visual superior de MODO DEMO */}
-            {isDemo && (
-              <span
-                className="chip chip--demo"
-                style={{
-                  fontSize: '0.75rem',
-                  background: 'rgba(245, 158, 11, 0.15)',
-                  color: '#f59e0b',
-                  border: '1px solid rgba(245, 158, 11, 0.4)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  fontWeight: 700,
-                  letterSpacing: '0.03em'
-                }}
-                title="Modo Demo: Reconocimiento determinista temporal basado en reglas"
-              >
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f59e0b', boxShadow: '0 0 6px #f59e0b' }} />
-                MODO DEMO
-              </span>
-            )}
+            {/* [DEMO] Indicador visual superior de MODO DEMO — oculto al usuario (Tarea 3) */}
           </div>
           <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
             Posiciónate frente a la cámara con las manos visibles y buena iluminación.
@@ -302,21 +302,8 @@ const Translator = () => {
           >
             {translation ? (
               <div style={{ textAlign: 'center', animation: 'fade-up 0.2s ease-out' }}>
-                {/* [DEMO] Distintivo de modo demo vs modelo final */}
-                {isDemo ? (
-                  <span
-                    className="chip"
-                    style={{
-                      marginBottom: '1rem',
-                      background: 'rgba(245, 158, 11, 0.15)',
-                      color: '#f59e0b',
-                      borderColor: 'rgba(245, 158, 11, 0.4)',
-                      fontWeight: 600
-                    }}
-                  >
-                    ⚡ MODO DEMO — Regla Determinista
-                  </span>
-                ) : (
+                {/* [DEMO] Distintivo de modo demo vs modelo final — oculto al usuario (Tarea 3) */}
+                {!isDemo && (
                   <span className="chip" style={{ marginBottom: '1rem', background: 'var(--success-bg)', color: 'var(--success-color)', borderColor: 'transparent' }}>
                     Reconocimiento Confiable
                   </span>
@@ -340,33 +327,12 @@ const Translator = () => {
             )}
           </div>
 
-          {/* [DEMO] Banner de información sobre el prototipo determinista */}
-          {isDemo && (
-            <div
-              style={{
-                marginTop: '1rem',
-                padding: '0.75rem 1rem',
-                background: 'rgba(245, 158, 11, 0.08)',
-                border: '1px dashed rgba(245, 158, 11, 0.35)',
-                borderRadius: 'var(--radius-md)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.65rem',
-                fontSize: '0.8rem',
-                color: 'var(--text-muted)'
-              }}
-            >
-              <Info size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
-              <span>
-                <strong style={{ color: '#f59e0b' }}>MODO DEMO ACTIVO:</strong> Interpretación preliminar basada en reglas geométricas (ángulos y distancias de MediaPipe). Esta etapa temporal será sustituida por el modelo de IA.
-              </span>
-            </div>
-          )}
+          {/* [DEMO] Banner de información sobre el prototipo determinista — oculto al usuario (Tarea 3) */}
 
           {/* Quick Guide Card */}
           <div
             style={{
-              marginTop: isDemo ? '0.75rem' : '1.25rem',
+              marginTop: '1.25rem',
               padding: '1rem',
               background: 'var(--panel-bg)',
               borderRadius: 'var(--radius-md)',
@@ -376,8 +342,8 @@ const Translator = () => {
               gap: '0.5rem'
             }}
           >
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: isDemo ? '#f59e0b' : 'var(--text-color)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              {isDemo ? '⚡ Señas demostrativas soportadas:' : 'Señas sugeridas en este modelo:'}
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-color)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              {isDemo ? 'Señas soportadas' : 'Señas sugeridas en este modelo:'}
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
               {(isDemo
@@ -390,9 +356,9 @@ const Translator = () => {
                     fontSize: '0.75rem',
                     padding: '0.2rem 0.6rem',
                     borderRadius: 'var(--radius-sm)',
-                    background: isDemo ? 'rgba(245, 158, 11, 0.1)' : 'var(--input-bg)',
-                    color: isDemo ? 'var(--text-color)' : 'var(--text-muted)',
-                    border: isDemo ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid var(--panel-border)'
+                    background: 'var(--input-bg)',
+                    color: 'var(--text-muted)',
+                    border: '1px solid var(--panel-border)'
                   }}
                 >
                   {sign}
@@ -402,6 +368,53 @@ const Translator = () => {
           </div>
         </section>
       </div>
+
+      {/* [DEBUG] Panel de diagnóstico oculto — Ctrl+Shift+D para activar */}
+      {debugVisible && (
+        <section
+          aria-label="Panel de diagnóstico"
+          style={{
+            marginTop: '1rem',
+            padding: '1rem 1.25rem',
+            background: 'rgba(0,0,0,0.85)',
+            border: '1px solid rgba(99,255,99,0.3)',
+            borderRadius: 'var(--radius-md)',
+            fontFamily: 'monospace',
+            fontSize: '0.78rem',
+            color: '#7fff7f',
+            lineHeight: 1.6,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <strong style={{ color: '#0f0', letterSpacing: '0.08em' }}>⬛ DEBUG PANEL — Ctrl+Shift+D</strong>
+            <span style={{ color: '#aaa' }}>FPS actual: <strong style={{ color: '#fff' }}>{fps}</strong></span>
+          </div>
+          {debugData ? (
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <tbody>
+                <tr><td style={{ color: '#aaa', paddingRight: '1rem' }}>Mano detectada</td><td><strong style={{ color: debugData.hand_detected ? '#0f0' : '#f55' }}>{String(debugData.hand_detected)}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>Mano activa</td><td>{debugData.hand_label ?? '—'}</td></tr>
+                <tr><td style={{ color: '#aaa' }}>Pulgar ext.</td><td><strong style={{ color: debugData.fingers?.thumb ? '#0f0' : '#f55' }}>{String(debugData.fingers?.thumb ?? '—')}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>Índice ext.</td><td><strong style={{ color: debugData.fingers?.index ? '#0f0' : '#f55' }}>{String(debugData.fingers?.index ?? '—')}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>Medio ext.</td><td><strong style={{ color: debugData.fingers?.middle ? '#0f0' : '#f55' }}>{String(debugData.fingers?.middle ?? '—')}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>Anular ext.</td><td><strong style={{ color: debugData.fingers?.ring ? '#0f0' : '#f55' }}>{String(debugData.fingers?.ring ?? '—')}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>Meñique ext.</td><td><strong style={{ color: debugData.fingers?.pinky ? '#0f0' : '#f55' }}>{String(debugData.fingers?.pinky ?? '—')}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>4 ded. tol.</td><td><strong style={{ color: debugData.all_four_extended_tolerant ? '#0f0' : '#f55' }}>{String(debugData.all_four_extended_tolerant ?? '—')}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>Palma al frente</td><td><strong style={{ color: debugData.palm_facing_camera ? '#0f0' : '#f55' }}>{String(debugData.palm_facing_camera ?? '—')}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>Normal palma Z</td><td>{debugData.palm_normal_z ?? '—'}</td></tr>
+                <tr><td style={{ color: '#aaa' }}>Muñeca (x,y,z)</td><td>{debugData.wrist_position ? `[${debugData.wrist_position.join(', ')}]` : '—'}</td></tr>
+                <tr><td style={{ color: '#aaa' }}>Agitando (wave)</td><td><strong style={{ color: debugData.is_waving ? '#0f0' : '#f55' }}>{String(debugData.is_waving ?? '—')}</strong></td></tr>
+                <tr><td style={{ color: '#aaa' }}>Cambios direc.</td><td>{debugData.direction_changes ?? '—'} / 2 req.</td></tr>
+                <tr><td style={{ color: '#aaa' }}>Amplitud wave</td><td>{debugData.wave_amplitude ?? '—'}</td></tr>
+                <tr><td style={{ color: '#aaa' }}>Regla evaluada</td><td style={{ color: '#ff0' }}>{debugData.evaluated_rule ?? '—'}</td></tr>
+                <tr><td style={{ color: '#aaa' }}>Razón</td><td style={{ color: '#ccc', maxWidth: '240px', wordBreak: 'break-word' }}>{debugData.rule_reason ?? '—'}</td></tr>
+              </tbody>
+            </table>
+          ) : (
+            <span style={{ color: '#888' }}>Esperando datos del servidor...</span>
+          )}
+        </section>
+      )}
     </div>
   );
 };

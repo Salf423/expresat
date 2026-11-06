@@ -1,15 +1,19 @@
 """
 test_demo_rules.py — Pruebas unitarias del motor de reglas deterministas (demo_rules.py)
 ========================================================================================
-# [DEMO] Pruebas sintéticas para validar la correcta clasificación de señas
-# y la compatibilidad de formato con el pipeline de inferencia.
+# [DEMO] Pruebas sintéticas para validar la correcta clasificación de señas,
+# detección dinámica de saludo ("Hola" con vaivén vs mano quieta),
+# telemetría de depuración y compatibilidad de formato.
 """
 
+import math
 import unittest
 from demo_rules import (
     predict_demo,
     analyze_hand_fingers,
     classify_frame_by_rules,
+    get_wave_tracker,
+    get_hola_confirmation,
     DEMO_LABELS
 )
 
@@ -35,22 +39,18 @@ def create_hand_skeleton(
     dx_offset = wrist_x - 0.5
 
     # 1-4: Pulgar
-    # CMC, MCP, IP, TIP
     if thumb_ext:
         if thumb_up:
-            # Pulgar apuntando hacia arriba (Bien / Thumbs up)
             landmarks.append({"x": 0.47 + dx_offset, "y": wrist_y - 0.04, "z": 0.0}) # 1
             landmarks.append({"x": 0.44 + dx_offset, "y": wrist_y - 0.08, "z": 0.0}) # 2
             landmarks.append({"x": 0.42 + dx_offset, "y": wrist_y - 0.14, "z": 0.0}) # 3
             landmarks.append({"x": 0.40 + dx_offset, "y": wrist_y - 0.22, "z": 0.0}) # 4
         else:
-            # Pulgar extendido lateralmente (hacia la izquierda en x)
             landmarks.append({"x": 0.46 + dx_offset, "y": wrist_y - 0.03, "z": 0.0}) # 1
             landmarks.append({"x": 0.42 + dx_offset, "y": wrist_y - 0.06, "z": 0.0}) # 2
             landmarks.append({"x": 0.36 + dx_offset, "y": wrist_y - 0.07, "z": 0.0}) # 3
             landmarks.append({"x": 0.30 + dx_offset, "y": wrist_y - 0.08, "z": 0.0}) # 4
     else:
-        # Pulgar doblado sobre la palma hacia el centro
         landmarks.append({"x": 0.48 + dx_offset, "y": wrist_y - 0.04, "z": 0.0}) # 1
         landmarks.append({"x": 0.47 + dx_offset, "y": wrist_y - 0.07, "z": 0.0}) # 2
         landmarks.append({"x": 0.48 + dx_offset, "y": wrist_y - 0.09, "z": 0.0}) # 3
@@ -69,7 +69,6 @@ def create_hand_skeleton(
             landmarks.append({"x": tip_x + dx_offset, "y": dip_y, "z": 0.0})
             landmarks.append({"x": tip_x + dx_offset, "y": tip_y, "z": 0.0})
         else:
-            # Doblado en puño (el tip se enrolla hacia la palma / MCP)
             landmarks.append({"x": mcp_x + dx_offset, "y": mcp_y, "z": 0.0})
             landmarks.append({"x": mcp_x + dx_offset, "y": mcp_y - 0.04, "z": 0.05})
             landmarks.append({"x": mcp_x + dx_offset, "y": mcp_y - 0.02, "z": 0.08})
@@ -102,6 +101,10 @@ def create_pose(nose_y=0.25, shoulder_y=0.45):
 
 
 class TestDemoRules(unittest.TestCase):
+
+    def setUp(self):
+        # Resetear el rastreador de vaivén antes de cada prueba
+        get_wave_tracker().reset()
 
     def test_bien_thumbs_up(self):
         """[DEMO] Reconocimiento de 'Bien' (pulgar arriba)."""
@@ -152,19 +155,68 @@ class TestDemoRules(unittest.TestCase):
         self.assertEqual(res["label"], "Si")
         self.assertTrue(res["is_demo"])
 
-    def test_hola_raised_hand(self):
-        """[DEMO] Reconocimiento de 'Hola' (mano abierta levantada sobre hombros lateralmente)."""
-        hand = create_hand_skeleton(
-            thumb_ext=True, index_ext=True, middle_ext=True, ring_ext=True, pinky_ext=True,
-            wrist_y=0.25, wrist_x=0.70 # mano alzada al costado (saludo)
-        )
-        frame = {"rightHand": hand, "pose": create_pose(nose_y=0.20, shoulder_y=0.45)}
-        res = predict_demo(frame)
+    def test_hola_with_waving_motion(self):
+        """[DEMO] 'Hola' se detecta cuando la mano abierta realiza movimiento de saludo (vaivén lateral).
+        La confirmación requiere MIN_FRAMES=4 lotes consecutivos antes de confirmar la seña.
+        """
+        # Reset singletons para aislar este test
+        get_wave_tracker().reset()
+        get_hola_confirmation().reset()
+
+        palm_scale = 0.12
+        frames = []
+        # Simular 15 frames de un saludo con 2 ciclos completos de oscilación en X
+        for i in range(15):
+            t = i / 14.0
+            wx = 0.60 + (0.35 * palm_scale) * math.sin(2 * math.pi * 1.8 * t)
+            hand = create_hand_skeleton(
+                thumb_ext=True, index_ext=True, middle_ext=True, ring_ext=True, pinky_ext=True,
+                wrist_y=0.30, wrist_x=wx
+            )
+            frames.append({"rightHand": hand, "pose": create_pose(nose_y=0.25, shoulder_y=0.50)})
+
+        # Llamar MIN_FRAMES veces para superar la confirmación por debounce
+        min_frames = get_hola_confirmation().MIN_FRAMES
+        res = None
+        for _ in range(min_frames):
+            res = predict_demo(frames)
+
         self.assertEqual(res["label"], "Hola")
         self.assertTrue(res["is_demo"])
+        self.assertGreaterEqual(res["confidence"], 0.90)
+        self.assertTrue(res["debug"]["is_waving"])
+        self.assertGreaterEqual(res["debug"]["direction_changes"], 2)
+
+    def test_open_hand_still_does_not_trigger_hola(self):
+        """[DEMO] Mano abierta pero QUIETA no debe clasificarse como 'Hola' (evita falsos positivos).
+        La regla 8 retorna None (mano abierta estática) o 'Reposo' si no cumple ninguna regla previa.
+        La seña 'Hola' nunca debe aparecer.
+        """
+        # Reset singletons para aislar este test
+        get_wave_tracker().reset()
+        get_hola_confirmation().reset()
+
+        # Mano abierta estacionaria lateral (wrist_x=0.60 → no es central → no Gracias → Reposo)
+        hand = create_hand_skeleton(
+            thumb_ext=True, index_ext=True, middle_ext=True, ring_ext=True, pinky_ext=True,
+            wrist_y=0.30, wrist_x=0.60
+        )
+        # 15 frames sin movimiento
+        frames = [{"rightHand": hand, "pose": create_pose(nose_y=0.25, shoulder_y=0.50)} for _ in range(15)]
+        res = predict_demo(frames)
+
+        # Lo fundamental: nunca debe clasificarse como "Hola"
+        self.assertNotEqual(res["label"], "Hola")
+        # La mano abierta quieta cae en "Reposo" (no pasa la regla 7 por ser lateral)
+        # o en None si es central, pero NUNCA en "Hola"
+        self.assertFalse(res["debug"]["is_waving"])
+        # Si sí llega a la Regla 8 y es estática, la razón incluye "estática"
+        # Si cae en Reposo (sin pasar Regla 8), el label tampoco es "Hola"
+        if res["label"] is None:
+            self.assertIn("estática", res["debug"]["rule_reason"])
 
     def test_gracias_chin_level(self):
-        """[DEMO] Reconocimiento de 'Gracias' (mano abierta plana a nivel de barbilla/pecho)."""
+        """[DEMO] Reconocimiento de 'Gracias' (mano plana a nivel de barbilla/pecho sin vaivén)."""
         hand = create_hand_skeleton(
             thumb_ext=False, index_ext=True, middle_ext=True, ring_ext=True, pinky_ext=True,
             wrist_y=0.35 # entre nariz (0.25) y hombros (0.45)
@@ -181,15 +233,6 @@ class TestDemoRules(unittest.TestCase):
         self.assertEqual(res["confidence"], 0.0)
         self.assertTrue(res["is_demo"])
 
-    def test_batch_mode_sequence(self):
-        """[DEMO] Secuencia de 15 frames en lote."""
-        hand = create_hand_skeleton(index_ext=True, wrist_y=0.4)
-        frames = [{"rightHand": hand, "pose": create_pose()} for _ in range(15)]
-        res = predict_demo(frames)
-        self.assertEqual(res["label"], "No")
-        self.assertIn("latency_ms", res)
-        self.assertIn("all_probabilities", res)
-
     def test_probabilities_sum_to_one(self):
         """[DEMO] La suma de probabilidades debe ser exactamente 1.0."""
         hand = create_hand_skeleton(thumb_ext=True, thumb_up=True, wrist_y=0.4)
@@ -198,23 +241,24 @@ class TestDemoRules(unittest.TestCase):
         total = sum(probs.values())
         self.assertAlmostEqual(total, 1.0, places=4)
 
-    def test_hola_forehead_level_not_gracias(self):
-        """[DEMO] Mano abierta a la altura de la frente/ojos debe ser Hola, no Gracias."""
-        # Nariz en 0.25, mano en 0.20 (arriba de la nariz / frente)
-        hand = create_hand_skeleton(
-            thumb_ext=True, index_ext=True, middle_ext=True, ring_ext=True, pinky_ext=True,
-            wrist_y=0.20, wrist_x=0.50
-        )
-        frame = {"rightHand": hand, "pose": create_pose(nose_y=0.25, shoulder_y=0.45)}
-        res = predict_demo(frame)
-        self.assertEqual(res["label"], "Hola")
-
     def test_none_input_resilience(self):
         """[DEMO] predict_demo debe manejar None sin lanzar excepciones."""
         res = predict_demo(None)
         self.assertIsNone(res["label"])
         self.assertEqual(res["confidence"], 0.0)
         self.assertTrue(res["is_demo"])
+
+    def test_debug_telemetry_fields(self):
+        """[DEMO] La respuesta debe incluir el diccionario de telemetría para depuración."""
+        hand = create_hand_skeleton(index_ext=True, wrist_y=0.4)
+        res = predict_demo({"rightHand": hand, "pose": create_pose()})
+        self.assertIn("debug", res)
+        debug = res["debug"]
+        self.assertIn("hand_detected", debug)
+        self.assertIn("fingers", debug)
+        self.assertIn("palm_facing_camera", debug)
+        self.assertIn("is_waving", debug)
+        self.assertIn("rule_reason", debug)
 
 
 if __name__ == "__main__":

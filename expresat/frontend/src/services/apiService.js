@@ -92,7 +92,7 @@ export class ApiService {
                 const latency = Math.round(performance.now() - this.lastPingTime);
                 const latencyEl = document.getElementById('latency-counter');
                 if (latencyEl) latencyEl.innerText = `Latencia: ${latency} ms`;
-            } else if (data.type === 'translation' && this.onMessageCallback) {
+            } else if ((data.type === 'translation' || data.type === 'telemetry') && this.onMessageCallback) {
                 this.onMessageCallback(data.payload);
             }
         };
