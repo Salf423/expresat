@@ -1,3 +1,5 @@
+import { LandmarkTracker } from './landmarkTracker.js';
+
 export class MediaPipeEngine {
     /**
      * Initializes the MediaPipe Holistic detection engine.
@@ -5,13 +7,16 @@ export class MediaPipeEngine {
      * @param {HTMLCanvasElement} canvasElement - Canvas where results will be drawn.
      * @param {Function} onBatchReady - Callback invoked (throttled) to send detected landmarks.
      * @param {Function} [onFps] - Optional. Called once per second with the real FPS count.
+     * @param {Object} [trackingConfig] - Optional. Configuration for experimental landmark tracker.
      */
-    constructor(videoElement, canvasElement, onBatchReady, onFps = null) {
+    constructor(videoElement, canvasElement, onBatchReady, onFps = null, trackingConfig = null) {
         this.videoElement = videoElement;
         this.canvasElement = canvasElement;
         this.canvasCtx = canvasElement.getContext('2d');
         this.onBatchReady = onBatchReady;
         this.onFps = onFps;
+        this.trackingConfig = trackingConfig;
+        this.tracker = new LandmarkTracker();
 
         // Detection rate: how often MediaPipe processes a frame (15 FPS cap)
         this.targetFPS = 15;
@@ -85,6 +90,7 @@ export class MediaPipeEngine {
      */
     destroy() {
         document.removeEventListener('visibilitychange', this._handleVisibility);
+        this.tracker?.reset();
     }
 
     /**
@@ -101,17 +107,38 @@ export class MediaPipeEngine {
         this.canvasCtx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
         this.canvasCtx.drawImage(results.image, 0, 0, this.canvasElement.width, this.canvasElement.height);
 
-        if (results.poseLandmarks) {
-            window.drawConnectors(this.canvasCtx, results.poseLandmarks, window.POSE_CONNECTIONS, { color: '#00f3ff', lineWidth: 4 });
-            window.drawLandmarks(this.canvasCtx, results.poseLandmarks, { color: '#ffffff', lineWidth: 2 });
-        }
-        if (results.leftHandLandmarks) {
-            window.drawConnectors(this.canvasCtx, results.leftHandLandmarks, window.HAND_CONNECTIONS, { color: '#9d4edd', lineWidth: 5 });
-            window.drawLandmarks(this.canvasCtx, results.leftHandLandmarks, { color: '#ffffff', lineWidth: 2 });
-        }
-        if (results.rightHandLandmarks) {
-            window.drawConnectors(this.canvasCtx, results.rightHandLandmarks, window.HAND_CONNECTIONS, { color: '#9d4edd', lineWidth: 5 });
-            window.drawLandmarks(this.canvasCtx, results.rightHandLandmarks, { color: '#ffffff', lineWidth: 2 });
+        if (this.trackingConfig?.enabled && this.tracker) {
+            // Formatear resultados Holistic al formato estándar del tracker
+            const hands = [];
+            const handedness = [];
+            if (results.leftHandLandmarks) {
+                hands.push(results.leftHandLandmarks);
+                handedness.push([{ categoryName: 'Left' }]);
+            }
+            if (results.rightHandLandmarks) {
+                hands.push(results.rightHandLandmarks);
+                handedness.push([{ categoryName: 'Right' }]);
+            }
+            const standardizedResults = {
+                pose: results.poseLandmarks,
+                hands,
+                handedness
+            };
+            this.tracker.update(standardizedResults, this.canvasElement.width, this.canvasElement.height);
+            this.tracker.render(this.canvasCtx, standardizedResults, this.canvasElement.width, this.canvasElement.height, this.trackingConfig);
+        } else {
+            if (results.poseLandmarks) {
+                window.drawConnectors(this.canvasCtx, results.poseLandmarks, window.POSE_CONNECTIONS, { color: '#00f3ff', lineWidth: 4 });
+                window.drawLandmarks(this.canvasCtx, results.poseLandmarks, { color: '#ffffff', lineWidth: 2 });
+            }
+            if (results.leftHandLandmarks) {
+                window.drawConnectors(this.canvasCtx, results.leftHandLandmarks, window.HAND_CONNECTIONS, { color: '#9d4edd', lineWidth: 5 });
+                window.drawLandmarks(this.canvasCtx, results.leftHandLandmarks, { color: '#ffffff', lineWidth: 2 });
+            }
+            if (results.rightHandLandmarks) {
+                window.drawConnectors(this.canvasCtx, results.rightHandLandmarks, window.HAND_CONNECTIONS, { color: '#9d4edd', lineWidth: 5 });
+                window.drawLandmarks(this.canvasCtx, results.rightHandLandmarks, { color: '#ffffff', lineWidth: 2 });
+            }
         }
         this.canvasCtx.restore();
 

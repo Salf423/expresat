@@ -16,6 +16,7 @@
 
 import { useEffect, useRef } from 'react';
 import { LandmarkEMAFilter } from '../services/landmarkFilter';
+import { LandmarkTracker } from '../services/landmarkTracker';
 
 // ─── Drawing constants ────────────────────────────────────────────────────────
 
@@ -97,13 +98,18 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
         alpha = 0.45,
         targetFPS = 15,
         sendInterval = 500,
+        trackingConfig = null,
+        onTelemetry = null,
     } = options;
 
     // Stable refs — these never trigger re-renders
-    const workerRef      = useRef(null);
-    const filterRef      = useRef(null);
-    const streamRef      = useRef(null);
-    const rafIdRef       = useRef(null);
+    const workerRef         = useRef(null);
+    const filterRef         = useRef(null);
+    const streamRef         = useRef(null);
+    const rafIdRef          = useRef(null);
+    const trackerRef        = useRef(null);
+    const trackingConfigRef = useRef(trackingConfig);
+    const onTelemetryRef    = useRef(onTelemetry);
 
     // Frame-drop guard: true while the Worker is processing a frame.
     // Prevents queue build-up on slow devices (backpressure control).
@@ -131,6 +137,8 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
     // Keep callback refs fresh without re-running the effect
     useEffect(() => { onLandmarksRef.current = onLandmarks; }, [onLandmarks]);
     useEffect(() => { onFpsRef.current = onFps; }, [onFps]);
+    useEffect(() => { trackingConfigRef.current = trackingConfig; }, [trackingConfig]);
+    useEffect(() => { onTelemetryRef.current = onTelemetry; }, [onTelemetry]);
 
     useEffect(() => {
         const video  = videoRef.current;
@@ -139,6 +147,9 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
 
         const ctx = canvas.getContext('2d');
         filterRef.current = new LandmarkEMAFilter(alpha);
+        trackerRef.current = new LandmarkTracker({
+            maxTrailLength: trackingConfigRef.current?.trailLength ?? 8
+        });
 
         // ── 1. Start camera IMMEDIATELY, independent of Worker state ─────────
         // 🔑 Key fix: camera must stream to canvas regardless of whether
@@ -183,6 +194,12 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                 // Apply EMA filter to smooth out jitter
                 const smoothed = filterRef.current.smoothResults({ pose, hands, handedness });
                 resultsRef.current = smoothed;
+
+                // Actualizar seguimiento histórico y telemetría de landmarks
+                if (trackerRef.current && (trackingConfigRef.current?.enabled || onTelemetryRef.current)) {
+                    const telemetry = trackerRef.current.update(smoothed, canvas.width, canvas.height);
+                    onTelemetryRef.current?.(telemetry);
+                }
 
                 // FPS tracking (counts result callbacks per second)
                 fpsCountRef.current++;
@@ -286,19 +303,25 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             }
 
             if (results) {
-                // Pose skeleton
-                if (results.pose) {
-                    drawConnectors(ctx, results.pose, POSE_CONNECTIONS, '#00f3ff', 3, w, h);
-                    drawLandmarks(ctx, results.pose, '#ffffff', 3, w, h);
-                }
+                const currentConfig = trackingConfigRef.current;
+                // Si el sistema de seguimiento experimental está activo, renderizar con tracker
+                if (currentConfig?.enabled && trackerRef.current) {
+                    trackerRef.current.render(ctx, results, w, h, currentConfig);
+                } else {
+                    // Modo estándar/fallback
+                    if (results.pose) {
+                        drawConnectors(ctx, results.pose, POSE_CONNECTIONS, '#00f3ff', 3, w, h);
+                        drawLandmarks(ctx, results.pose, '#ffffff', 3, w, h);
+                    }
 
-                // Hands (color by handedness)
-                results.hands.forEach((handLandmarks, i) => {
-                    const side = results.handedness[i]?.[0]?.categoryName ?? 'Left';
-                    const color = side === 'Right' ? '#9d4edd' : '#7b2ff7';
-                    drawConnectors(ctx, handLandmarks, HAND_CONNECTIONS, color, 4, w, h);
-                    drawLandmarks(ctx, handLandmarks, '#ffffff', 3, w, h);
-                });
+                    // Hands (color by handedness)
+                    results.hands.forEach((handLandmarks, i) => {
+                        const side = results.handedness[i]?.[0]?.categoryName ?? 'Left';
+                        const color = side === 'Right' ? '#9d4edd' : '#7b2ff7';
+                        drawConnectors(ctx, handLandmarks, HAND_CONNECTIONS, color, 4, w, h);
+                        drawLandmarks(ctx, handLandmarks, '#ffffff', 3, w, h);
+                    });
+                }
             }
 
             ctx.restore();
@@ -361,6 +384,7 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
 
             // Reset filter and frame buffer state
             filterRef.current?.reset();
+            trackerRef.current?.reset();
             frameBufferRef.current = [];
 
             // Cancel FPS watchdog

@@ -1,7 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { Camera, Activity, MessageSquare, Sparkles, Volume2, Copy, Check, Info } from 'lucide-react';
+import {
+  Camera, Activity, MessageSquare, Sparkles, Volume2, Copy, Check, Info,
+  Layers, ChevronDown, ChevronUp, BarChart2
+} from 'lucide-react';
 import { ApiService } from '../services/apiService';
 import { useMediaPipe } from '../hooks/useMediaPipe';
+import { COLOR_LEGEND_ITEMS } from '../services/landmarkTracker';
 
 const Translator = () => {
   const videoRef = useRef(null);
@@ -19,12 +23,30 @@ const Translator = () => {
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugData, setDebugData] = useState(null);
 
-  // [DEBUG] Atajo de teclado Ctrl+Shift+D para mostrar/ocultar panel
+  // [SEGUIMIENTO EXPERIMENTAL] Estado del sistema de seguimiento de puntos MediaPipe
+  const [trackingConfig, setTrackingConfig] = useState({
+    enabled: true,         // Activo por defecto para experimentación y testeo
+    showTrails: true,      // Estelas temporales de movimiento
+    showLabels: false,     // IDs numéricos sobre cada landmark
+    showHalos: true,       // Halos en articulaciones clave y puntas de dedos
+    colorByPart: true,     // Separación de cada parte en colores vivos
+    trailLength: 8,        // Longitud de frames de la estela
+  });
+  const [telemetry, setTelemetry] = useState(null);
+  const [showTelemetryDrawer, setShowTelemetryDrawer] = useState(false);
+  const [selectedPartFilter, setSelectedPartFilter] = useState('all');
+
+  // [DEBUG & TRACKER] Atajos de teclado:
+  //   Ctrl+Shift+D: Panel de diagnóstico backend
+  //   Ctrl+Shift+T: Alternar modo seguimiento de puntos MediaPipe
   React.useEffect(() => {
     const handleKey = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'D') {
         e.preventDefault();
         setDebugVisible((v) => !v);
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'T') {
+        e.preventDefault();
+        setTrackingConfig((c) => ({ ...c, enabled: !c.enabled }));
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -97,13 +119,19 @@ const Translator = () => {
     apiRef.current = api;
   }
 
-  // Off-main-thread MediaPipe + EMA filter + canvas drawing
+  // Off-main-thread MediaPipe + EMA filter + canvas drawing + tracking
   useMediaPipe(
     videoRef,
     canvasRef,
     (landmarks) => apiRef.current?.sendLandmarks(landmarks), // throttled 2/sec
     (currentFps) => setFps(currentFps),                      // called 1/sec
-    { alpha: 0.45, targetFPS: 15, sendInterval: 500 }
+    {
+      alpha: 0.45,
+      targetFPS: 15,
+      sendInterval: 500,
+      trackingConfig,
+      onTelemetry: setTelemetry
+    }
   );
 
   // Helper de accesibilidad: lectura por voz si el navegador lo soporta
@@ -188,6 +216,27 @@ const Translator = () => {
             <Camera size={20} color="var(--accent-primary)" />
             <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>Captura de Cámara</h2>
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button
+                type="button"
+                onClick={() => setTrackingConfig(c => ({ ...c, enabled: !c.enabled }))}
+                className="chip"
+                title="Alternar sistema experimental de seguimiento de puntos (Ctrl+Shift+T)"
+                style={{
+                  cursor: 'pointer',
+                  border: `1px solid ${trackingConfig.enabled ? 'var(--accent-primary)' : 'var(--panel-border)'}`,
+                  background: trackingConfig.enabled ? 'var(--accent-primary-bg)' : 'var(--input-bg)',
+                  color: trackingConfig.enabled ? 'var(--accent-primary)' : 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <Layers size={13} />
+                <span>{trackingConfig.enabled ? 'Tracker On' : 'Tracker Off'}</span>
+              </button>
               <span className={`badge ${isConnected ? 'badge--success' : 'badge--info'}`}>
                 {isConnected ? 'Stream Activo' : 'Esperando'}
               </span>
@@ -248,6 +297,341 @@ const Translator = () => {
               </div>
             </div>
           </div>
+
+          {/* [SEGUIMIENTO EXPERIMENTAL] Barra de Controles y Guía de Colores */}
+          {trackingConfig.enabled && (
+            <div
+              style={{
+                marginTop: '0.85rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.65rem',
+                padding: '0.85rem',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--panel-bg)',
+                border: '1px solid var(--panel-border)'
+              }}
+            >
+              {/* Barra superior de herramientas del rastreador */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      color: 'var(--accent-primary)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.3rem'
+                    }}
+                  >
+                    <Layers size={13} />
+                    Tracker de Puntos [Test]
+                  </span>
+                  <span
+                    className="chip"
+                    style={{
+                      fontSize: '0.7rem',
+                      padding: '0.1rem 0.45rem',
+                      background: 'var(--accent-primary-bg)',
+                      color: 'var(--accent-primary)',
+                      borderColor: 'transparent'
+                    }}
+                  >
+                    {telemetry?.counts?.totalActive ?? 0} pts
+                  </span>
+                </div>
+
+                {/* Sub-toggles visuales */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => setTrackingConfig(c => ({ ...c, showTrails: !c.showTrails }))}
+                    className="btn-icon"
+                    title={trackingConfig.showTrails ? "Ocultar estelas de movimiento" : "Mostrar estelas de movimiento"}
+                    style={{
+                      padding: '0.25rem 0.55rem',
+                      fontSize: '0.72rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: trackingConfig.showTrails ? 'var(--accent-primary-bg)' : 'transparent',
+                      color: trackingConfig.showTrails ? 'var(--accent-primary)' : 'var(--text-muted)',
+                      border: `1px solid ${trackingConfig.showTrails ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}
+                  >
+                    <span>🌊 Estelas</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTrackingConfig(c => ({ ...c, showLabels: !c.showLabels }))}
+                    className="btn-icon"
+                    title={trackingConfig.showLabels ? "Ocultar números de ID" : "Mostrar números de ID"}
+                    style={{
+                      padding: '0.25rem 0.55rem',
+                      fontSize: '0.72rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: trackingConfig.showLabels ? 'var(--accent-primary-bg)' : 'transparent',
+                      color: trackingConfig.showLabels ? 'var(--accent-primary)' : 'var(--text-muted)',
+                      border: `1px solid ${trackingConfig.showLabels ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}
+                  >
+                    <span>🔢 IDs</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTrackingConfig(c => ({ ...c, showHalos: !c.showHalos }))}
+                    className="btn-icon"
+                    title={trackingConfig.showHalos ? "Ocultar halos en articulaciones" : "Mostrar halos en articulaciones"}
+                    style={{
+                      padding: '0.25rem 0.55rem',
+                      fontSize: '0.72rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: trackingConfig.showHalos ? 'var(--accent-primary-bg)' : 'transparent',
+                      color: trackingConfig.showHalos ? 'var(--accent-primary)' : 'var(--text-muted)',
+                      border: `1px solid ${trackingConfig.showHalos ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}
+                  >
+                    <span>🎯 Halos</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTrackingConfig(c => ({ ...c, colorByPart: !c.colorByPart }))}
+                    className="btn-icon"
+                    title={trackingConfig.colorByPart ? "Paleta monocromática" : "Paleta de colores por parte"}
+                    style={{
+                      padding: '0.25rem 0.55rem',
+                      fontSize: '0.72rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: trackingConfig.colorByPart ? 'var(--accent-primary-bg)' : 'transparent',
+                      color: trackingConfig.colorByPart ? 'var(--accent-primary)' : 'var(--text-muted)',
+                      border: `1px solid ${trackingConfig.colorByPart ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}
+                  >
+                    <span>🎨 Partes</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowTelemetryDrawer(v => !v)}
+                    className="btn-icon"
+                    title="Inspeccionar telemetría 3D de cada punto"
+                    style={{
+                      padding: '0.25rem 0.55rem',
+                      fontSize: '0.72rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: showTelemetryDrawer ? 'var(--accent-secondary-bg)' : 'transparent',
+                      color: showTelemetryDrawer ? 'var(--accent-secondary)' : 'var(--text-muted)',
+                      border: `1px solid ${showTelemetryDrawer ? 'var(--accent-secondary)' : 'var(--border-color)'}`,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}
+                  >
+                    <BarChart2 size={12} />
+                    <span>Telemetría</span>
+                    {showTelemetryDrawer ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Guía visual de Colores por Parte Anatómica */}
+              {trackingConfig.colorByPart && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginRight: '0.2rem' }}>
+                    Partes:
+                  </span>
+                  {COLOR_LEGEND_ITEMS.map((item) => (
+                    <span
+                      key={item.label}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                        fontSize: '0.7rem',
+                        padding: '0.15rem 0.45rem',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'rgba(0, 0, 0, 0.25)',
+                        border: '1px solid var(--border-color)',
+                        color: 'var(--text-color)'
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: '7px',
+                          height: '7px',
+                          borderRadius: '50%',
+                          background: item.color,
+                          display: 'inline-block'
+                        }}
+                      />
+                      <span>{item.label}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Panel Desplegable de Telemetría 3D e Inspección de Puntos */}
+              {showTelemetryDrawer && (
+                <div
+                  style={{
+                    marginTop: '0.5rem',
+                    padding: '0.75rem',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'rgba(0, 0, 0, 0.35)',
+                    border: '1px solid var(--border-color)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.65rem'
+                  }}
+                >
+                  {/* Resumen de contadores */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.4rem' }}>
+                    <div style={{ padding: '0.4rem', borderRadius: '4px', background: 'var(--input-bg)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Pose (Upper)</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#06B6D4' }}>
+                        {telemetry?.counts?.pose ?? 0} <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>/ 33</span>
+                      </div>
+                    </div>
+                    <div style={{ padding: '0.4rem', borderRadius: '4px', background: 'var(--input-bg)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Mano Izquierda</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#EC4899' }}>
+                        {telemetry?.counts?.leftHand ?? 0} <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>/ 21</span>
+                      </div>
+                    </div>
+                    <div style={{ padding: '0.4rem', borderRadius: '4px', background: 'var(--input-bg)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Mano Derecha</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#D946EF' }}>
+                        {telemetry?.counts?.rightHand ?? 0} <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>/ 21</span>
+                      </div>
+                    </div>
+                    <div style={{ padding: '0.4rem', borderRadius: '4px', background: 'var(--input-bg)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Normalización Hom.</div>
+                      <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)', fontFamily: 'monospace' }}>
+                        {telemetry?.normalization ? `D=${telemetry.normalization.shoulderWidth}` : 'Esperando...'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Filtros de articulación */}
+                  <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', marginTop: '0.2rem' }}>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Filtrar:</span>
+                    {[
+                      { key: 'all', label: 'Todos' },
+                      { key: 'leftHand', label: 'Mano Izq' },
+                      { key: 'rightHand', label: 'Mano Der' },
+                      { key: 'pose', label: 'Pose' }
+                    ].map(f => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => setSelectedPartFilter(f.key)}
+                        style={{
+                          fontSize: '0.68rem',
+                          padding: '0.15rem 0.45rem',
+                          borderRadius: '3px',
+                          border: `1px solid ${selectedPartFilter === f.key ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                          background: selectedPartFilter === f.key ? 'var(--accent-primary-bg)' : 'transparent',
+                          color: selectedPartFilter === f.key ? 'var(--accent-primary)' : 'var(--text-muted)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Tabla de Coordenadas 3D en tiempo real */}
+                  <div
+                    style={{
+                      maxHeight: '180px',
+                      overflowY: 'auto',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '4px',
+                      fontSize: '0.7rem',
+                      fontFamily: 'monospace'
+                    }}
+                  >
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                      <thead style={{ position: 'sticky', top: 0, background: 'rgba(15, 23, 42, 0.95)', color: 'var(--text-muted)' }}>
+                        <tr>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>#</th>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>Articulación</th>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>Parte</th>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>X</th>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>Y</th>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>Z</th>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>Velocidad</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {telemetry?.points
+                          ?.filter(pt => {
+                            if (selectedPartFilter === 'leftHand') return pt.type === 'hand_Left';
+                            if (selectedPartFilter === 'rightHand') return pt.type === 'hand_Right';
+                            if (selectedPartFilter === 'pose') return pt.type === 'pose';
+                            return true;
+                          })
+                          ?.map(pt => (
+                            <tr key={pt.key} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                              <td style={{ padding: '0.25rem 0.5rem', color: pt.color }}>{pt.id}</td>
+                              <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-color)' }}>{pt.name}</td>
+                              <td style={{ padding: '0.25rem 0.5rem' }}>
+                                <span
+                                  style={{
+                                    display: 'inline-block',
+                                    padding: '0.05rem 0.35rem',
+                                    borderRadius: '3px',
+                                    fontSize: '0.65rem',
+                                    background: `${pt.color}22`,
+                                    color: pt.color
+                                  }}
+                                >
+                                  {pt.part}
+                                </span>
+                              </td>
+                              <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}>{pt.x.toFixed(3)}</td>
+                              <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}>{pt.y.toFixed(3)}</td>
+                              <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}>{pt.z.toFixed(3)}</td>
+                              <td style={{ padding: '0.25rem 0.5rem', color: pt.speed > 100 ? '#10B981' : 'var(--text-muted)' }}>
+                                {pt.speed} px/s
+                              </td>
+                            </tr>
+                          ))}
+                        {(!telemetry?.points || telemetry.points.length === 0) && (
+                          <tr>
+                            <td colSpan={7} style={{ padding: '0.8rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                              Esperando detección de landmarks en cámara...
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ marginTop: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
             <Info size={14} color="var(--accent-primary)" />
