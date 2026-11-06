@@ -143,7 +143,12 @@ export class MediaPipeEngine {
     extractLandmarks(results) {
         const extract = (landmarks) => {
             if (!landmarks) return null;
-            return landmarks.map(lm => ({ x: lm.x, y: lm.y, z: lm.z }));
+            return landmarks.map(lm => ({
+                x: lm.x,
+                y: lm.y,
+                z: lm.z,
+                ...(lm.visibility !== undefined ? { visibility: lm.visibility } : {})
+            }));
         };
 
         return {

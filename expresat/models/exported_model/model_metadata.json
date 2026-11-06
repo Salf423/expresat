@@ -4,23 +4,10 @@
   "sequence_length": 15,
   "num_features": 178,
   "labels": [
-    "hola",
-    "gracias",
-    "por_favor",
-    "adios",
-    "si",
-    "no",
-    "ayuda",
-    "bien",
-    "mal",
-    "nombre",
-    "como_estas",
-    "mucho_gusto",
-    "perdon",
-    "agua",
-    "comida"
+    "letra_a_derecha_2",
+    "reposo"
   ],
-  "num_classes": 15,
+  "num_classes": 2,
   "feature_layout": {
     "pose_upper": {
       "landmarks": 13,

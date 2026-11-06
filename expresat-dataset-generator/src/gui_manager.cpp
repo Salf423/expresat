@@ -9,6 +9,9 @@
 #include <cstring>
 #include <chrono>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <cstdio>
 
 namespace expresat {
 
@@ -97,6 +100,13 @@ void GuiManager::run() {
         float dt = std::chrono::duration<float>(now - prev).count();
         prev = now;
 
+        // ── Memory monitoring update ──────────────────────────────────────
+        memTimer_ += dt;
+        if (memTimer_ >= 0.5f) {
+            memTimer_ = 0.f;
+            updateMemoryStats();
+        }
+
         // ── Capture + process frame ───────────────────────────────────────
         cv::Mat bgrFrame;
         if (camera_.getLatestFrame(bgrFrame) && !bgrFrame.empty()) {
@@ -159,12 +169,20 @@ void GuiManager::run() {
                 statusMsg_ = "Generación completa. Listo para guardar.";
             }
         }
+
+        // ── Check training done ───────────────────────────────────────────
+        if (trainDone_.load()) {
+            trainDone_.store(false);
+            if (trainThread_.joinable()) trainThread_.join();
+            isTraining_.store(false);
+        }
     }
 }
 
 // ─── shutdown() ───────────────────────────────────────────────────────────────
 void GuiManager::shutdown() {
     if (workerThread_.joinable()) workerThread_.join();
+    if (trainThread_.joinable()) trainThread_.join();
     camera_.close();
     extractor_.close();
 
@@ -312,20 +330,64 @@ void GuiManager::renderControlPanel(float dt) {
     ImGui::Separator();
     ImGui::TextDisabled("Cam FPS: %.1f", camera_.measuredFPS());
 
+    // ── Memory Usage Monitor ──────────────────────────────────────────────
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.f, 1.f), "Uso de Memoria:");
+    ImGui::Text("Proceso RSS : %.1f MB", memStats_.procRssMB);
+    ImGui::Text("Sistema RAM : %.0f / %.0f MB", memStats_.sysUsedMB, memStats_.sysTotalMB);
+
+    char memOverlay[32];
+    snprintf(memOverlay, sizeof(memOverlay), "%.1f%% RAM", memStats_.sysPercent);
+    float ramRatio = static_cast<float>(memStats_.sysPercent / 100.0);
+    ramRatio = std::clamp(ramRatio, 0.0f, 1.0f);
+    ImVec4 ramBarColor = ImVec4(0.2f, 0.7f, 0.2f, 1.0f);
+    if (ramRatio > 0.85f) ramBarColor = ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
+    else if (ramRatio > 0.70f) ramBarColor = ImVec4(0.9f, 0.7f, 0.1f, 1.0f);
+
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ramBarColor);
+    ImGui::ProgressBar(ramRatio, ImVec2(-1, 14), memOverlay);
+    ImGui::PopStyleColor();
+
+    // ── Training Script Trigger ───────────────────────────────────────────
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Entrenamiento del Modelo:");
+
+    bool trainingActive = isTraining_.load();
+    if (trainingActive) {
+        ImGui::BeginDisabled();
+        ImGui::Button("Entrenando Modelo...", ImVec2(-1, 32));
+        ImGui::EndDisabled();
+    } else {
+        if (ImGui::Button("Ejecutar Entrenamiento PyTorch", ImVec2(-1, 32))) {
+            startTraining();
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(trainMutex_);
+        ImGui::TextWrapped("Estado: %s", trainStatus_.c_str());
+    }
+
     ImGui::EndChild();
 }
 
 // ─── renderVideoPanel() ───────────────────────────────────────────────────────
 void GuiManager::renderVideoPanel() {
-    ImGui::BeginChild("##video", ImVec2(0, 0), false);
+    ImGui::BeginChild("##video_panel", ImVec2(0, 0), false);
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    // Maintain 4:3 aspect
-    float texW = avail.x;
-    float texH = texW * (480.f / 640.f);
-    if (texH > avail.y) {
-        texH = avail.y;
-        texW = texH * (640.f / 480.f);
+
+    // Reserve comfortable height for the logs console at the bottom
+    float logPanelHeight = std::clamp(avail.y * 0.32f, 150.0f, 240.0f);
+    float availVideoH = avail.y - logPanelHeight - 16.0f;
+    if (availVideoH < 180.0f) availVideoH = 180.0f;
+
+    // Maintain 4:3 aspect ratio for video preview
+    float texH = availVideoH;
+    float texW = texH * (640.f / 480.f);
+    if (texW > avail.x) {
+        texW = avail.x;
+        texH = texW * (480.f / 640.f);
     }
 
     // Center horizontally
@@ -354,8 +416,63 @@ void GuiManager::renderVideoPanel() {
 
     // Recording indicator
     if (state_ == AppState::Recording) {
+        ImGui::SetCursorPosX(padX > 0 ? ImGui::GetCursorPosX() + padX + 10 : 10);
         ImGui::TextColored(ImVec4(1, 0.2f, 0.2f, 1.f), "● REC");
     }
+
+    // ── Training Logs Panel (debajo de la cámara para máxima legibilidad) ──
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.f, 1.f), "Consola de Entrenamiento PyTorch (Logs):");
+    ImGui::SameLine();
+    {
+        std::lock_guard<std::mutex> lock(trainMutex_);
+        if (isTraining_.load()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "● En ejecución...");
+        } else {
+            ImGui::TextDisabled("| %s", trainStatus_.c_str());
+        }
+    }
+
+    float clearBtnW = 105.0f;
+    if (avail.x > clearBtnW + 20.0f) {
+        ImGui::SameLine(avail.x - clearBtnW);
+        if (ImGui::SmallButton("Limpiar Logs")) {
+            std::lock_guard<std::mutex> lock(trainMutex_);
+            trainLogs_.clear();
+        }
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+
+    if (ImGui::BeginChild("##train_logs_wide", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+        std::lock_guard<std::mutex> lock(trainMutex_);
+        if (trainLogs_.empty()) {
+            ImGui::TextDisabled("No hay logs disponibles. Haz clic en 'Ejecutar Entrenamiento PyTorch' para comenzar.");
+        } else {
+            for (const auto& logLine : trainLogs_) {
+                if (logLine.find("[ERROR]") != std::string::npos || logLine.find("Traceback") != std::string::npos || logLine.find("Error") != std::string::npos) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", logLine.c_str());
+                } else if (logLine.find("[SUCCESS]") != std::string::npos || logLine.find("CUMPLE") != std::string::npos || logLine.find("✓") != std::string::npos) {
+                    ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.45f, 1.0f), "%s", logLine.c_str());
+                } else if (logLine.find("[INFO]") != std::string::npos || logLine.find("[EXEC]") != std::string::npos) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", logLine.c_str());
+                } else if (logLine.find("Época") != std::string::npos) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", logLine.c_str());
+                } else {
+                    ImGui::TextUnformatted(logLine.c_str());
+                }
+            }
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.0f) {
+                ImGui::SetScrollHereY(1.0f);
+            }
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
 
     ImGui::EndChild();
 }
@@ -415,9 +532,8 @@ void GuiManager::startGeneration() {
 // ─── generationWorker() — runs in std::thread ────────────────────────────────
 void GuiManager::generationWorker(Sequence base, int count, RecordingConfig cfg) {
     try {
-        int featDim = (parts_.upperPose ? POSE_FEATURE_DIM : 0)
-                    + (parts_.leftHand  ? HAND_FEATURE_DIM : 0)
-                    + (parts_.rightHand ? HAND_FEATURE_DIM : 0);
+        // En ExpresaT el vector canónico es siempre TOTAL_FEATURES (178D: 52 upper pose + 63 mano izq + 63 mano der)
+        int featDim = TOTAL_FEATURES;
 
         auto samples = augmenter_.generate(base, count, featDim);
 
@@ -430,13 +546,136 @@ void GuiManager::generationWorker(Sequence base, int count, RecordingConfig cfg)
         writer_.write(cfg.label, generatedSamples_, cfg.sequenceLen, featDim);
         writer_.writeCombined();
 
-        statusMsg_ = "Guardado: ./dataset/" + cfg.label + ".json";
+        {
+            std::lock_guard<std::mutex> lock(landmarksMutex_);
+            statusMsg_ = "Guardado: ./dataset/" + cfg.label + ".json";
+        }
     } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(landmarksMutex_);
         state_     = AppState::Error;
         statusMsg_ = std::string("Error: ") + e.what();
     }
 
     workerDone_.store(true);
+}
+
+// ─── updateMemoryStats() ──────────────────────────────────────────────────────
+void GuiManager::updateMemoryStats() {
+    // 1. System Memory from /proc/meminfo
+    std::ifstream meminfo("/proc/meminfo");
+    if (meminfo.is_open()) {
+        std::string key;
+        long long value;
+        std::string unit;
+        long long memTotal = 0, memAvail = 0;
+        while (meminfo >> key >> value >> unit) {
+            if (key == "MemTotal:") memTotal = value;
+            else if (key == "MemAvailable:") memAvail = value;
+        }
+        if (memTotal > 0) {
+            memStats_.sysTotalMB = memTotal / 1024.0;
+            memStats_.sysUsedMB = (memTotal - memAvail) / 1024.0;
+            memStats_.sysPercent = (memStats_.sysUsedMB / memStats_.sysTotalMB) * 100.0;
+        }
+    }
+
+    // 2. Process Resident Set Size (RSS) from /proc/self/statm
+    std::ifstream statm("/proc/self/statm");
+    if (statm.is_open()) {
+        long long size = 0, resident = 0;
+        if (statm >> size >> resident) {
+            memStats_.procRssMB = (resident * 4096.0) / (1024.0 * 1024.0);
+        }
+    }
+}
+
+// ─── startTraining() & trainingWorker() ──────────────────────────────────────
+void GuiManager::startTraining() {
+    if (isTraining_.load()) return;
+
+    if (trainThread_.joinable()) {
+        trainThread_.join();
+    }
+
+    isTraining_.store(true);
+    trainDone_.store(false);
+
+    {
+        std::lock_guard<std::mutex> lock(trainMutex_);
+        trainStatus_ = "Iniciando proceso de entrenamiento...";
+        trainLogs_.clear();
+        trainLogs_.push_back("[INFO] Lanzando script de entrenamiento PyTorch...");
+    }
+
+    trainThread_ = std::thread(&GuiManager::trainingWorker, this);
+}
+
+void GuiManager::trainingWorker() {
+    // Check available Python venvs and training script
+    const std::vector<std::string> pythonCandidates = {
+        "/home/adrian/Proyectos/expresat/expresat/models/venv/bin/python",
+        "/home/adrian/Proyectos/expresat/expresat/venv/bin/python",
+        "/home/adrian/Proyectos/expresat/venv/bin/python",
+        "python3"
+    };
+
+    std::string pythonBin = "python3";
+    for (const auto& candidate : pythonCandidates) {
+        std::ifstream testFile(candidate);
+        if (testFile.good()) {
+            pythonBin = candidate;
+            break;
+        }
+    }
+
+    std::string trainScript = "/home/adrian/Proyectos/expresat/expresat/models/train_and_export.py";
+    std::string dataDir     = "/home/adrian/Proyectos/expresat/expresat-dataset-generator/dataset";
+    std::string outputDir   = "/home/adrian/Proyectos/expresat/expresat/models/exported_model";
+    // -u para desactivar el buffer de stdout y recibir logs en tiempo real vía popen
+    std::string cmd = pythonBin + " -u " + trainScript + " --epochs 30 --data-dir " + dataDir + " --output " + outputDir + " 2>&1";
+
+    {
+        std::lock_guard<std::mutex> lock(trainMutex_);
+        trainStatus_ = "Entrenando modelo (" + pythonBin + ")...";
+        trainLogs_.push_back("[EXEC] " + cmd);
+    }
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        std::lock_guard<std::mutex> lock(trainMutex_);
+        trainStatus_ = "Error al ejecutar el comando de entrenamiento.";
+        trainLogs_.push_back("[ERROR] No se pudo abrir pipe para ejecutar el proceso.");
+        trainDone_.store(true);
+        return;
+    }
+
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        std::string line(buffer);
+        // Trim newline
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+            line.pop_back();
+        }
+        std::lock_guard<std::mutex> lock(trainMutex_);
+        trainLogs_.push_back(line);
+        if (trainLogs_.size() > 200) {
+            trainLogs_.erase(trainLogs_.begin());
+        }
+    }
+
+    int exitCode = pclose(pipe);
+    {
+        std::lock_guard<std::mutex> lock(trainMutex_);
+        if (exitCode == 0) {
+            trainStatus_ = "Entrenamiento completado exitosamente (exit 0).";
+            trainLogs_.push_back("[SUCCESS] Modelo entrenado y exportado a ONNX/INT8.");
+        } else {
+            trainStatus_ = "Entrenamiento finalizado con error (código " + std::to_string(exitCode) + ").";
+            trainLogs_.push_back("[ERROR] Código de salida: " + std::to_string(exitCode));
+        }
+    }
+
+    trainDone_.store(true);
 }
 
 } // namespace expresat

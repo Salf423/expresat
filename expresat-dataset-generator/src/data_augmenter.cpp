@@ -62,13 +62,35 @@ std::vector<Sequence> DataAugmenter::generate(const Sequence& base,
 }
 
 // ─── applyNoise() — Gaussian per-coordinate jitter ───────────────────────────
+// Adds noise to spatial coordinates only (x,y,z), preserving visibility values.
+// Pose block: 13 pts × 4 (x,y,z,vis) → only x,y,z get noise (every 4th skipped).
+// Hand blocks: pure x,y,z triplets → all values get noise.
 Sequence DataAugmenter::applyNoise(const Sequence& seq, float sigma) {
     std::normal_distribution<float> noise(0.f, sigma);
     Sequence out;
     out.reserve(seq.size());
     for (const auto& frame : seq) {
         FeatureVector fv = frame;
-        for (auto& v : fv) v += noise(rng_);
+
+        // Upper pose block: 13 landmarks × 4 (x,y,z,visibility)
+        // Skip every 4th element (visibility channel)
+        for (int pt = 0; pt < POSE_UPPER_COUNT; ++pt) {
+            int b = pt * POSE_COORDS;
+            fv[b + 0] += noise(rng_);  // x
+            fv[b + 1] += noise(rng_);  // y
+            fv[b + 2] += noise(rng_);  // z
+            // fv[b + 3] — visibility: unchanged
+        }
+
+        // Left hand block: 63 floats starting at POSE_FEATURE_DIM (pure x,y,z)
+        for (int i = POSE_FEATURE_DIM; i < POSE_FEATURE_DIM + HAND_FEATURE_DIM; ++i)
+            fv[i] += noise(rng_);
+
+        // Right hand block: 63 floats starting at POSE_FEATURE_DIM + HAND_FEATURE_DIM
+        for (int i = POSE_FEATURE_DIM + HAND_FEATURE_DIM;
+             i < POSE_FEATURE_DIM + HAND_FEATURE_DIM * 2; ++i)
+            fv[i] += noise(rng_);
+
         out.push_back(std::move(fv));
     }
     return out;

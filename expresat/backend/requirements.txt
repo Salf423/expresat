@@ -11,19 +11,19 @@
 # =============================================================================
 
 # --- Framework Web ---
-fastapi==0.115.12
-uvicorn[standard]==0.34.3
-websockets==15.0.1
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+websockets>=14.0.0
 
 # --- Motor de Inferencia (PRODUCCIÓN) ---
 # IMPORTANTE: usar onnxruntime (CPU), NO onnxruntime-gpu
-onnxruntime==1.22.0
+onnxruntime>=1.20.0
 
 # --- Procesamiento Numérico ---
-numpy==2.2.6
+numpy>=2.0.0
 
 # --- Utilidades ---
-pydantic==2.11.3
+pydantic>=2.10.0
 
 # --- Auth (opcional, descomentar si se usa Supabase en backend) ---
-# supabase==2.15.2
+# supabase>=2.15.0

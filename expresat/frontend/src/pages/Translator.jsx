@@ -13,10 +13,43 @@ const Translator = () => {
   const [statusClass, setStatusClass] = useState('status-offline');
   const [fps, setFps] = useState(0);
   const [copied, setCopied] = useState(false);
+  // [DEMO] Estado para reflejar el modo demo en la interfaz visual
+  const [isDemo, setIsDemo] = useState(true);
+
+  // [DEMO] Sincronizar estado inicial de DEMO_MODE consultando /health
+  React.useEffect(() => {
+    const isLocalHost = typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const defaultEnv = isLocalHost ? 'Local' : 'Cloud';
+    const env = localStorage.getItem('apiEnv') || defaultEnv;
+    const baseUrl = env === 'Local'
+      ? (import.meta.env.VITE_WS_URL_LOCAL || 'http://127.0.0.1:8000')
+      : (import.meta.env.VITE_WS_URL_PROD || 'https://api.expresat.cloud');
+
+    const httpUrl = baseUrl.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
+    try {
+      const origin = new URL(httpUrl).origin;
+      fetch(`${origin}/health`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data.demo_mode !== undefined) {
+            setIsDemo(Boolean(data.demo_mode));
+          }
+        })
+        .catch(() => {
+          // Si falla el health check inicial, se mantiene el valor por defecto
+        });
+    } catch {
+      // URL inválida, ignorar
+    }
+  }, []);
 
   // Initialize ApiService once (stable ref — no re-renders)
   if (!apiRef.current) {
-    const env = localStorage.getItem('apiEnv') || 'Local';
+    const isLocalHost = typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const defaultEnv = isLocalHost ? 'Local' : 'Cloud';
+    const env = localStorage.getItem('apiEnv') || defaultEnv;
     const wsUrl = env === 'Local'
       ? (import.meta.env.VITE_WS_URL_LOCAL || 'ws://127.0.0.1:8000/ws')
       : (import.meta.env.VITE_WS_URL_PROD || 'wss://api.expresat.cloud/ws');
@@ -27,11 +60,17 @@ const Translator = () => {
       setStatus(text);
       setStatusClass(className);
     });
-    api.onMessage((text) => {
-      if (text?.payload?.label) {
-        setTranslation(text.payload.label);
-      } else if (typeof text === 'string') {
-        setTranslation(text);
+    // [DEMO] Manejo de mensajes entrantes con soporte para bandera is_demo
+    api.onMessage((msg) => {
+      // msg ya es data.payload (desenvuelto por apiService.js)
+      const label = msg?.label || (typeof msg === 'string' ? msg : null);
+      if (label) {
+        setTranslation(label);
+      }
+
+      // [DEMO] Detectar si la respuesta viene del motor de demo
+      if (msg?.is_demo !== undefined) {
+        setIsDemo(Boolean(msg.is_demo));
       }
     });
 
@@ -78,6 +117,27 @@ const Translator = () => {
               Traductor LSM
             </h1>
             <span className="chip" style={{ fontSize: '0.75rem' }}>En Vivo</span>
+            {/* [DEMO] Indicador visual superior de MODO DEMO */}
+            {isDemo && (
+              <span
+                className="chip chip--demo"
+                style={{
+                  fontSize: '0.75rem',
+                  background: 'rgba(245, 158, 11, 0.15)',
+                  color: '#f59e0b',
+                  border: '1px solid rgba(245, 158, 11, 0.4)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.03em'
+                }}
+                title="Modo Demo: Reconocimiento determinista temporal basado en reglas"
+              >
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f59e0b', boxShadow: '0 0 6px #f59e0b' }} />
+                MODO DEMO
+              </span>
+            )}
           </div>
           <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
             Posiciónate frente a la cámara con las manos visibles y buena iluminación.
@@ -242,9 +302,25 @@ const Translator = () => {
           >
             {translation ? (
               <div style={{ textAlign: 'center', animation: 'fade-up 0.2s ease-out' }}>
-                <span className="chip" style={{ marginBottom: '1rem', background: 'var(--success-bg)', color: 'var(--success-color)', borderColor: 'transparent' }}>
-                  Reconocimiento Confiable
-                </span>
+                {/* [DEMO] Distintivo de modo demo vs modelo final */}
+                {isDemo ? (
+                  <span
+                    className="chip"
+                    style={{
+                      marginBottom: '1rem',
+                      background: 'rgba(245, 158, 11, 0.15)',
+                      color: '#f59e0b',
+                      borderColor: 'rgba(245, 158, 11, 0.4)',
+                      fontWeight: 600
+                    }}
+                  >
+                    ⚡ MODO DEMO — Regla Determinista
+                  </span>
+                ) : (
+                  <span className="chip" style={{ marginBottom: '1rem', background: 'var(--success-bg)', color: 'var(--success-color)', borderColor: 'transparent' }}>
+                    Reconocimiento Confiable
+                  </span>
+                )}
                 <p className="translation-text" style={{ margin: 0 }}>
                   {translation}
                 </p>
@@ -256,16 +332,41 @@ const Translator = () => {
                   Esperando señas frente a la cámara...
                 </p>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', maxWidth: '280px' }}>
-                  Realiza una seña con movimiento claro dentro del recuadro
+                  {isDemo
+                    ? 'Haz un gesto claro (Hola, Si, No, Bien, Amor y Paz, etc.) frente a la cámara'
+                    : 'Realiza una seña con movimiento claro dentro del recuadro'}
                 </span>
               </div>
             )}
           </div>
 
+          {/* [DEMO] Banner de información sobre el prototipo determinista */}
+          {isDemo && (
+            <div
+              style={{
+                marginTop: '1rem',
+                padding: '0.75rem 1rem',
+                background: 'rgba(245, 158, 11, 0.08)',
+                border: '1px dashed rgba(245, 158, 11, 0.35)',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.65rem',
+                fontSize: '0.8rem',
+                color: 'var(--text-muted)'
+              }}
+            >
+              <Info size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
+              <span>
+                <strong style={{ color: '#f59e0b' }}>MODO DEMO ACTIVO:</strong> Interpretación preliminar basada en reglas geométricas (ángulos y distancias de MediaPipe). Esta etapa temporal será sustituida por el modelo de IA.
+              </span>
+            </div>
+          )}
+
           {/* Quick Guide Card */}
           <div
             style={{
-              marginTop: '1.25rem',
+              marginTop: isDemo ? '0.75rem' : '1.25rem',
               padding: '1rem',
               background: 'var(--panel-bg)',
               borderRadius: 'var(--radius-md)',
@@ -275,20 +376,23 @@ const Translator = () => {
               gap: '0.5rem'
             }}
           >
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-color)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Señas sugeridas en este modelo:
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: isDemo ? '#f59e0b' : 'var(--text-color)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              {isDemo ? '⚡ Señas demostrativas soportadas:' : 'Señas sugeridas en este modelo:'}
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-              {['Hola', 'Gracias', 'Letra A', 'Letra B', 'Letra C', 'Mamá', 'Papá', 'Lunes'].map((sign) => (
+              {(isDemo
+                ? ['Hola', 'Gracias', 'Si', 'No', 'Bien (Pulgar arriba)', 'Amor y Paz (V)', 'Te Quiero (ILY)', 'Lunes (L)']
+                : ['Hola', 'Gracias', 'Letra A', 'Letra B', 'Letra C', 'Mamá', 'Papá', 'Lunes']
+              ).map((sign) => (
                 <span
                   key={sign}
                   style={{
                     fontSize: '0.75rem',
                     padding: '0.2rem 0.6rem',
                     borderRadius: 'var(--radius-sm)',
-                    background: 'var(--input-bg)',
-                    color: 'var(--text-muted)',
-                    border: '1px solid var(--panel-border)'
+                    background: isDemo ? 'rgba(245, 158, 11, 0.1)' : 'var(--input-bg)',
+                    color: isDemo ? 'var(--text-color)' : 'var(--text-muted)',
+                    border: isDemo ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid var(--panel-border)'
                   }}
                 >
                   {sign}

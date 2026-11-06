@@ -276,11 +276,13 @@ class InferenceEngine:
                                  pose_landmarks: list) -> np.ndarray:
         """
         Normaliza las coordenadas haciéndolas relativas al punto medio
-        entre los hombros (landmarks 11 y 12 de MediaPipe Pose).
+        entre los hombros (landmarks 11 y 12 de MediaPipe Pose) y
+        las escala por la distancia inter-humeral 3D.
 
-        Esto hace que el modelo sea invariante a la posición de la persona
-        en el frame de la cámara. Una persona a la izquierda o derecha
-        de la pantalla producirá las mismas features relativas.
+        Esto hace que el modelo sea invariante a la posición y escala aparente
+        de la persona en el frame. Replica exactamente la normalización del
+        generador C++ (mediapipe_extractor.cpp::normalizePose) y la del
+        entrenamiento (train_and_export.py).
 
         Args:
             features: Vector de features del frame (178,)
@@ -298,12 +300,12 @@ class InferenceEngine:
             center_y = (left_shoulder.get("y", 0) + right_shoulder.get("y", 0)) / 2.0
             center_z = (left_shoulder.get("z", 0) + right_shoulder.get("z", 0)) / 2.0
 
-            # Distancia entre hombros como factor de escala
-            # Esto normaliza por el tamaño aparente de la persona
-            shoulder_dist = np.sqrt(
-                (left_shoulder.get("x", 0) - right_shoulder.get("x", 0)) ** 2 +
-                (left_shoulder.get("y", 0) - right_shoulder.get("y", 0)) ** 2
-            )
+            # Distancia 3D inter-humeral como factor de escala (invariancia de tamaño aparente)
+            # IMPORTANTE: usar distancia 3D completa (x,y,z), igual que el generador C++
+            dx = left_shoulder.get("x", 0) - right_shoulder.get("x", 0)
+            dy = left_shoulder.get("y", 0) - right_shoulder.get("y", 0)
+            dz = left_shoulder.get("z", 0) - right_shoulder.get("z", 0)
+            shoulder_dist = np.sqrt(dx*dx + dy*dy + dz*dz)
 
             # Evitar división por cero
             scale = max(shoulder_dist, 1e-6)
@@ -313,7 +315,7 @@ class InferenceEngine:
             # --- Normalizar pose superior (13 landmarks × 4 coords) ---
             pose_end = len(POSE_UPPER_INDICES) * POSE_COORDS  # 52
             for j in range(0, pose_end, POSE_COORDS):
-                normalized[j] = (features[j] - center_x) / scale       # x
+                normalized[j]     = (features[j]     - center_x) / scale  # x
                 normalized[j + 1] = (features[j + 1] - center_y) / scale  # y
                 normalized[j + 2] = (features[j + 2] - center_z) / scale  # z
                 # visibility (j+3) se deja sin modificar
@@ -322,7 +324,7 @@ class InferenceEngine:
             hand_start = pose_end  # 52
             hand_total = HAND_LANDMARKS * HAND_COORDS * 2  # 126
             for j in range(hand_start, hand_start + hand_total, HAND_COORDS):
-                normalized[j] = (features[j] - center_x) / scale       # x
+                normalized[j]     = (features[j]     - center_x) / scale  # x
                 normalized[j + 1] = (features[j + 1] - center_y) / scale  # y
                 normalized[j + 2] = (features[j + 2] - center_z) / scale  # z
 

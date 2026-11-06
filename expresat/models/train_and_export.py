@@ -5,16 +5,16 @@ Construye, entrena y exporta un modelo GRU cuantizado a INT8
 para la traducción de Lengua de Señas en tiempo real sobre CPU.
 
 Arquitectura del Modelo:
-    - Input:  (batch, 15 frames, 225 features)
+    - Input:  (batch, 15 frames, 178 features)
     - GRU:    1 capa, 64 unidades hidden
     - Head:   Linear(64 → 32) → ReLU → Dropout → Linear(32 → num_clases)
     - Params: ~12,000
 
 Pipeline de exportación:
     1. Entrenar modelo en PyTorch 
-    2. Aplicar Dynamic Quantization INT8 
+    2. Aplicar Dynamic Quantization INT8 (ONNX Runtime)
     3. Exportar a ONNX con opset 17
-    4. Optimizar ONNX con onnxruntime optimizations
+    4. Optimizar ONNX con onnxruntime quantization
 
 Uso:
     python train_and_export.py --epochs 50 --output ./exported_model
@@ -25,6 +25,7 @@ import os
 import json
 import sys
 import time
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -145,26 +146,36 @@ class SignLanguageGRU(nn.Module):
 
 
 # =============================================================================
-# 3. DATASET SINTÉTICO 
+# 3. DATASETS (REALES Y SINTÉTICOS)
 # =============================================================================
+
+class RealSignDataset(Dataset):
+    """
+    Dataset de PyTorch para secuencias de landmarks capturadas en formato JSON de ExpresaT.
+    Tensors: (batch, 15, 178) en float32 y targets en int64.
+    """
+
+    def __init__(self, data: np.ndarray, targets: np.ndarray):
+        self.data = torch.from_numpy(data).float()
+        self.targets = torch.from_numpy(targets).long()
+
+    def __len__(self):
+        return len(self.targets)
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.targets[idx]
+
 
 class SyntheticSignDataset(Dataset):
     """
-    Dataset sintético para demostración del pipeline de entrenamiento.
-
-    En producción, reemplazar con un dataset real de landmarks capturados
-    con MediaPipe Holistic (ej: archivos .npy o .csv por secuencia).
-
-    Cada muestra es una secuencia de 15 frames × NUM_FEATURES, con una
-    etiqueta de clase asociada.
+    Dataset sintético para demostración del pipeline de entrenamiento en caso
+    de que aún no se disponga de archivos de captura de datos reales.
     """
 
     def __init__(self, num_samples: int = 3000, num_classes: int = len(DEFAULT_LABELS)):
         self.num_samples = num_samples
         self.num_classes = num_classes
 
-        # Generar datos sintéticos con patrones distinguibles por clase
-        # Cada clase tiene un "centro" aleatorio en el espacio de features
         np.random.seed(42)
         self.class_centers = np.random.randn(num_classes, NUM_FEATURES).astype(np.float32) * 0.5
 
@@ -175,9 +186,7 @@ class SyntheticSignDataset(Dataset):
             label = i % num_classes
             center = self.class_centers[label]
 
-            # Secuencia: centro de clase + ruido temporal coherente
             sequence = np.tile(center, (SEQUENCE_LENGTH, 1))
-            # Añadir movimiento temporal simulado (drift + ruido)
             temporal_drift = np.cumsum(np.random.randn(SEQUENCE_LENGTH, NUM_FEATURES) * 0.02, axis=0)
             noise = np.random.randn(SEQUENCE_LENGTH, NUM_FEATURES) * 0.1
             sequence = (sequence + temporal_drift + noise).astype(np.float32)
@@ -195,28 +204,150 @@ class SyntheticSignDataset(Dataset):
         )
 
 
+def load_datasets(data_dir: str | Path | None = None,
+                  expected_labels: list[str] | None = None,
+                  val_split: float = 0.2,
+                  seed: int = 42):
+    """
+    Carga datasets reales desde archivos .json de ExpresaT.
+    Si data_dir no existe o no tiene muestras válidas, recurre a SyntheticSignDataset.
+    """
+    resolved_dir = None
+    candidates = []
+    if data_dir:
+        candidates.append(Path(data_dir))
+    candidates.extend([
+        Path("expresat-dataset-generator/dataset"),
+        Path("../expresat-dataset-generator/dataset"),
+        Path("/home/adrian/Proyectos/expresat/expresat-dataset-generator/dataset")
+    ])
+
+    for c in candidates:
+        if c.exists() and c.is_dir():
+            resolved_dir = c
+            break
+
+    sequences = []
+    sample_labels = []
+
+    if resolved_dir:
+        # Ignorar dataset.json si existen archivos individuales para evitar duplicidad de muestras
+        json_files = [
+            f for f in sorted(resolved_dir.glob("*.json"))
+            if f.name not in ("dataset.json", "compile_commands.json", "model_metadata.json")
+        ]
+        if not json_files and (resolved_dir / "dataset.json").exists():
+            json_files = [resolved_dir / "dataset.json"]
+
+        print(f"\n📂 Buscando datasets reales en: {resolved_dir}")
+        for jf in json_files:
+            try:
+                with open(jf, "r", encoding="utf-8") as f:
+                    content = json.load(f)
+                entries = content if isinstance(content, list) else [content]
+                file_samples = 0
+                for e in entries:
+                    lbl = e.get("label")
+                    data = e.get("data", [])
+                    if not lbl or not data:
+                        continue
+                    for sample in data:
+                        if len(sample) == SEQUENCE_LENGTH and len(sample[0]) == NUM_FEATURES:
+                            sequences.append(sample)
+                            sample_labels.append(lbl)
+                            file_samples += 1
+                if file_samples > 0:
+                    print(f"  ✓ {jf.name}: {file_samples} muestras cargadas (clase: '{lbl}')")
+            except Exception as e:
+                print(f"  ✗ Error leyendo {jf.name}: {e}")
+
+    # Fallback si no hay muestras reales
+    if not sequences:
+        print(f"\n⚠️  No se encontraron muestras reales en '{data_dir or resolved_dir}'.")
+        print("    Utilizando dataset sintético simulado como fallback.\n")
+        labels = expected_labels if expected_labels else DEFAULT_LABELS
+        train_ds = SyntheticSignDataset(num_samples=2400, num_classes=len(labels))
+        val_ds = SyntheticSignDataset(num_samples=600, num_classes=len(labels))
+        return train_ds, val_ds, labels
+
+    # Procesar clases únicas encontradas
+    unique_found = sorted(list(set(sample_labels)))
+    if expected_labels:
+        classes = [lbl for lbl in expected_labels if lbl in unique_found]
+        for u in unique_found:
+            if u not in classes:
+                classes.append(u)
+    else:
+        classes = unique_found
+
+    # Manejar caso de 1 sola clase: PyTorch CrossEntropyLoss requiere al menos 2 clases
+    if len(classes) == 1:
+        print(f"\n⚠️  Solo se detectó 1 clase real ('{classes[0]}').")
+        print("    Generando clase de referencia sintética 'reposo' para posibilitar clasificación multiclase.")
+        classes.append("reposo")
+        rng = np.random.default_rng(seed)
+        n_reposo = min(len(sample_labels), 500)
+        reposo_data = rng.normal(0.0, 0.015, (n_reposo, SEQUENCE_LENGTH, NUM_FEATURES)).astype(np.float32)
+        for s in reposo_data:
+            sequences.append(s.tolist())
+            sample_labels.append("reposo")
+
+    class_to_idx = {c: i for i, c in enumerate(classes)}
+    X = np.array(sequences, dtype=np.float32)
+    y = np.array([class_to_idx[lbl] for lbl in sample_labels], dtype=np.int64)
+
+    # Partición train / validation estratificada
+    rng = np.random.default_rng(seed)
+    train_indices = []
+    val_indices = []
+
+    for c_idx in range(len(classes)):
+        idx_c = np.where(y == c_idx)[0]
+        rng.shuffle(idx_c)
+        n_val = max(1, int(len(idx_c) * val_split))
+        val_indices.extend(idx_c[:n_val])
+        train_indices.extend(idx_c[n_val:])
+
+    train_indices = np.array(train_indices)
+    val_indices = np.array(val_indices)
+    rng.shuffle(train_indices)
+    rng.shuffle(val_indices)
+
+    print(f"\n Resumen del Dataset Real:")
+    print(f"    Total muestras : {len(y)}")
+    print(f"    Train ({(1-val_split)*100:.0f}%) : {len(train_indices)} muestras")
+    print(f"    Val   ({val_split*100:.0f}%) : {len(val_indices)} muestras")
+    print(f"    Clases ({len(classes)})   : {classes}")
+    for c_name, c_idx in class_to_idx.items():
+        count = int(np.sum(y == c_idx))
+        print(f"      - {c_name:<18}: {count:4d} muestras")
+
+    train_dataset = RealSignDataset(X[train_indices], y[train_indices])
+    val_dataset = RealSignDataset(X[val_indices], y[val_indices])
+
+    return train_dataset, val_dataset, classes
+
+
 # =============================================================================
 # 4. ENTRENAMIENTO
 # =============================================================================
 
-def train_model(model: nn.Module, epochs: int = 50, lr: float = 1e-3,
-                batch_size: int = 64, device: str = "cpu") -> nn.Module:
+def train_model(model: nn.Module,
+                train_dataset: Dataset,
+                val_dataset: Dataset | None = None,
+                epochs: int = 50,
+                lr: float = 1e-3,
+                batch_size: int = 64,
+                device: str = "cpu") -> nn.Module:
     """
-    Entrena el modelo GRU con datos sintéticos.
-
-    En producción, reemplazar SyntheticSignDataset con el dataset real
-    y ajustar hiperparámetros según el tamaño del vocabulario.
+    Entrena el modelo GRU con soporte para datasets reales y validación por época.
     """
     model = model.to(device)
-    model.train()
-
-    dataset = SyntheticSignDataset()
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0) if val_dataset else None
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-
-    # Learning rate scheduler: reduce LR cuando el loss se estanca
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
 
     print(f"\n{'='*60}")
@@ -224,17 +355,21 @@ def train_model(model: nn.Module, epochs: int = 50, lr: float = 1e-3,
     print(f"{'='*60}")
     print(f"  Parámetros totales: {sum(p.numel() for p in model.parameters()):,}")
     print(f"  Input shape:        (batch, {SEQUENCE_LENGTH}, {NUM_FEATURES})")
-    print(f"  Clases:             {len(DEFAULT_LABELS)}")
     print(f"  Épocas:             {epochs}")
     print(f"  Dispositivo:        {device}")
     print(f"{'='*60}\n")
 
-    for epoch in range(epochs):
-        total_loss = 0.0
-        correct = 0
-        total = 0
+    best_loss = float("inf")
+    best_weights = copy.deepcopy(model.state_dict())
 
-        for batch_x, batch_y in dataloader:
+    for epoch in range(epochs):
+        # ── Modo entrenamiento ──
+        model.train()
+        train_loss = 0.0
+        train_correct = 0
+        train_total = 0
+
+        for batch_x, batch_y in train_loader:
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
 
@@ -242,19 +377,52 @@ def train_model(model: nn.Module, epochs: int = 50, lr: float = 1e-3,
             logits = model(batch_x)
             loss = criterion(logits, batch_y)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-            total_loss += loss.item() * batch_x.size(0)
+            train_loss += loss.item() * batch_x.size(0)
             _, predicted = torch.max(logits, 1)
-            correct += (predicted == batch_y).sum().item()
-            total += batch_y.size(0)
+            train_correct += (predicted == batch_y).sum().item()
+            train_total += batch_y.size(0)
 
-        avg_loss = total_loss / total
-        accuracy = correct / total * 100
-        scheduler.step(avg_loss)
+        avg_train_loss = train_loss / max(1, train_total)
+        train_acc = (train_correct / max(1, train_total)) * 100
 
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(f"  Época {epoch+1:3d}/{epochs} │ Loss: {avg_loss:.4f} │ Acc: {accuracy:.1f}%")
+        # ── Modo validación ──
+        val_str = ""
+        eval_loss = avg_train_loss
+        if val_loader:
+            model.eval()
+            val_loss = 0.0
+            val_correct = 0
+            val_total = 0
+            with torch.no_grad():
+                for batch_x, batch_y in val_loader:
+                    batch_x = batch_x.to(device)
+                    batch_y = batch_y.to(device)
+                    logits = model(batch_x)
+                    loss = criterion(logits, batch_y)
+                    val_loss += loss.item() * batch_x.size(0)
+                    _, predicted = torch.max(logits, 1)
+                    val_correct += (predicted == batch_y).sum().item()
+                    val_total += batch_y.size(0)
+
+            avg_val_loss = val_loss / max(1, val_total)
+            val_acc = (val_correct / max(1, val_total)) * 100
+            val_str = f" │ Val Loss: {avg_val_loss:.4f} │ Val Acc: {val_acc:.1f}%"
+            eval_loss = avg_val_loss
+
+            if avg_val_loss < best_loss:
+                best_loss = avg_val_loss
+                best_weights = copy.deepcopy(model.state_dict())
+
+        scheduler.step(eval_loss)
+
+        # Imprimir progreso de cada época para seguimiento en tiempo real
+        print(f"  Época {epoch+1:3d}/{epochs} │ Loss: {avg_train_loss:.4f} │ Acc: {train_acc:.1f}%{val_str}")
+
+    if val_loader and best_weights:
+        model.load_state_dict(best_weights)
 
     print(f"\n  ✓ Entrenamiento completado.\n")
     return model
@@ -318,7 +486,8 @@ def export_to_onnx(model: nn.Module, output_path: str, quantized: bool = False):
         dynamic_axes={
             "landmark_sequence": {0: "batch_size"},  # Batch dinámico
             "logits": {0: "batch_size"}
-        }
+        },
+        dynamo=False
     )
 
     file_size = os.path.getsize(output_path)
@@ -474,8 +643,10 @@ def main():
                         help="Número de épocas de entrenamiento (default: 50)")
     parser.add_argument("--output", type=str, default="./exported_model",
                         help="Directorio de salida para el modelo exportado")
-    parser.add_argument("--labels", type=str, nargs="+", default=DEFAULT_LABELS,
-                        help="Lista de etiquetas/señas a clasificar")
+    parser.add_argument("--data-dir", type=str, default=None,
+                        help="Directorio con archivos JSON del dataset (ej: expresat-dataset-generator/dataset)")
+    parser.add_argument("--labels", type=str, nargs="+", default=None,
+                        help="Lista de etiquetas/señas a clasificar (auto-detectado si no se indica)")
     parser.add_argument("--benchmark", action="store_true", default=True,
                         help="Ejecutar benchmark de latencia después de exportar")
     parser.add_argument("--skip-train", action="store_true",
@@ -486,7 +657,12 @@ def main():
     output_dir = args.output
     os.makedirs(output_dir, exist_ok=True)
 
-    num_classes = len(args.labels)
+    # --- Cargar dataset (real con fallback sintético) ---
+    train_dataset, val_dataset, resolved_labels = load_datasets(
+        data_dir=args.data_dir,
+        expected_labels=args.labels
+    )
+    num_classes = len(resolved_labels)
 
     # --- Paso 1: Construir modelo ---
     print("\n Construyendo modelo GRU...")
@@ -503,7 +679,7 @@ def main():
     # --- Paso 2: Entrenar ---
     if not args.skip_train:
         print("\n Entrenando modelo...")
-        model = train_model(model, epochs=args.epochs)
+        model = train_model(model, train_dataset, val_dataset, epochs=args.epochs)
     else:
         print("\n  Saltando entrenamiento (--skip-train)")
 
@@ -524,7 +700,7 @@ def main():
 
     # --- Paso 6: Guardar metadatos ---
     print("\n Guardando metadatos...")
-    save_model_metadata(output_dir, args.labels)
+    save_model_metadata(output_dir, resolved_labels)
 
     # --- Paso 7: Benchmark ---
     if args.benchmark:

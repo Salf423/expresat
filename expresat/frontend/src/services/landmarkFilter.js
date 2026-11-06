@@ -45,7 +45,12 @@ export class LandmarkEMAFilter {
 
         // First detection for this set: initialize state without smoothing
         if (!prev || prev.length !== landmarks.length) {
-            this._prev[name] = landmarks.map(lm => ({ x: lm.x, y: lm.y, z: lm.z }));
+            this._prev[name] = landmarks.map(lm => ({
+                x: lm.x,
+                y: lm.y,
+                z: lm.z,
+                ...(lm.visibility !== undefined ? { visibility: lm.visibility } : {})
+            }));
             return this._prev[name];
         }
 
@@ -58,6 +63,7 @@ export class LandmarkEMAFilter {
                 x: a * landmarks[i].x + b * prev[i].x,
                 y: a * landmarks[i].y + b * prev[i].y,
                 z: a * landmarks[i].z + b * prev[i].z,
+                ...(landmarks[i].visibility !== undefined ? { visibility: landmarks[i].visibility } : {})
             };
         }
 

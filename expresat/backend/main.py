@@ -25,7 +25,20 @@ from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# =============================================================================
+# [DEMO] MODO DEMO — CONFIGURACIÓN Y REGLAS DETERMINISTAS
+# =============================================================================
+# [DEMO] Importación de constante DEMO_MODE y el motor determinista predict_demo
+# Este flujo sustituye temporalmente al agente/modelo de IA hasta su calibración.
+try:
+    from backend.config import DEMO_MODE
+    from backend.demo_rules import predict_demo, DEMO_LABELS
+except ImportError:
+    from config import DEMO_MODE
+    from demo_rules import predict_demo, DEMO_LABELS
 
 
 # =============================================================================
@@ -71,6 +84,13 @@ async def lifespan(app: FastAPI):
 
     print("\n" + "=" * 60)
     print("  ExpresaT Backend — Starting server...")
+    # [DEMO] Notificación visible de estado de modo demo en el arranque
+    if DEMO_MODE:
+        print("  [DEMO] MODO DEMO ACTIVO (demo_rules.py)")
+        print("  Reglas deterministas para reconocimiento preliminar.")
+        print("  Para usar modelo de IA, configurar DEMO_MODE = False en config.py")
+    else:
+        print("  [PROD] Modo IA Activo (InferenceEngine ONNX)")
     print("=" * 60)
 
     # --- Load inference engine ---
@@ -180,6 +200,18 @@ async def run_inference_async(frames: list[dict]) -> dict:
 
     For heavier models, consider ProcessPoolExecutor.
     """
+    # =========================================================================
+    # [DEMO] EJECUCIÓN CONDICIONAL SEGÚN DEMO_MODE
+    # =========================================================================
+    # [DEMO] Si DEMO_MODE es True, se ejecuta el motor determinista predict_demo()
+    # que calcula reglas geométricas (ángulos, distancias y extensión de dedos)
+    # sobre los landmarks de MediaPipe sin modificar su estructura.
+    # Esta implementación es temporal y será reemplazada por el modelo de IA.
+    if DEMO_MODE:
+        # [DEMO] Offload de reglas deterministas a hilo secundario para mantener async
+        return await asyncio.to_thread(predict_demo, frames)
+
+    # --- FLUJO ORIGINAL CON MODELO DE IA ---
     engine = get_inference_engine()
 
     if engine is None:
@@ -384,6 +416,8 @@ async def health_check():
     return {
         "status": "ok",
         "service": "ExpresaT Backend V2",
+        # [DEMO] Indicador visible de modo demo en el endpoint raíz
+        "demo_mode": DEMO_MODE,
         "model_loaded": engine is not None,
     }
 
@@ -398,9 +432,19 @@ async def detailed_health():
         "status": "healthy",
         "service": "ExpresaT Backend V2",
         "connections": len(manager.active_connections),
+        # [DEMO] Exposición de estado de modo demo para el cliente web
+        "demo_mode": DEMO_MODE,
     }
 
-    if engine:
+    # [DEMO] Reporte de motor activo según DEMO_MODE
+    if DEMO_MODE:
+        response["model"] = {
+            "status": "demo_rules_mode",
+            "engine": "Deterministic Geometric Rules (Heuristic Demo)",
+            "supported_gestures": DEMO_LABELS,
+            "count": len(DEMO_LABELS)
+        }
+    elif engine:
         response["model"] = engine.get_info()
     else:
         response["model"] = {"status": "mock_mode", "reason": "Model not loaded"}
@@ -411,6 +455,15 @@ async def detailed_health():
 @app.get("/labels")
 async def get_labels():
     """Returns the labels/signs that the model can recognize."""
+    # [DEMO] Si DEMO_MODE es True, retornamos las señas de las reglas deterministas
+    if DEMO_MODE:
+        return {
+            "labels": DEMO_LABELS,
+            "count": len(DEMO_LABELS),
+            "demo_mode": True,
+            "description": "Señas soportadas por el prototipo demo determinista"
+        }
+
     engine = get_inference_engine()
     if engine:
         return {"labels": engine.labels, "count": engine.num_classes}

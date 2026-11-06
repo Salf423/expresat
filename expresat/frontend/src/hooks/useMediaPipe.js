@@ -121,6 +121,7 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
     // Latest smoothed results — written by Worker message handler,
     // read by the draw loop. No useState → zero re-renders from here.
     const resultsRef     = useRef(null);
+    const frameBufferRef = useRef([]); // 15-frame sliding window for batch inference
     const onLandmarksRef = useRef(onLandmarks);
     const onFpsRef       = useRef(onFps);
 
@@ -189,10 +190,18 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                     fpsTimeRef.current = now;
                 }
 
-                // Throttled WebSocket send (max 2/sec)
-                if (now - lastSendRef.current >= sendInterval) {
+                // Accumulate frames into a 15-frame sliding window (1.0s at 15 FPS)
+                const currentFramePayload = buildPayload(smoothed);
+                frameBufferRef.current.push(currentFramePayload);
+                if (frameBufferRef.current.length > 15) {
+                    frameBufferRef.current.shift();
+                }
+
+                // Optimal Batch Mode: send the full 15-frame temporal window when ready,
+                // throttled by sendInterval (e.g. 250-500ms)
+                if (frameBufferRef.current.length === 15 && now - lastSendRef.current >= sendInterval) {
                     lastSendRef.current = now;
-                    onLandmarksRef.current?.(buildPayload(smoothed));
+                    onLandmarksRef.current?.([...frameBufferRef.current]);
                 }
 
                 void timestamp; // used for Worker-side monotonic checks
@@ -337,8 +346,9 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             worker.postMessage({ type: 'destroy' });
             setTimeout(() => worker.terminate(), 200);
 
-            // Reset filter state
+            // Reset filter and frame buffer state
             filterRef.current?.reset();
+            frameBufferRef.current = [];
         };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps

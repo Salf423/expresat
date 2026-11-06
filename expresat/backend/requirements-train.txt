@@ -11,10 +11,10 @@
 # --- PyTorch CPU-only ---
 # Usar el índice de PyTorch para la versión CPU
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.7.0+cpu
+torch>=2.2.0
 
 # --- Exportación ONNX ---
-onnx==1.18.0
+onnx>=1.16.0
 
 # --- Cuantización ONNX (incluida en onnxruntime, pero explícita aquí) ---
-onnxruntime==1.22.0
+onnxruntime>=1.20.0

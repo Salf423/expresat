@@ -19,9 +19,9 @@ option(USE_STUB_EXTRACTOR "Use stub extractor (no MediaPipe, for GUI dev)" ON)
 include(FetchContent)
 
 # ── Find OpenCV (try v5 first, then v4) ───────────────────────────────────────
-find_package(OpenCV 5 QUIET)
+find_package(OpenCV 5 QUIET COMPONENTS core imgproc videoio)
 if(NOT OpenCV_FOUND)
-    find_package(OpenCV 4 REQUIRED)
+    find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc videoio)
 endif()
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 
@@ -130,6 +130,8 @@ endif()
 
 if(USE_STUB_EXTRACTOR)
     target_compile_definitions(expresat_dataset_generator PRIVATE EXPRESAT_STUB_EXTRACTOR=1)
+else()
+    target_compile_definitions(expresat_dataset_generator PRIVATE EXPRESAT_STUB_EXTRACTOR=0)
 endif()
 
 # ── Warnings ──────────────────────────────────────────────────────────────────

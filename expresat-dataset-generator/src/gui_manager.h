@@ -79,6 +79,25 @@ private:
     std::vector<Sequence> generatedSamples_;
     std::mutex            samplesMutex_;
 
+    // ── Training process execution ─────────────────────────────────────────
+    std::thread          trainThread_;
+    std::atomic<bool>    isTraining_{false};
+    std::atomic<bool>    trainDone_{false};
+    std::string          trainStatus_ = "No iniciado";
+    std::vector<std::string> trainLogs_;
+    std::mutex           trainMutex_;
+
+    // ── Memory monitoring ──────────────────────────────────────────────────
+    struct MemStats {
+        double procRssMB = 0.0;
+        double sysUsedMB = 0.0;
+        double sysTotalMB = 0.0;
+        double sysPercent = 0.0;
+    };
+    MemStats memStats_;
+    float    memTimer_ = 0.f;
+    void     updateMemoryStats();
+
     // ── Latest landmarks (for skeleton overlay) ────────────────────────────
     FrameLandmarks lastLandmarks_;
     std::mutex     landmarksMutex_;
@@ -96,9 +115,11 @@ private:
     void stopRecording();
     void startGeneration();
     void saveDataset();
+    void startTraining();
 
     // ── Worker ────────────────────────────────────────────────────────────
     void generationWorker(Sequence base, int count, RecordingConfig cfg);
+    void trainingWorker();
 };
 
 } // namespace expresat

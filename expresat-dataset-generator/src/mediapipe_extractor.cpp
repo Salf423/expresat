@@ -11,18 +11,31 @@
 namespace expresat {
 
 // ─── Connection tables for skeleton drawing ───────────────────────────────────
+// Pose connections: standard MediaPipe Pose 33 landmarks
 static const std::vector<std::pair<int,int>> POSE_CONNECTIONS = {
-    {0,1},{1,2},{2,3},{3,7}, {0,4},{4,5},{5,6},{6,8},
-    {11,12},{11,13},{13,15},{15,17},{15,19},{15,21},{17,19},
+    // Face / head
+    {0,1},{1,2},{2,3},{3,7}, {0,4},{4,5},{5,6},{6,8}, {9,10},
+    // Torso / shoulders
+    {11,12},{11,23},{12,24},{23,24},
+    // Left arm
+    {11,13},{13,15},{15,17},{15,19},{15,21},{17,19},
+    // Right arm
     {12,14},{14,16},{16,18},{16,20},{16,22},{18,20},
-    {11,23},{12,24}
+    // Lower body (if present)
+    {23,25},{24,26},{25,27},{26,28},{27,29},{28,30},{29,31},{30,32},{27,31},{28,32}
 };
 static const std::vector<std::pair<int,int>> HAND_CONNECTIONS = {
+    // Thumb
     {0,1},{1,2},{2,3},{3,4},
+    // Index finger
     {0,5},{5,6},{6,7},{7,8},
-    {0,9},{9,10},{10,11},{11,12},
-    {0,13},{13,14},{14,15},{15,16},
+    // Middle finger
+    {9,10},{10,11},{11,12},
+    // Ring finger
+    {13,14},{14,15},{15,16},
+    // Pinky
     {0,17},{17,18},{18,19},{19,20},
+    // Palm base connections
     {5,9},{9,13},{13,17}
 };
 
@@ -174,22 +187,33 @@ void MediapipeExtractor::normalizePose(std::vector<Landmark>& pose,
     float cy = (L.y + R.y) * 0.5f;
     float cz = (L.z + R.z) * 0.5f;
 
-    // Shift upper-pose landmarks
+    // Distancia inter-humeral como factor de escala (invariancia de tamaño aparente)
+    float dx = R.x - L.x;
+    float dy = R.y - L.y;
+    float dz = R.z - L.z;
+    float dShoulders = std::sqrt(dx*dx + dy*dy + dz*dz);
+    if (dShoulders < 1e-6f) dShoulders = 1.0f;  // evitar división por cero
+
+    // Centrar y escalar upper-pose landmarks
     for (int idx : POSE_UPPER_INDICES) {
         if (idx < (int)pose.size()) {
-            pose[idx].x -= cx;
-            pose[idx].y -= cy;
-            pose[idx].z -= cz;
+            pose[idx].x = (pose[idx].x - cx) / dShoulders;
+            pose[idx].y = (pose[idx].y - cy) / dShoulders;
+            pose[idx].z = (pose[idx].z - cz) / dShoulders;
             // visibility stays unchanged
         }
     }
 
-    // Shift hands
+    // Centrar y escalar manos
     for (auto& lm : leftHand) {
-        lm.x -= cx; lm.y -= cy; lm.z -= cz;
+        lm.x = (lm.x - cx) / dShoulders;
+        lm.y = (lm.y - cy) / dShoulders;
+        lm.z = (lm.z - cz) / dShoulders;
     }
     for (auto& lm : rightHand) {
-        lm.x -= cx; lm.y -= cy; lm.z -= cz;
+        lm.x = (lm.x - cx) / dShoulders;
+        lm.y = (lm.y - cy) / dShoulders;
+        lm.z = (lm.z - cz) / dShoulders;
     }
 }
 
@@ -201,29 +225,51 @@ void MediapipeExtractor::drawSkeleton(cv::Mat& frame,
 
     int W = frame.cols, H = frame.rows;
     auto toPixel = [&](float nx, float ny) {
-        return cv::Point(static_cast<int>(nx * W),
-                         static_cast<int>(ny * H));
+        int px = static_cast<int>(nx * W);
+        int py = static_cast<int>(ny * H);
+        return cv::Point(std::clamp(px, 0, W - 1), std::clamp(py, 0, H - 1));
     };
 
-    // Draw pose connections
+    // ── 1. Pose Skeleton ──────────────────────────────────────────────────────
     if (parts.upperPose && lm.poseValid) {
+        // Draw bone connections
         for (auto [a, b] : POSE_CONNECTIONS) {
             if (a < (int)lm.pose.size() && b < (int)lm.pose.size()) {
-                cv::line(frame, toPixel(lm.pose[a].x, lm.pose[a].y),
-                                toPixel(lm.pose[b].x, lm.pose[b].y),
-                         cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+                // If either is upper body or if full pose landmarks exist
+                bool aInUpper = std::find(POSE_UPPER_INDICES.begin(), POSE_UPPER_INDICES.end(), a) != POSE_UPPER_INDICES.end();
+                bool bInUpper = std::find(POSE_UPPER_INDICES.begin(), POSE_UPPER_INDICES.end(), b) != POSE_UPPER_INDICES.end();
+                if (aInUpper || bInUpper || parts.faceExtra) {
+                    cv::line(frame, toPixel(lm.pose[a].x, lm.pose[a].y),
+                                    toPixel(lm.pose[b].x, lm.pose[b].y),
+                             cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+                }
             }
         }
+
+        // Draw joint points for upper pose
         for (int idx : POSE_UPPER_INDICES) {
             if (idx < (int)lm.pose.size()) {
+                // Outer circle
                 cv::circle(frame, toPixel(lm.pose[idx].x, lm.pose[idx].y),
-                           4, cv::Scalar(255, 0, 0), -1, cv::LINE_AA);
+                           5, cv::Scalar(0, 200, 255), -1, cv::LINE_AA);
+                // Inner center point
+                cv::circle(frame, toPixel(lm.pose[idx].x, lm.pose[idx].y),
+                           2, cv::Scalar(255, 255, 255), -1, cv::LINE_AA);
+            }
+        }
+
+        // Draw face landmark points if present
+        if (parts.faceExtra) {
+            for (int idx = 0; idx <= 10 && idx < (int)lm.pose.size(); ++idx) {
+                cv::circle(frame, toPixel(lm.pose[idx].x, lm.pose[idx].y),
+                           3, cv::Scalar(255, 128, 0), -1, cv::LINE_AA);
             }
         }
     }
 
-    // Draw left hand
+    // ── 2. Left Hand Skeleton ────────────────────────────────────────────────
     if (parts.leftHand && lm.leftValid) {
+        // Draw finger bones
         for (auto [a, b] : HAND_CONNECTIONS) {
             if (a < (int)lm.leftHand.size() && b < (int)lm.leftHand.size()) {
                 cv::line(frame, toPixel(lm.leftHand[a].x, lm.leftHand[a].y),
@@ -231,16 +277,35 @@ void MediapipeExtractor::drawSkeleton(cv::Mat& frame,
                          cv::Scalar(255, 165, 0), 2, cv::LINE_AA);
             }
         }
+        // Draw all 21 joints
+        for (int i = 0; i < (int)lm.leftHand.size(); ++i) {
+            int radius = (i == 0 || i == 4 || i == 8 || i == 12 || i == 16 || i == 20) ? 4 : 3;
+            cv::Scalar color = (i == 0) ? cv::Scalar(0, 255, 255) : cv::Scalar(255, 80, 0);
+            cv::circle(frame, toPixel(lm.leftHand[i].x, lm.leftHand[i].y),
+                       radius, color, -1, cv::LINE_AA);
+            cv::circle(frame, toPixel(lm.leftHand[i].x, lm.leftHand[i].y),
+                       1, cv::Scalar(255, 255, 255), -1, cv::LINE_AA);
+        }
     }
 
-    // Draw right hand
+    // ── 3. Right Hand Skeleton ───────────────────────────────────────────────
     if (parts.rightHand && lm.rightValid) {
+        // Draw finger bones
         for (auto [a, b] : HAND_CONNECTIONS) {
             if (a < (int)lm.rightHand.size() && b < (int)lm.rightHand.size()) {
                 cv::line(frame, toPixel(lm.rightHand[a].x, lm.rightHand[a].y),
                                 toPixel(lm.rightHand[b].x, lm.rightHand[b].y),
                          cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
             }
+        }
+        // Draw all 21 joints
+        for (int i = 0; i < (int)lm.rightHand.size(); ++i) {
+            int radius = (i == 0 || i == 4 || i == 8 || i == 12 || i == 16 || i == 20) ? 4 : 3;
+            cv::Scalar color = (i == 0) ? cv::Scalar(0, 255, 255) : cv::Scalar(0, 100, 255);
+            cv::circle(frame, toPixel(lm.rightHand[i].x, lm.rightHand[i].y),
+                       radius, color, -1, cv::LINE_AA);
+            cv::circle(frame, toPixel(lm.rightHand[i].x, lm.rightHand[i].y),
+                       1, cv::Scalar(255, 255, 255), -1, cv::LINE_AA);
         }
     }
 }

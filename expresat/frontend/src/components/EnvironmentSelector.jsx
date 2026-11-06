@@ -2,7 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Check, Cloud, Monitor } from 'lucide-react';
 
 const EnvironmentSelector = () => {
-  const [env, setEnv] = useState(() => localStorage.getItem('apiEnv') || 'Local');
+  const isLocalHost = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const defaultEnv = isLocalHost ? 'Local' : 'Cloud';
+  const [env, setEnv] = useState(() => localStorage.getItem('apiEnv') || defaultEnv);
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
 

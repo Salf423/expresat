@@ -51,10 +51,11 @@ public:
     /**
      * Flatten FrameLandmarks into a normalised FeatureVector.
      *
-     * Normalization:
+     * Normalization (shoulder-relative, scale-invariant):
      *   - Compute shoulder center C = (P11 + P12) / 2
-     *   - Subtract C from all x,y,z of Pose + Hands
-     *   - visibility channel is NOT shifted (it stays raw)
+     *   - Compute inter-shoulder distance D = ||P12 - P11||
+     *   - Apply: coord_norm = (coord - C) / D  for all x,y,z of Pose + Hands
+     *   - visibility channel is NOT shifted or scaled (stays raw)
      *
      * Layout: [pose_upper(52) | left_hand(63) | right_hand(63)] = 178 floats
      * If a part is disabled or absent, that region is filled with 0.
