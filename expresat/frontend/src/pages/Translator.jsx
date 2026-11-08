@@ -113,11 +113,20 @@ const Translator = () => {
     }
     
     api.connect(authToken);
+    
+    // [FIX-MP-5] Manejo de estado de conexión y detección de errores de autenticación
     api.onStatusChange((text, className) => {
       setStatus(text);
       setStatusClass(className);
+      
+      // Cuando el servidor cierra la conexión por token inválido/ausente,
+      // el apiService ya no reintenta y notifica al UI para mostrar mensaje claro
+      if (className === 'status-offline' && text && 
+          (text.toLowerCase().includes('token') || text.toLowerCase().includes('autenticación'))) {
+        setAuthWarning(true);
+      }
     });
-    // [DEMO] Manejo de mensajes entrantes con soporte para bandera is_demo
+    
     api.onMessage((msg) => {
       // M10: Validar estructura del mensaje entrante - advertir si es desconocida
       if (!msg || typeof msg !== 'object') {
@@ -152,7 +161,13 @@ const Translator = () => {
   useMediaPipe(
     videoRef,
     canvasRef,
-    (landmarks) => apiRef.current?.sendLandmarks(landmarks), // throttled 2/sec
+    (landmarks) => {
+      try {
+        apiRef.current?.sendLandmarks(landmarks);
+      } catch (err) {
+        // Desacoplado: el pipeline de landmarks y FPS sigue activo aunque el backend esté desconectado
+      }
+    },
     (currentFps) => setFps(currentFps),                      // called 1/sec
     {
       alpha: 0.45,
@@ -210,6 +225,19 @@ const Translator = () => {
               border: '1px solid var(--accent-warning, #f5a623)'
             }}>
               Modo demo activo — funcionalidad limitada
+            </span>
+          )}
+          {authWarning && (
+            <span style={{
+              marginLeft: '1rem',
+              fontSize: '0.75rem',
+              color: 'var(--accent-error, #e53e3e)',
+              background: 'var(--accent-error-bg, #fdf2f2)',
+              padding: '0.2rem 0.5rem',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--accent-error, #e53e3e)'
+            }}>
+              Sesión expirada o token inválido
             </span>
           )}
         </div>

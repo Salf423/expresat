@@ -132,8 +132,30 @@ export class ApiService {
 
         this.ws.onclose = (event) => {
             console.warn('WebSocket Desconectado', event);
-            this.updateStatus('Desconectado', 'status-offline');
             clearInterval(this.pingInterval);
+
+            // M4: Si el cierre fue por política de autenticación (1008), 403 o token ausente/inválido,
+            // NO reintentamos en bucle para no saturar el servidor ni el navegador.
+            const closeReason = event.reason || '';
+            const isAuthOrTokenError = 
+                event.code === 1008 ||
+                event.code === 4403 ||
+                closeReason.includes('Token ausente') || 
+                closeReason.includes('Token inválido') || 
+                closeReason.includes('Token expirado') ||
+                closeReason.toLowerCase().includes('token');
+
+            if (isAuthOrTokenError) {
+                console.warn(`[ApiService] Cierre por autenticación (código ${event.code}, motivo: "${closeReason}") — reintentos cancelados.`);
+                this.updateStatus('Autenticación requerida', 'status-offline');
+                if (this.onStatusChangeCallback) {
+                    this.onStatusChangeCallback(closeReason || 'Sesión expirada o token requerido', 'status-offline');
+                }
+                return;
+            }
+
+            // Reconexión normal con backoff para desconexiones de red imprevistas
+            this.updateStatus('Desconectado', 'status-offline');
             this.handleReconnect(token);
         };
 
@@ -186,10 +208,14 @@ export class ApiService {
      */
     sendLandmarks(landmarksData) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                type: 'inference',
-                payload: landmarksData
-            }));
+            try {
+                this.ws.send(JSON.stringify({
+                    type: 'inference',
+                    payload: landmarksData
+                }));
+            } catch (err) {
+                console.warn('[ApiService] Error al enviar landmarks (WS desconectado):', err);
+            }
         }
     }
 
