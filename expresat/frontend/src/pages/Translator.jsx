@@ -17,8 +17,9 @@ const Translator = () => {
   const [statusClass, setStatusClass] = useState('status-offline');
   const [fps, setFps] = useState(0);
   const [copied, setCopied] = useState(false);
-  // [DEMO] Estado para reflejar el modo demo en la interfaz visual
-  const [isDemo, setIsDemo] = useState(true);
+  // H5: Use authenticated token if session exists, degrade to development token with warning
+  const [usingDemoToken, setUsingDemoToken] = useState(false);
+  const [_authWarning, setAuthWarning] = useState(false);
   // [DEBUG] Panel de diagnóstico oculto — activar con Ctrl+Shift+D
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugData, setDebugData] = useState(null);
@@ -92,17 +93,44 @@ const Translator = () => {
       : (import.meta.env.VITE_WS_URL_PROD || 'wss://api.expresat.cloud/ws');
 
     const api = new ApiService(wsUrl);
-    api.connect('mock_token');
+    
+    // H5: Determinar token de autenticación - usar token real si hay sesión,
+    //     degradar a demo con aviso visual en lugar de 'mock_token' ciego
+    let authToken = null;
+    
+    // Intentar obtener token de sesión (simulación - en producción vendría de auth state)
+    const storedToken = localStorage.getItem('supabaseToken');
+    if (storedToken && storedToken !== 'mock_token') {
+      authToken = storedToken;
+      setUsingDemoToken(false);
+      setAuthWarning(false);
+    } else {
+      // Modo demo con aviso visual
+      authToken = 'demo_fallback_token';
+      setUsingDemoToken(true);
+      setAuthWarning(true);
+    }
+    
+    api.connect(authToken);
     api.onStatusChange((text, className) => {
       setStatus(text);
       setStatusClass(className);
     });
     // [DEMO] Manejo de mensajes entrantes con soporte para bandera is_demo
     api.onMessage((msg) => {
+      // M10: Validar estructura del mensaje entrante - advertir si es desconocida
+      if (!msg || typeof msg !== 'object') {
+        console.warn('[Translator] Mensaje entrante inválido: estructura inesperada', msg);
+        return;
+      }
+
       // msg ya es data.payload (desenvuelto por apiService.js)
       const label = msg?.label || (typeof msg === 'string' ? msg : null);
       if (label) {
         setTranslation(label);
+      } else {
+        // M10: Advertir si el mensaje no tiene estructura reconocida
+        console.warn('[Translator] Mensaje sin label reconocido:', msg);
       }
 
       // [DEMO] Detectar si la respuesta viene del motor de demo
@@ -170,6 +198,19 @@ const Translator = () => {
           <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
             Posiciónate frente a la cámara con las manos visibles y buena iluminación.
           </p>
+          {usingDemoToken && (
+            <span style={{
+              marginLeft: '1rem',
+              fontSize: '0.75rem',
+              color: 'var(--accent-warning, #f5a623)',
+              background: 'var(--accent-warning-bg, #fff3e0)',
+              padding: '0.2rem 0.5rem',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--accent-warning, #f5a623)'
+            }}>
+              Modo demo activo — funcionalidad limitada
+            </span>
+          )}
         </div>
 
         {/* Telemetry Indicator (WCAG aria-live="polite") */}

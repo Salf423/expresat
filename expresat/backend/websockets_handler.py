@@ -1,13 +1,23 @@
 """
 websockets_handler.py — ExpresaT: WebSocket Connection Manager (legacy)
-========================================================================
+=======================================================================
 ⚠️  DEPRECADO: main.py ya incluye su propio ConnectionManager con
     InferenceEngine real. Este archivo se conserva por compatibilidad con
     el frontend-legacy pero NO debe ser importado en producción.
 
     El endpoint activo es:  main.py → /ws/translate  (InferenceEngine)
     El endpoint legacy era: este módulo → SignLanguagePredictor (MOCK)
+
+    Nota importante: Al importarse este módulo, se emite una advertencia
+    DeprecationWarning para evitar confusiones en mantenimientos futuros.
 """
+
+import warnings
+warnings.warn(
+    "websockets_handler.py está deprecado. Use main.py",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 from fastapi import WebSocket
 import sys
@@ -23,6 +33,7 @@ try:
 except ImportError:
     from config import DEMO_MODE
     from demo_rules import predict_demo
+
 
 # NOTA: InferenceEngine es el motor real de producción.
 # SignLanguagePredictor se mantiene solo como fallback MOCK para el handler legacy.

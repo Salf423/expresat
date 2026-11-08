@@ -228,8 +228,9 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                 }
 
                 // Optimal Batch Mode: send the full 15-frame temporal window when ready,
-                // throttled by sendInterval (e.g. 250-500ms)
-                if (frameBufferRef.current.length === 15 && now - lastSendRef.current >= sendInterval) {
+                // throttled by sendInterval (e.g. 250-500ms).
+                // M5: Usar >= 15 para despachar periódicamente la ventana de 15 frames
+                if (frameBufferRef.current.length >= 15 && now - lastSendRef.current >= sendInterval) {
                     lastSendRef.current = now;
                     onLandmarksRef.current?.([...frameBufferRef.current]);
                 }
@@ -240,12 +241,16 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             if (type === 'error') {
                 // Worker error is non-fatal — camera keeps showing image.
                 // Inference is simply disabled until the worker recovers.
+                // H3: Reset workerBusyRef to unblock the frame queue
+                workerBusyRef.current = false;
                 console.warn('[useMediaPipe] Worker error (inference disabled):', event.data.message);
             }
         };
 
         worker.onerror = (e) => {
             console.error('[useMediaPipe] Worker uncaught error (inference disabled):', e);
+            // H3: Reset workerBusyRef to avoid blocking frame queue
+            workerBusyRef.current = false;
             // Camera draw loop is unaffected — user still sees their image.
         };
 

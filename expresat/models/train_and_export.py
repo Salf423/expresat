@@ -264,6 +264,15 @@ def load_datasets(data_dir: str | Path | None = None,
     # Fallback si no hay muestras reales
     if not sequences:
         print(f"\n⚠️  No se encontraron muestras reales en '{data_dir or resolved_dir}'.")
+        rutas_examinadas = [
+            str(c) for c in [
+                Path("expresat-dataset-generator/dataset"),
+                Path("../expresat-dataset-generator/dataset"),
+                Path("/home/adrian/Proyectos/expresat/expresat-dataset-generator/dataset"),
+                *([] if not data_dir else [Path(data_dir)])
+            ]
+        ]
+        print("    Rutas examinadas: " + ", ".join(rutas_examinadas) + ".")
         print("    Utilizando dataset sintético simulado como fallback.\n")
         labels = expected_labels if expected_labels else DEFAULT_LABELS
         train_ds = SyntheticSignDataset(num_samples=2400, num_classes=len(labels))

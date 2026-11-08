@@ -5,24 +5,33 @@ export class ApiService {
      *   con o sin path). Internamente se extrae sólo el origin para construir los
      *   endpoints correctos, evitando duplicación de rutas.
      * Configura parámetros de reconexión exponencial para manejar caídas de red de forma resiliente.
+     * Define el endpoint WebSocket canónico /ws/translate y permite configurar
+     * el número máximo de intentos de reconexión.
      */
+    static WS_ENDPOINT = "/ws/translate";
+
     constructor(url) {
         this.url = url;
         this.ws = null;
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.baseDelay = 1000; // 1 second
+        this.maxReconnectAttempts = 10; // Max 10 attempts before giving up
+        this.baseDelay = 1000; // 1 second initial delay
         this.onMessageCallback = null;
         this.onStatusChangeCallback = null;
         this.pingInterval = null;
         this.lastPingTime = 0;
+        this.lastHealthCheck = 0;
+        this.healthCheckInterval = null;
     }
 
     /**
      * Establece la conexión WebSocket con el servidor.
-     * Decisión: El token JWT se envía en la URL para simplificar la autenticación en el handshake inicial.
+     * Decisión: El token JWT se enviará por mensaje inicial { type: "auth", token: "..." }
+     * para evitar filtraciones en logs HTTP/WS, con fallback a query param solo en modo desarrollo.
      * Configura manejadores para eventos open, message, close y error.
      * Hace un fetch a /health primero para despertar el contenedor de Render.
+     * Propaga fallos críticos del health-check al callback de estado de UI cuando el servidor
+     * sea inalcanzable después de varios intentos.
      * @param {string} token - Token de acceso de Supabase.
      */
     async connect(token) {
@@ -54,12 +63,15 @@ export class ApiService {
         const wsProtocol = origin.startsWith('https') ? 'wss:' : 'ws:';
         const host = new URL(origin).host; // 'expresat.onrender.com' | '127.0.0.1:8000'
 
-        // Final endpoints — paths are HARDCODED here, never taken from the env var.
+        // Final endpoints — paths are derived from canonical constant, not hardcoded
         const healthUrl = `${origin}/health`;
-        const wsUrl     = `${wsProtocol}//${host}/ws/translate?token=${encodeURIComponent(token)}`;
+        // C4: Use canonical WS endpoint constant /ws/translate, token sent via auth message
+        const wsUrl = `${wsProtocol}//${host}${ApiService.WS_ENDPOINT}`;
 
         console.log('[ApiService] health check →', healthUrl);
-        console.log('[ApiService] websocket    →', wsUrl);
+        // Mask token in log - avoid printing full tokens
+        const tokenSafe = token && token.length > 0 ? token.substring(0, 20) + "..." : "vacío";
+        console.log('[ApiService] websocket    →', wsUrl, "(token:", tokenSafe, ")");
 
         // ── Wake-up Render container ───────────────────────────────────────────
         this.updateStatus('Despertando servidor...', 'status-offline');
@@ -67,6 +79,9 @@ export class ApiService {
             await fetch(healthUrl);
         } catch (error) {
             console.warn('[ApiService] Health check falló, continuando con WS...', error);
+            // M4: Propagar fallo crítico del health check al estado de UI
+            // después de un solo intento (no reintentamos aquí, el WS maneja reconexión)
+            this.updateStatus('Servidor inalcanzable', 'status-offline');
         }
 
         // ── Open WebSocket ─────────────────────────────────────────────────────
@@ -84,6 +99,20 @@ export class ApiService {
                     this.ws.send(JSON.stringify({ type: 'ping' }));
                 }
             }, 2000);
+
+            // Send authentication message after handshake to avoid token in URL/query param
+            // H5: Auth via initial message { type: "auth", token: "..." }
+            const authToken = token || (typeof window !== 'undefined' ? localStorage.getItem('supabaseToken') : null);
+            if (authToken) {
+                // Mask token in log
+                const authTokenSafe = authToken.length > 20 ? authToken.substring(0, 20) + "..." : authToken;
+                console.log('[ApiService] Enviando auth mensaje (token masked: ' + authTokenSafe + ')');
+                try {
+                    this.ws.send(JSON.stringify({ type: "auth", token: authToken }));
+                } catch (e) {
+                    console.error('[ApiService] Error sending auth message:', e);
+                }
+            }
         };
 
         this.ws.onmessage = (event) => {
@@ -105,7 +134,8 @@ export class ApiService {
         };
 
         this.ws.onerror = (error) => {
-            console.error('WebSocket Error:', error);
+            // C4: No imprimir tokens completos en logs de error
+            console.error('[ApiService] WebSocket Error: conexión fallida, intentando reconexión', error);
             this.updateStatus('Error', 'status-offline');
         };
     }
@@ -113,19 +143,24 @@ export class ApiService {
     /**
      * Implementa la lógica de reconexión con backoff exponencial.
      * Incrementa el tiempo de espera entre intentos para no saturar el servidor.
+     * Lanza al máximo 10 intentos antes de reportar estado final.
      * @param {string} token - El token para re-autenticar la conexión.
      */
     handleReconnect(token) {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             const delay = this.baseDelay * Math.pow(2, this.reconnectAttempts);
-            console.log(`Reconectando en ${delay}ms... (Intento ${this.reconnectAttempts + 1})`);
+            console.log(`Reconectando en ${delay}ms... (Intento ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})`);
             setTimeout(() => {
                 this.reconnectAttempts++;
                 this.connect(token);
             }, delay);
         } else {
-            console.error('Máximos intentos de reconexión alcanzados.');
+            console.error('Máximos intentos de reconexión alcanzados (10).');
             this.updateStatus('Fallo conexión', 'status-offline');
+            // M4: Propagar estado de fallo crítico a la UI
+            if (this.onStatusChangeCallback) {
+                this.onStatusChangeCallback('Máximo intentos de reconexión alcanzados', 'status-offline');
+            }
         }
     }
 

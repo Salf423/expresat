@@ -167,9 +167,11 @@ export class LandmarkTracker {
     /**
      * @param {object} [options]
      * @param {number} [options.maxTrailLength=8] Máximo número de frames históricos en estela
+     * @param {number} [options.maxTelemetryPoints=50] Máximo número de muestras de estela para evitar fugas de memoria
      */
     constructor(options = {}) {
         this.maxTrailLength = options.maxTrailLength ?? 8;
+        this.maxTelemetryPoints = options.maxTelemetryPoints ?? 50;
 
         // Historial temporal de puntos: Map<pointKey, Array<{ px, py, time }>>
         this.pointHistory = new Map();
@@ -285,10 +287,23 @@ export class LandmarkTracker {
             });
         }
 
-        // 3. Limpiar puntos inactivos del buffer
+        // 3. Limpiar puntos inactivos del buffer y garantizar límite máximo de puntos
+        //    para evitar fugas de memoria en sesiones prolongadas (H4)
         for (const storedKey of this.pointHistory.keys()) {
             if (!activeKeys.has(storedKey)) {
                 this.pointHistory.delete(storedKey);
+            }
+        }
+        // Mantener solo el máximo de puntos de telemetry para evitar memoria infinita
+        const currentPointCount = this.pointHistory.size;
+        if (currentPointCount > this.maxTelemetryPoints) {
+            // Eliminar los puntos más antiguos hasta reducir al límite
+            const keysToRemove = currentPointCount - this.maxTelemetryPoints;
+            let removed = 0;
+            for (const key of this.pointHistory.keys()) {
+                if (removed >= keysToRemove) break;
+                this.pointHistory.delete(key);
+                removed++;
             }
         }
 
@@ -305,7 +320,7 @@ export class LandmarkTracker {
             const shoulderWidth = Math.hypot(p12.x - p11.x, p12.y - p11.y);
             normalization = {
                 shoulderMid,
-                shoulderWidth: Number(shoulderWidth.toFixed(4)),
+                shoulderWidth: Math.max(shoulderWidth, 1e-6),
                 valid: shoulderWidth > 0.05
             };
         }
@@ -663,15 +678,25 @@ export class LandmarkTracker {
 
     /**
      * Convierte código HEX a formato rgba string.
+     * L7: Normaliza y valida strings hexadecimales para prevenir resultados inesperados.
      */
     _hexToRgba(hex, alpha) {
-        const cleaned = hex.replace('#', '');
-        let r = 0, g = 0, b = 0;
+        // Normalizar: quitar # si existe y asegurar formato válido
+        let cleaned = hex.replace('#', '').trim();
+        
+        // Validar que solo contiene caracteres hexadecimales
+        if (!/^[0-9A-Fa-f]{3}(?:[0-9A-Fa-f]{3})?$/.test(cleaned)) {
+            console.warn('[landmarkTracker] _hexToRgba: Código HEX inválido, usando transparente', hex);
+            return 'rgba(0, 0, 0, 0)';
+        }
+        
+        // Expandir formato de 3 a 6 caracteres si es necesario
         if (cleaned.length === 3) {
-            r = parseInt(cleaned[0] + cleaned[0], 16);
-            g = parseInt(cleaned[1] + cleaned[1], 16);
-            b = parseInt(cleaned[2] + cleaned[2], 16);
-        } else if (cleaned.length === 6) {
+            cleaned = cleaned[0] + cleaned[0] + cleaned[1] + cleaned[1] + cleaned[2] + cleaned[2];
+        }
+        
+        let r = 0, g = 0, b = 0;
+        if (cleaned.length === 6) {
             r = parseInt(cleaned.slice(0, 2), 16);
             g = parseInt(cleaned.slice(2, 4), 16);
             b = parseInt(cleaned.slice(4, 6), 16);

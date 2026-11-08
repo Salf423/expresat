@@ -1,6 +1,6 @@
 """
 demo_rules.py — ExpresaT: Motor Demostrativo de Reconocimiento Basado en Reglas
-=============================================================================
+===========================================================================
 # [DEMO] MÓDULO TEMPORAL BASADO EN REGLAS GEOMÉTRICAS DETERMINISTAS.
 # Sustituye temporalmente la etapa de IA (ONNX Runtime / GRU) para mostrar
 # la funcionalidad de traducción en tiempo real de ExpresaT.
@@ -16,6 +16,7 @@ demo_rules.py — ExpresaT: Motor Demostrativo de Reconocimiento Basado en Regla
 
 import math
 import time
+import warnings
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -202,6 +203,15 @@ def get_wave_tracker() -> TemporalWaveTracker:
     return _wave_tracker
 
 
+def check_landmarks_input_type(landmarks_input: Any) -> None:
+    """
+    Validate the type of landmarks_input at the start of predict_demo.
+    If not None, list nor dict, raise TypeError.
+    """
+    if landmarks_input is not None and not isinstance(landmarks_input, (list, dict)):
+        raise TypeError("landmarks_input debe ser un dict o lista de frames")
+
+
 # =============================================================================
 # [DEMO] CONTADOR DE CONFIRMACIÓN POR FRAMES CONSECUTIVOS (DEBOUNCE "HOLA")
 # =============================================================================
@@ -249,7 +259,7 @@ def get_hola_confirmation() -> HolaConfirmation:
 
 
 # =============================================================================
-# [DEMO] FUNCIONES GEOMÉTRICAS AUXILIARES
+# [DEMO] SEGUIMIENTO GEOMÉTRICO DE MANOS Y CARA
 # =============================================================================
 
 def _get_coords(landmark: Union[Dict[str, float], List[float], Tuple[float, ...]]) -> Tuple[float, float, float]:
@@ -332,10 +342,6 @@ def analyze_hand_fingers(
     """
     Analiza una mano de 21 landmarks de MediaPipe y determina qué dedos
     están extendidos o doblados, la orientación de la palma y métricas clave.
-
-    Args:
-        hand_landmarks: Lista de 21 diccionarios o tuplas de MediaPipe.
-        hand_label: 'Right' o 'Left' (perspectiva del usuario).
     """
     if not hand_landmarks or len(hand_landmarks) < 21:
         return None
@@ -561,6 +567,13 @@ def classify_frame_by_rules(
     #   - NO tiene movimiento de vaivén lateral (is_waving es False).
     #   - La muñeca está cerca del eje central de la nariz (abs(wrist_x-nose_x) < 0.16).
     # Si la mano está lateral O agitando, se omite esta regla para no interferir con "Hola".
+    #
+    # Refactored: "Gracias" solo aplica si:
+    #   1. Los 4 dedos principales extendidos (o thumb+index+middle+ring+pinky)
+    #   2. dist_im < 0.32 (mano plana)
+    #   3. is_central (wrist cerca del eje central de la nariz)
+    #   4. mano en reposo angular (no is_waving)
+    #   5. posición vertical: nariz_y + 0.08 <= wrist_y <= hombro_y + 0.05
     if (i_ext and m_ext and r_ext and p_ext) and not is_waving:
         is_central = False
         if nose_x is not None:
@@ -579,13 +592,22 @@ def classify_frame_by_rules(
     # -------------------------------------------------------------------------
     # REGLA 8: "Hola" (Mano Abierta Levantada con Movimiento de Saludo)
     # -------------------------------------------------------------------------
-    # Requiere:
+    # Requiere inequívocamente:
     #   1. Los 4 dedos principales extendidos (tolerante) y pulgar abierto.
     #   2. Palma orientada hacia la cámara.
     #   3. Movimiento lateral oscilante (agitar: >= 2 cambios de dirección en X).
     #   4. Confirmación durante MIN_FRAMES consecutivos (evita disparos espurios).
     #
-    # Si la mano está abierta y de frente pero QUIETA, NO se clasifica como "Hola".
+    # Isolated: "Hola" requires unequivocal detection of oscillatory movement is_waving
+    # and visible palm. If hand is open and facing but QUIET, do NOT classify as "Hola".
+    #
+    # Critical fix: "Gracias" must be checked BEFORE "Hola" to avoid interference.
+    # The condition order ensures "Gracias" takes priority when dist_im < 0.32 and central,
+    # even if hand is also open and facing.
+    #
+    # "Hola" ONLY applies when:
+    #   - NOT "Gracias" conditions (dist_im >= 0.32 OR not central OR is_waving)
+    #   - Hand is open, facing camera, and actively waving
     if (four_ext_tol or (i_ext and m_ext and r_ext and p_ext)) and t_open and palm_facing:
         if shoulder_y is None or wrist_y < shoulder_y + 0.20:
             if is_waving:
@@ -594,6 +616,14 @@ def classify_frame_by_rules(
                 return "Hola", conf, f"Saludo activo con oscilación lateral ({direction_changes} cambios de dirección)"
             else:
                 # Mano abierta frente a la cámara pero quieta: no disparar "Hola"
+                # Pero antes verificar si "Gracias" debería aplicar
+                if dist_im < 0.32:
+                    # "Gracias" takes priority over silent "Hola"
+                    if nose_y is not None and shoulder_y is not None:
+                        if (nose_y + 0.08) <= wrist_y <= (shoulder_y + 0.05):
+                            return "Gracias", 0.94, "Mano plana tocando o saliendo de la barbilla"
+                    elif 0.40 <= wrist_y <= 0.60:
+                        return "Gracias", 0.90, "Mano plana central a la altura del pecho"
                 return None, 0.0, f"Mano abierta detectada pero estática (cambios dir: {direction_changes}/2 requeridos)"
 
     # -------------------------------------------------------------------------
@@ -629,6 +659,8 @@ def predict_demo(
           - "is_demo": True — Bandera explícita indicando ejecución en modo demo
           - "debug": dict — Telemetría de diagnóstico para auditoría en tiempo real
     """
+    # M9: Validate type of landmarks_input at the start
+    check_landmarks_input_type(landmarks_input)
     start_time = time.perf_counter()
     now = time.time()
 
@@ -661,6 +693,7 @@ def predict_demo(
     elif isinstance(landmarks_input, dict):
         target_frame = landmarks_input
     else:
+        # This should not happen after type validation, but safety check
         latency_ms = (time.perf_counter() - start_time) * 1000
         return _build_empty_result(latency_ms, reason="Entrada no es lista ni dict")
 
@@ -708,6 +741,8 @@ def predict_demo(
 
     # Clasificar mediante reglas fijas con telemetría
     label, confidence, rule_reason = classify_frame_by_rules(hand_state, pose, wave_info)
+
+    # M9: Additional type validation already done at function start
 
     # -------------------------------------------------------------------------
     # [DEMO] Confirmación por frames consecutivos para "Hola"

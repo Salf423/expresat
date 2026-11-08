@@ -1,6 +1,6 @@
 """
 inference.py — ExpresaT: Módulo Legacy (DEPRECADO — usar inference_engine.py)
-==============================================================================
+=============================================================================
 ⚠️  ADVERTENCIA: Este módulo usa la topología INCORRECTA de features (33×3=99
     para pose completa en vez de 13×4=52 para upper pose). El vector resultante
     tiene 225 dimensiones en vez de las 178 requeridas por el modelo GRU.
@@ -11,6 +11,13 @@ inference.py — ExpresaT: Módulo Legacy (DEPRECADO — usar inference_engine.p
     Este archivo se conserva solo como referencia histórica y para no romper
     imports legados. NO conectar al pipeline de entrenamiento ni al backend.
 """
+
+import warnings
+warnings.warn(
+    "inference.py está DEPRECADO. Use inference_engine.py para producción.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 import numpy as np
 
@@ -26,6 +33,8 @@ HAND_COORDS   = 3   # x, y, z
 NUM_FEATURES  = len(POSE_UPPER_INDICES) * POSE_COORDS + HAND_LANDMARKS * HAND_COORDS * 2  # 178
 SEQUENCE_LENGTH = 15  # frames
 
+__all__ = ["SignLanguagePredictor"]
+
 
 class SignLanguagePredictor:
     """
@@ -37,6 +46,11 @@ class SignLanguagePredictor:
     """
 
     def __init__(self):
+        warnings.warn(
+            "SignLanguagePredictor está DEPRECADO. Use InferenceEngine desde inference_engine.py.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         self.sequence: list = []
         self.sequence_length = SEQUENCE_LENGTH
         self.threshold = 0.8
@@ -108,12 +122,6 @@ class SignLanguagePredictor:
         self.sequence = self.sequence[-self.sequence_length:]
 
         if len(self.sequence) == self.sequence_length:
-            # ── Inferencia real (descomentar cuando el modelo esté listo) ──
-            # from models.inference_engine import InferenceEngine
-            # engine = InferenceEngine("./exported_model")
-            # result = engine.predict(batch_of_15_frame_dicts)
-
-            # ── Mock para desarrollo ───────────────────────────────────────
             import random
             mock_res = random.choice(self.actions)
             self.sequence = []

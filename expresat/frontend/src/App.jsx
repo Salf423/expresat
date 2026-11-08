@@ -8,6 +8,7 @@ import Learn from './pages/Learn';
 import About from './pages/About';
 import Auth from './pages/Auth';
 import BackgroundParticles from './components/BackgroundParticles';
+import ErrorBoundary from './components/ErrorBoundary';
 import { ThemeProvider } from './context/ThemeContext';
 
 function App() {
@@ -20,7 +21,17 @@ function App() {
           <main style={{ flex: '1 0 auto', paddingTop: '80px', display: 'flex', flexDirection: 'column' }}>
             <Routes>
               <Route path="/" element={<Home />} />
-              <Route path="/translator" element={<Translator />} />
+              <Route
+                path="/translator"
+                element={
+                  <ErrorBoundary
+                    fallback={<p style={{ padding: '2rem', textAlign: 'center' }}>Error en el traductor</p>}
+                    onRecovery={() => window.location.reload()}
+                  >
+                    <Translator />
+                  </ErrorBoundary>
+                }
+              />
               <Route path="/learn" element={<Learn />} />
               <Route path="/about" element={<About />} />
               <Route path="/auth" element={<Auth />} />
