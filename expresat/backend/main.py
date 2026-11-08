@@ -349,6 +349,23 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
             if msg_type == "ping":
                 await manager.send_personal({"type": "pong"}, websocket)
 
+            # ----- AUTH (acknowledge auth message from client) -----
+            elif msg_type == "auth":
+                client_token = data.get("token")
+                # Token already validated at handshake if Query param provided;
+                # otherwise validate here if needed
+                token_user = verify_supabase_token(client_token) if client_token else user
+                if token_user:
+                    await manager.send_personal({
+                        "type": "auth_ack",
+                        "payload": {"authenticated": True, "user_id": token_user.get("id")}
+                    }, websocket)
+                else:
+                    await manager.send_personal({
+                        "type": "error",
+                        "payload": "Authentication failed"
+                    }, websocket)
+
             # ----- INFERENCE -----
             elif msg_type == "inference":
                 payload = data.get("payload")

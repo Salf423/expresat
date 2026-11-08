@@ -65,13 +65,15 @@ export class ApiService {
 
         // Final endpoints — paths are derived from canonical constant, not hardcoded
         const healthUrl = `${origin}/health`;
-        // C4: Use canonical WS endpoint constant /ws/translate, token sent via auth message
-        const wsUrl = `${wsProtocol}//${host}${ApiService.WS_ENDPOINT}`;
+        // C4: Use canonical WS endpoint constant /ws/translate, token sent via query param + auth message
+        const effectiveToken = token || (typeof window !== 'undefined' ? localStorage.getItem('supabaseToken') : null);
+        const queryParam = effectiveToken ? `?token=${encodeURIComponent(effectiveToken)}` : '';
+        const wsUrl = `${wsProtocol}//${host}${ApiService.WS_ENDPOINT}${queryParam}`;
 
         console.log('[ApiService] health check →', healthUrl);
         // Mask token in log - avoid printing full tokens
-        const tokenSafe = token && token.length > 0 ? token.substring(0, 20) + "..." : "vacío";
-        console.log('[ApiService] websocket    →', wsUrl, "(token:", tokenSafe, ")");
+        const tokenSafe = effectiveToken && effectiveToken.length > 0 ? effectiveToken.substring(0, 20) + "..." : "vacío";
+        console.log('[ApiService] websocket    →', `${wsProtocol}//${host}${ApiService.WS_ENDPOINT}`, "(token:", tokenSafe, ")");
 
         // ── Wake-up Render container ───────────────────────────────────────────
         this.updateStatus('Despertando servidor...', 'status-offline');
@@ -121,6 +123,8 @@ export class ApiService {
                 const latency = Math.round(performance.now() - this.lastPingTime);
                 const latencyEl = document.getElementById('latency-counter');
                 if (latencyEl) latencyEl.innerText = `Latencia: ${latency} ms`;
+            } else if (data.type === 'auth_ack') {
+                console.log('[ApiService] Autenticación confirmada por el servidor:', data.payload);
             } else if ((data.type === 'translation' || data.type === 'telemetry') && this.onMessageCallback) {
                 this.onMessageCallback(data.payload);
             }
