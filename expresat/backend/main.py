@@ -48,12 +48,14 @@ MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
 
 # CORS origins: whitelist segura por defecto, extensible vía variable de entorno
+# TODO: Añadir https://ecpresatt.netlify.app al desplegar en Render (el typo 'ec' vs 'ex' es la causa del 403 CORS)
 CORS_ORIGINS_DEFAULT = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "https://api.expresat.cloud",
     "https://expresat.netlify.app",
+    "https://ecpresatt.netlify.app",
 ]
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", ",".join(CORS_ORIGINS_DEFAULT)).split(",")
 
@@ -309,7 +311,14 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
     # --- Verify authentication ---
     user = verify_supabase_token(token)
     if not user:
-        await websocket.close(code=1008, reason="Invalid or missing token")
+        # Log the specific rejection reason before closing
+        reason = "Invalid or missing token"
+        if not token:
+            reason = "Token ausente (no provided)"
+        elif token and not user:
+            reason = "Token inválido o expirado"
+        print(f"[WS REJECT] Origin not logged yet - {reason} - closing connection code=1008")
+        await websocket.close(code=1008, reason=reason)
         return
 
     # --- Accept connection ---
