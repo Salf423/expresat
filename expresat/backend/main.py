@@ -255,30 +255,22 @@ def verify_supabase_token(token: str) -> Optional[dict]:
     Verifies a Supabase JWT token.
 
     In development (FASTAPI_ENV=development): accepts any non-empty token as fallback.
-    In DEMO_MODE: accepts connections without valid token (public demo).
-    In production with Supabase configured: requires valid JWT.
+    In production: requires valid token from Supabase (rejects mock/empty tokens).
     """
+    if not token:
+        return None
+
     env = os.getenv("FASTAPI_ENV", "production")
 
     # --- DEVELOPMENT: Conditional bypass only when explicitly in dev mode ---
     if env == "development":
-        # Accept any token (even empty) as fallback for development
         return {"id": "dev-user", "email": "dev@expresat.local"}
 
-    # --- DEMO MODE: Accept without valid token (public demo) ---
-    # [FIX-MP-2] En modo demo, permitir conexiones sin auth en lugar de
-    # rechazarlas con 403. Esto desbloquea el flujo WS mientras no haya
-    # Supabase configurado en producción.
-    if DEMO_MODE:
-        print(f"[WS AUTH] DEMO_MODE=true: accepting connection without token verification. "
-              f"Token provided: {'yes' if token else 'no'}")
-        return {"id": "demo-user", "email": "demo@expresat.local", "demo": True}
-
-    # --- PRODUCTION: Require valid token ---
-    if not token:
-        print("[WS REJECT] Token ausente (no provided) in production mode")
+    # --- PRODUCTION: Reject development fallback tokens ---
+    if token in ("mock_token", "demo_fallback_token"):
         return None
 
+    # --- PRODUCTION: Require valid token from Supabase ---
     # TODO: Uncomment this block when Supabase credentials are configured in Render
     # try:
     #     from supabase import create_client
@@ -292,9 +284,8 @@ def verify_supabase_token(token: str) -> Optional[dict]:
     #     return None
 
     # In production without valid Supabase config, reject and log warning
-    print(f"[WARN] verify_supabase_token: Supabase not configured in production. "
-          f"Token provided: {token[:20] if token else 'None'}... (truncated). "
-          f"Set EXPRESAT_DEMO_MODE=true or configure Supabase credentials.")
+    print(f"[WARN] verify_supabase_token: Supabase verification required in production. "
+          f"Token provided: {token[:20]}... (truncated).")
     return None
 
 
@@ -323,6 +314,11 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
     """
     # --- Verify authentication ---
     user = verify_supabase_token(token)
+    if not user and DEMO_MODE:
+        # En modo DEMO_MODE, permitir acceso de demostración sin autenticación estricta
+        user = {"id": "demo-user", "email": "demo@expresat.local", "demo": True}
+        print("[WS AUTH] DEMO_MODE=true: sesión de demostración pública iniciada")
+
     if not user:
         # [FIX-MP-2] Log the specific rejection reason with Origin for diagnosis
         origin = websocket.headers.get("origin", "unknown")
