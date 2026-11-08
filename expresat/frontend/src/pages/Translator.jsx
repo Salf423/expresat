@@ -21,7 +21,7 @@ const Translator = () => {
   const [isDemo, setIsDemo] = useState(false);
   // H5: Use authenticated token if session exists, degrade to development token with warning
   const [usingDemoToken, setUsingDemoToken] = useState(false);
-  const [_authWarning, setAuthWarning] = useState(false);
+  const [authWarning, setAuthWarning] = useState(false);
   // [DEBUG] Panel de diagnóstico oculto — activar con Ctrl+Shift+D
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugData, setDebugData] = useState(null);
@@ -84,8 +84,8 @@ const Translator = () => {
     }
   }, []);
 
-  // Initialize ApiService once (stable ref — no re-renders)
-  if (!apiRef.current) {
+  // Initialize ApiService and WebSocket connection on mount
+  React.useEffect(() => {
     const isLocalHost = typeof window !== 'undefined' &&
       (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     const defaultEnv = isLocalHost ? 'Local' : 'Cloud';
@@ -155,7 +155,12 @@ const Translator = () => {
     });
 
     apiRef.current = api;
-  }
+
+    return () => {
+      api.disconnect?.();
+      apiRef.current = null;
+    };
+  }, []);
 
   // Off-main-thread MediaPipe + EMA filter + canvas drawing + tracking
   useMediaPipe(

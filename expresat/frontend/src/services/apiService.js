@@ -176,7 +176,7 @@ export class ApiService {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             const delay = this.baseDelay * Math.pow(2, this.reconnectAttempts);
             console.log(`Reconectando en ${delay}ms... (Intento ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})`);
-            setTimeout(() => {
+            this.reconnectTimeout = setTimeout(() => {
                 this.reconnectAttempts++;
                 this.connect(token);
             }, delay);
@@ -187,6 +187,23 @@ export class ApiService {
             if (this.onStatusChangeCallback) {
                 this.onStatusChangeCallback('Máximo intentos de reconexión alcanzados', 'status-offline');
             }
+        }
+    }
+
+    /**
+     * Cierra limpiamente la conexión WebSocket y cancela temporizadores.
+     */
+    disconnect() {
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+        }
+        clearInterval(this.pingInterval);
+        if (this.ws) {
+            this.ws.onclose = null;
+            this.ws.onerror = null;
+            this.ws.close();
+            this.ws = null;
         }
     }
 
