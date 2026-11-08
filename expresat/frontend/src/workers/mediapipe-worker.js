@@ -23,11 +23,12 @@ import {
     FilesetResolver,
 } from '@mediapipe/tasks-vision';
 
-// ─── WASM CDN URL ─────────────────────────────────────────────────────────────
-// ⚠️  CRITICAL: The CDN version MUST match the installed npm package version.
+// ─── WASM URL ─────────────────────────────────────────────────────────────
+// ⚠️  CRITICAL: The WASM version MUST match the installed npm package version.
 //   Installed:  @mediapipe/tasks-vision@1.0.1  (check package.json)
-const WASM_URL_PRIMARY = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
-const WASM_URL_FALLBACK = 'https://unpkg.com/@mediapipe/tasks-vision@1.0.1/wasm';
+//   Served:     Local WASM files from /public/wasm/
+const WASM_URL_PRIMARY = '/wasm';
+const WASM_URL_FALLBACK = '/wasm';
 
 // ─── Model URLs (versioned Google Storage paths) ──────────────────────────────
 const HAND_MODEL_URL =
