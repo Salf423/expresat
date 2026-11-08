@@ -48,7 +48,8 @@ MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
 
 # CORS origins: whitelist segura por defecto, extensible vía variable de entorno
-# TODO: Añadir https://ecpresatt.netlify.app al desplegar en Render (el typo 'ec' vs 'ex' es la causa del 403 CORS)
+# [FIX-MP-2] Ambos dominios Netlify (expresat y ecpresatt) incluidos.
+# En producción, se puede sobreescribir con la env var CORS_ORIGINS.
 CORS_ORIGINS_DEFAULT = [
     "http://localhost:3000",
     "http://localhost:5173",
@@ -253,22 +254,32 @@ def verify_supabase_token(token: str) -> Optional[dict]:
     """
     Verifies a Supabase JWT token.
 
-    In production: requires valid token from Supabase.
     In development (FASTAPI_ENV=development): accepts any non-empty token as fallback.
-    If in production without configured Supabase, rejects with warning log.
+    In DEMO_MODE: accepts connections without valid token (public demo).
+    In production with Supabase configured: requires valid JWT.
     """
-    if not token:
-        return None
-
     env = os.getenv("FASTAPI_ENV", "production")
 
     # --- DEVELOPMENT: Conditional bypass only when explicitly in dev mode ---
     if env == "development":
-        # Accept any non-empty token as fallback for development
+        # Accept any token (even empty) as fallback for development
         return {"id": "dev-user", "email": "dev@expresat.local"}
 
+    # --- DEMO MODE: Accept without valid token (public demo) ---
+    # [FIX-MP-2] En modo demo, permitir conexiones sin auth en lugar de
+    # rechazarlas con 403. Esto desbloquea el flujo WS mientras no haya
+    # Supabase configurado en producción.
+    if DEMO_MODE:
+        print(f"[WS AUTH] DEMO_MODE=true: accepting connection without token verification. "
+              f"Token provided: {'yes' if token else 'no'}")
+        return {"id": "demo-user", "email": "demo@expresat.local", "demo": True}
+
     # --- PRODUCTION: Require valid token ---
-    # TODO: Uncomment this block to connect everything to the DB
+    if not token:
+        print("[WS REJECT] Token ausente (no provided) in production mode")
+        return None
+
+    # TODO: Uncomment this block when Supabase credentials are configured in Render
     # try:
     #     from supabase import create_client
     #     supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -276,12 +287,14 @@ def verify_supabase_token(token: str) -> Optional[dict]:
     #     if user and user.user:
     #         return {"id": user.user.id, "email": user.user.email}
     #     return None
-    # except Exception:
+    # except Exception as e:
+    #     print(f"[WS REJECT] Supabase verification failed: {e}")
     #     return None
 
     # In production without valid Supabase config, reject and log warning
-    print(f"[WARN] verify_supabase_token: Token verification required in production mode. "
-          f"Token provided: {token[:20] if token else 'None'}... (truncated for log safety)")
+    print(f"[WARN] verify_supabase_token: Supabase not configured in production. "
+          f"Token provided: {token[:20] if token else 'None'}... (truncated). "
+          f"Set EXPRESAT_DEMO_MODE=true or configure Supabase credentials.")
     return None
 
 
@@ -311,13 +324,12 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
     # --- Verify authentication ---
     user = verify_supabase_token(token)
     if not user:
-        # Log the specific rejection reason before closing
-        reason = "Invalid or missing token"
-        if not token:
-            reason = "Token ausente (no provided)"
-        elif token and not user:
-            reason = "Token inválido o expirado"
-        print(f"[WS REJECT] Origin not logged yet - {reason} - closing connection code=1008")
+        # [FIX-MP-2] Log the specific rejection reason with Origin for diagnosis
+        origin = websocket.headers.get("origin", "unknown")
+        reason = "Token ausente (no provided)" if not token else "Token inválido o expirado"
+        print(f"[WS REJECT] Origin={origin} | {reason} | "
+              f"DEMO_MODE={DEMO_MODE} | FASTAPI_ENV={os.getenv('FASTAPI_ENV', 'production')} | "
+              f"closing connection code=1008")
         await websocket.close(code=1008, reason=reason)
         return
 
