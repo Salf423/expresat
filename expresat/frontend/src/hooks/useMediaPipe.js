@@ -173,6 +173,23 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             };
         }
 
+        // ── Helper: Browser compatibility for video frame callback ──────────
+        function scheduleNextCapture(cb) {
+            if (typeof video.requestVideoFrameCallback === 'function') {
+                return video.requestVideoFrameCallback(cb);
+            }
+            return requestAnimationFrame(cb);
+        }
+
+        function cancelScheduledCapture(id) {
+            if (id == null) return;
+            if (typeof video.cancelVideoFrameCallback === 'function') {
+                video.cancelVideoFrameCallback(id);
+            } else {
+                cancelAnimationFrame(id);
+            }
+        }
+
         // ── 3. Handle Worker messages ─────────────────────────────────────────
         worker.onmessage = (event) => {
             const { type } = event.data;
@@ -181,7 +198,7 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                 // Worker is initialized — begin sending frames for inference.
                 // Camera is already running at this point.
                 console.log('[useMediaPipe] Worker ready — inference enabled');
-                rafIdRef.current = video.requestVideoFrameCallback(captureFrame);
+                rafIdRef.current = scheduleNextCapture(captureFrame);
                 return;
             }
 
@@ -258,7 +275,7 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
         function captureFrame(now, _meta) {
             if (document.hidden) {
                 // Reschedule — visibility listener will re-enable when visible
-                rafIdRef.current = video.requestVideoFrameCallback(captureFrame);
+                rafIdRef.current = scheduleNextCapture(captureFrame);
                 return;
             }
 
@@ -282,7 +299,7 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             }
 
             // Schedule next capture
-            rafIdRef.current = video.requestVideoFrameCallback(captureFrame);
+            rafIdRef.current = scheduleNextCapture(captureFrame);
         }
 
         // ── 5. Draw loop (runs at rAF rate, always — even if Worker failed) ──
@@ -372,10 +389,9 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
 
         // ── 7. Cleanup on unmount ─────────────────────────────────────────────
         return () => {
-            // Stop capture loop
-            if (rafIdRef.current != null) {
-                video.cancelVideoFrameCallback(rafIdRef.current);
-            }
+            // Stop capture loop with browser fallback
+            cancelScheduledCapture(rafIdRef.current);
+            rafIdRef.current = null;
 
             // Stop draw loop
             cancelAnimationFrame(drawRafId);

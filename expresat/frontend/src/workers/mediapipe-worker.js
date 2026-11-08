@@ -25,16 +25,9 @@ import {
 
 // ─── WASM CDN URL ─────────────────────────────────────────────────────────────
 // ⚠️  CRITICAL: The CDN version MUST match the installed npm package version.
-//
 //   Installed:  @mediapipe/tasks-vision@1.0.1  (check package.json)
-//   CDN WASM:   @mediapipe/tasks-vision@1.0.1  ← must be identical
-//
-// Mismatch between the JS runtime (bundled by Vite from node_modules) and the
-// WASM binaries (fetched from CDN at runtime) causes FilesetResolver to fail
-// with "ModuleFactory not set" because the WASM module signature doesn't match.
-//
-// If you upgrade the npm package, update this URL to match.
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
+const WASM_URL_PRIMARY = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
+const WASM_URL_FALLBACK = 'https://unpkg.com/@mediapipe/tasks-vision@1.0.1/wasm';
 
 // ─── Model URLs (versioned Google Storage paths) ──────────────────────────────
 const HAND_MODEL_URL =
@@ -48,6 +41,22 @@ let handLandmarker = null;
 let poseLandmarker = null;
 let initialized = false;
 let initPromise = null;
+
+// Helper to create landmarker with GPU -> CPU fallback
+async function createWithFallback(createFn, vision, options) {
+    try {
+        return await createFn(vision, {
+            ...options,
+            baseOptions: { ...options.baseOptions, delegate: 'GPU' }
+        });
+    } catch (gpuErr) {
+        console.warn('[mediapipe-worker] GPU delegate failed, falling back to CPU:', gpuErr);
+        return await createFn(vision, {
+            ...options,
+            baseOptions: { ...options.baseOptions, delegate: 'CPU' }
+        });
+    }
+}
 
 // ─── Hand-visibility heuristic ───────────────────────────────────────────────
 // Pose landmark indices that indicate a hand may be in frame:
@@ -74,17 +83,21 @@ async function initialize() {
 
     initPromise = (async () => {
         try {
-            console.log('[mediapipe-worker] Loading WASM from:', WASM_URL);
-            const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-            console.log('[mediapipe-worker] WASM loaded — creating landmarkers...');
+            console.log('[mediapipe-worker] Loading WASM from primary CDN:', WASM_URL_PRIMARY);
+            let vision;
+            try {
+                vision = await FilesetResolver.forVisionTasks(WASM_URL_PRIMARY);
+            } catch (primaryErr) {
+                console.warn('[mediapipe-worker] Primary WASM CDN failed, attempting fallback:', primaryErr);
+                vision = await FilesetResolver.forVisionTasks(WASM_URL_FALLBACK);
+            }
+            console.log('[mediapipe-worker] WASM loaded — creating landmarkers with GPU/CPU fallback...');
 
             // Both models created in parallel to halve load time
             [handLandmarker, poseLandmarker] = await Promise.all([
-                HandLandmarker.createFromOptions(vision, {
+                createWithFallback(HandLandmarker.createFromOptions, vision, {
                     baseOptions: {
                         modelAssetPath: HAND_MODEL_URL,
-                        // GPU delegate → auto-fallback to CPU on unsupported devices
-                        delegate: 'GPU',
                     },
                     runningMode: 'VIDEO',
                     numHands: 2,
@@ -92,10 +105,9 @@ async function initialize() {
                     minHandPresenceConfidence: 0.5,
                     minTrackingConfidence: 0.5,
                 }),
-                PoseLandmarker.createFromOptions(vision, {
+                createWithFallback(PoseLandmarker.createFromOptions, vision, {
                     baseOptions: {
                         modelAssetPath: POSE_MODEL_URL,
-                        delegate: 'GPU',
                     },
                     runningMode: 'VIDEO',
                     numPoses: 1,
