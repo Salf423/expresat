@@ -17,6 +17,8 @@ const Translator = () => {
   const [statusClass, setStatusClass] = useState('status-offline');
   const [fps, setFps] = useState(0);
   const [copied, setCopied] = useState(false);
+  // [FIX-MP-1] Estado para modo demo: viene de /health (demo_mode) y de mensajes WS (is_demo)
+  const [isDemo, setIsDemo] = useState(false);
   // H5: Use authenticated token if session exists, degrade to development token with warning
   const [usingDemoToken, setUsingDemoToken] = useState(false);
   const [_authWarning, setAuthWarning] = useState(false);
