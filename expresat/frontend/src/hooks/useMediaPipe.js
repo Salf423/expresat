@@ -231,11 +231,11 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                 // Reset the watchdog: we just got a live result
                 clearTimeout(fpsWatchdogRef.current);
                 fpsWatchdogRef.current = setTimeout(() => {
-                    // No results for 2 seconds → Worker stalled or not ready yet
+                    // No results for 3.5 seconds → Worker stalled or no hands/pose in frame
                     onFpsRef.current?.(0);
                     fpsCountRef.current = 0;
                     fpsTimeRef.current = performance.now();
-                }, 2000);
+                }, 3500);
 
                 // Accumulate frames into a 15-frame sliding window (1.0s at 15 FPS)
                 const currentFramePayload = buildPayload(smoothed);

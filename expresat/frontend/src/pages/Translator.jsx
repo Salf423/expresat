@@ -96,21 +96,20 @@ const Translator = () => {
 
     const api = new ApiService(wsUrl);
     
-    // H5: Determinar token de autenticación - usar token real si hay sesión,
-    //     degradar a demo con aviso visual en lugar de 'mock_token' ciego
+    // Determinar token de autenticación:
+    // Si hay token en sesión, usarlo. Si no, en modo demo o sin login, pasar null
+    // para evitar enviar 'demo_fallback_token' falso que el servidor rechaza en producción.
     let authToken = null;
-    
-    // Intentar obtener token de sesión (simulación - en producción vendría de auth state)
-    const storedToken = localStorage.getItem('supabaseToken');
-    if (storedToken && storedToken !== 'mock_token') {
+    const storedToken = typeof window !== 'undefined' ? localStorage.getItem('supabaseToken') : null;
+    if (storedToken && storedToken !== 'demo_fallback_token') {
       authToken = storedToken;
       setUsingDemoToken(false);
       setAuthWarning(false);
     } else {
-      // Modo demo con aviso visual
-      authToken = 'demo_fallback_token';
+      // Sin sesión iniciada: modo demo público sin token
+      authToken = null;
       setUsingDemoToken(true);
-      setAuthWarning(true);
+      setAuthWarning(false);
     }
     
     api.connect(authToken);
