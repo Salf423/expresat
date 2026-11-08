@@ -145,6 +145,8 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
         const canvas = canvasRef.current;
         if (!video || !canvas) return;
 
+        let isCancelled = false;
+
         const ctx = canvas.getContext('2d');
         filterRef.current = new LandmarkEMAFilter(alpha);
         trackerRef.current = new LandmarkTracker({
@@ -169,7 +171,14 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             console.error('[useMediaPipe] Failed to create Worker:', err);
             // Camera is already running from startCamera() above — just return cleanup.
             return () => {
-                streamRef.current?.getTracks().forEach(t => t.stop());
+                isCancelled = true;
+                if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(t => t.stop());
+                    streamRef.current = null;
+                }
+                if (video) {
+                    video.srcObject = null;
+                }
             };
         }
 
@@ -352,10 +361,17 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
         // ── 6. Acquire camera and start draw loop ─────────────────────────────
         // captureFrame is NOT started here — it starts when Worker sends 'ready'.
         // drawLoop starts immediately so the user sees the camera image right away.
+
         async function startCamera() {
             try {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                     throw new Error('getUserMedia no es soportado o el contexto no es seguro (se requiere HTTPS).');
+                }
+
+                // Detener cualquier stream anterior antes de adquirir uno nuevo (StrictMode)
+                if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(t => t.stop());
+                    streamRef.current = null;
                 }
 
                 const stream = await navigator.mediaDevices.getUserMedia({
@@ -370,25 +386,44 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
                     audio: false,
                 });
 
+                // Si el componente se desmontó mientras esperaba getUserMedia, liberar tracks inmediatamente
+                if (isCancelled) {
+                    stream.getTracks().forEach(t => t.stop());
+                    return;
+                }
+
                 streamRef.current = stream;
                 video.srcObject = stream;
 
-                // play() must be called before requestVideoFrameCallback works.
-                // On mobile, autoPlay + muted + playsInline attributes on the
-                // <video> element are required for this to resolve without user gesture.
-                await video.play();
+                // play() debe ser llamado antes de que requestVideoFrameCallback funcione.
+                // Manejar AbortError silenciosamente (ocurre típicamente por el doble montaje de StrictMode)
+                try {
+                    await video.play();
+                } catch (playErr) {
+                    if (playErr.name === 'AbortError') {
+                        // Desmontaje rápido o interrupción de reproducción normal bajo StrictMode
+                        return;
+                    }
+                    throw playErr;
+                }
+
+                if (isCancelled) return;
 
                 // Draw loop starts immediately — user sees camera image at once.
                 // captureFrame (inference) will be activated by Worker 'ready' event.
                 drawLoop();
 
             } catch (err) {
+                if (isCancelled || err.name === 'AbortError') return;
                 console.error('[useMediaPipe] Camera error:', err);
+                drawLoop();
             }
         }
 
         // ── 7. Cleanup on unmount ─────────────────────────────────────────────
         return () => {
+            isCancelled = true;
+
             // Stop capture loop with browser fallback
             cancelScheduledCapture(rafIdRef.current);
             rafIdRef.current = null;
@@ -396,8 +431,15 @@ export function useMediaPipe(videoRef, canvasRef, onLandmarks, onFps, options = 
             // Stop draw loop
             cancelAnimationFrame(drawRafId);
 
-            // Stop camera stream
-            streamRef.current?.getTracks().forEach(t => t.stop());
+            // Stop camera stream & release tracks
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(t => t.stop());
+                streamRef.current = null;
+            }
+
+            if (video) {
+                video.srcObject = null;
+            }
 
             // Terminate Worker
             worker.postMessage({ type: 'destroy' });
