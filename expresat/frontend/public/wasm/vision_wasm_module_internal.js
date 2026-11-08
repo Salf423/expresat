@@ -8360,13 +8360,10 @@ function UseBottomLeftGpuOrigin() {
 function custom_emscripten_dbgn(str, len) {
   if (typeof (dbg) !== "undefined") {
     dbg(UTF8ToString(str, len));
-  } else {
-    if (typeof (custom_dbg) === "undefined") {
-      function custom_dbg(text) {
-        console.warn.apply(console, arguments);
-      }
-    }
+  } else if (typeof (custom_dbg) !== "undefined") {
     custom_dbg(UTF8ToString(str, len));
+  } else {
+    console.warn(UTF8ToString(str, len));
   }
 }
 

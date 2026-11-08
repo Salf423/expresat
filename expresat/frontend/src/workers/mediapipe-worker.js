@@ -43,6 +43,9 @@ let poseLandmarker = null;
 let initialized = false;
 let initPromise = null;
 
+// Polyfill/safe logger for Emscripten / WebGL debug messages
+self.custom_dbg = console.warn.bind(console);
+
 // Helper to create landmarker with GPU -> CPU fallback
 async function createWithFallback(createFn, vision, options) {
     try {
@@ -93,6 +96,20 @@ async function initialize() {
                 vision = await FilesetResolver.forVisionTasks(WASM_URL_FALLBACK);
             }
             console.log('[mediapipe-worker] WASM loaded — creating landmarkers with GPU/CPU fallback...');
+
+            // Protect ModuleFactory against being cleared to void 0 by subsequent creations or fallbacks
+            if (self.ModuleFactory) {
+                let _factory = self.ModuleFactory;
+                try {
+                    Object.defineProperty(self, 'ModuleFactory', {
+                        get() { return _factory; },
+                        set(v) { if (v) _factory = v; },
+                        configurable: true
+                    });
+                } catch {
+                    // Ignore if already defined
+                }
+            }
 
             // Both models created in parallel to halve load time
             [handLandmarker, poseLandmarker] = await Promise.all([
