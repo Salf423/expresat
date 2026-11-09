@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Check, Cloud, Monitor } from 'lucide-react';
+import { CONFIG } from '../config.js';
 
 const EnvironmentSelector = () => {
   const isLocalHost = typeof window !== 'undefined' &&
@@ -144,7 +145,7 @@ const EnvironmentSelector = () => {
               <Cloud size={16} color="var(--success-color)" />
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Nube (Prod)</span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>wss://api.expresat.cloud</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{CONFIG.wsUrlProd}</span>
               </div>
             </div>
             {!isLocal && <Check size={16} color="var(--accent-primary)" />}

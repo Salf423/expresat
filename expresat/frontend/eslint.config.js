@@ -39,4 +39,14 @@ export default [
       },
     },
   },
+  {
+    files: ['src/**/*.test.{js,jsx}', 'e2e/**/*.{js,jsx}'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.browser,
+        ...globals.es2021,
+      },
+    },
+  },
 ];

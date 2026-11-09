@@ -1,88 +1,125 @@
 import { createClient } from '@supabase/supabase-js';
-// All Supabase Auth methods (login, register, logout, etc.) work with the anon key by design.
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+import { CONFIG } from '../config.js';
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+/**
+ * Cliente Supabase inicializado únicamente cuando VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY
+ * están configurados con valores válidos en src/config.js.
+ * En modo demo sin credenciales de Supabase, `supabase` es `null` y la aplicación
+ * funciona 100% en el navegador sin lanzar errores al cargar.
+ */
+export const supabase = CONFIG.supabaseConfigured
+  ? createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey)
+  : null;
+
+function requireSupabaseClient() {
+  if (!supabase) {
     throw new Error(
-        '[AuthService] Missing Supabase environment variables.\n' +
-        'Make sure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in your .env file.'
+      'La autenticación con Supabase no está configurada en este entorno (Modo Demo Local activo). ' +
+        'Configura VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en expresat/frontend/.env para habilitar el inicio de sesión.'
     );
+  }
+  return supabase;
 }
-
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export class AuthService {
-    /**
-     * Asynchronously gets the current user session.
-     * Returns null if there is no active session (user not logged in).
-     */
-    async getSession() {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        return data.session;
-    }
+  /**
+   * Indica si el cliente de autenticación está disponible.
+   */
+  isConfigured() {
+    return Boolean(supabase);
+  }
 
-    /**
-     * Authenticates a user via email and password.
-     * Returns { user, session } on success.
-     */
-    async login(email, password) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-        });
-        if (error) throw error;
-        return data;
-    }
+  /**
+   * Obtiene de forma asíncrona la sesión actual del usuario.
+   * Devuelve null si no hay sesión activa o si Supabase no está configurado (Modo Demo).
+   */
+  async getSession() {
+    if (!supabase) return null;
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    return data.session;
+  }
 
-    /**
-     * Registers a new user on the platform, including their full name.
-     * If email confirmation is enabled in Supabase, the session will be null
-     * until the user confirms their email.
-     */
-    async register(email, password, fullName) {
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                data: {
-                    full_name: fullName,
-                }
-            }
-        });
-        if (error) throw error;
-        return data;
+  /**
+   * Obtiene el access_token JWT actual si existe una sesión válida, o null en caso contrario.
+   */
+  async getAccessToken() {
+    if (!supabase) return null;
+    try {
+      const session = await this.getSession();
+      return session?.access_token || null;
+    } catch (err) {
+      console.warn('[AuthService] No se pudo recuperar la sesión activa:', err.message);
+      return null;
     }
+  }
 
-    /**
-     * Sends a password recovery email.
-     * The user will be redirected to /reset-password after clicking the link.
-     */
-    async resetPassword(email) {
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${window.location.origin}/reset-password`,
-        });
-        if (error) throw error;
-    }
+  /**
+   * Autentica a un usuario mediante correo y contraseña.
+   */
+  async login(email, password) {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+    return data;
+  }
 
-    /**
-     * Closes the active user session and clears local storage tokens.
-     */
-    async logout() {
-        const { error } = await supabase.auth.signOut();
-        if (error) throw error;
-    }
+  /**
+   * Registra un nuevo usuario en la plataforma.
+   */
+  async register(email, password, fullName) {
+    const client = requireSupabaseClient();
+    const { data, error } = await client.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
+        },
+      },
+    });
+    if (error) throw error;
+    return data;
+  }
 
-    /**
-     * Subscribes a callback to authentication state changes.
-     * Events include: SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, USER_UPDATED.
-     * Returns an unsubscribe function — call it on component unmount to avoid memory leaks.
-     */
-    onAuthStateChange(callback) {
-        return supabase.auth.onAuthStateChange((event, session) => {
-            callback(event, session);
-        });
+  /**
+   * Envía un correo de recuperación de contraseña.
+   */
+  async resetPassword(email) {
+    const client = requireSupabaseClient();
+    const { error } = await client.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) throw error;
+  }
+
+  /**
+   * Cierra la sesión activa del usuario.
+   */
+  async logout() {
+    if (!supabase) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+  }
+
+  /**
+   * Suscribe un callback a los cambios de estado de autenticación.
+   */
+  onAuthStateChange(callback) {
+    if (!supabase) {
+      return {
+        data: {
+          subscription: {
+            unsubscribe: () => {},
+          },
+        },
+      };
     }
+    return supabase.auth.onAuthStateChange((event, session) => {
+      callback(event, session);
+    });
+  }
 }
-
