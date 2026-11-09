@@ -48,4 +48,8 @@ export {
   buildTrajectoryContext,
 } from './signs/index.js';
 
-export { buildSyntheticHand, SYNTHETIC_PRESETS } from './syntheticHand.js';
+export {
+  buildSyntheticHand,
+  SYNTHETIC_PRESETS,
+  SYNTHETIC_NUMBERS,
+} from './syntheticHand.js';

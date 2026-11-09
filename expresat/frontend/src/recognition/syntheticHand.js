@@ -359,3 +359,125 @@ export const SYNTHETIC_PRESETS = Object.freeze({
       ...opts,
     }),
 });
+
+export const SYNTHETIC_NUMBERS = Object.freeze({
+  0: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'CIRCLE_O',
+      index: 'CIRCLE_O',
+      middle: 'CIRCLE_O',
+      ring: 'CIRCLE_O',
+      pinky: 'CIRCLE_O',
+      ...opts,
+    }),
+  1: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: false,
+      ring: false,
+      pinky: false,
+      ...opts,
+    }),
+  2: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: false,
+      pinky: false,
+      ...opts,
+    }),
+  3: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  4: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: true,
+      adducted: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  5: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: true,
+      ...opts,
+    }),
+  6: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: false,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  7: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: true,
+      middle: false,
+      ring: false,
+      pinky: false,
+      rotateDeg: 45,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  8: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: true,
+      middle: true,
+      ring: false,
+      pinky: false,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  9: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: true,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  10: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const stepMs = 1000 / fps;
+    const frames = [];
+    for (let i = 0; i < 12; i++) {
+      const palmFacing = i < 6 ? 'FRONT' : 'BACK';
+      frames.push(
+        buildSyntheticHand({
+          thumb: true,
+          index: true,
+          middle: true,
+          ring: true,
+          pinky: true,
+          palmFacing,
+          timestampMs: i * stepMs,
+          ...opts,
+        })
+      );
+    }
+    return frames;
+  },
+});

@@ -115,6 +115,10 @@ function scoreOrientation(orientSpec, features) {
     faceScore = orientSpec.palmFacing.includes(palmFacing) ? 1.0 : 0.0;
   }
 
+  if (orientSpec.required && (dirScore === 0 || faceScore === 0)) {
+    return 0;
+  }
+
   return dirScore * 0.65 + faceScore * 0.35;
 }
 

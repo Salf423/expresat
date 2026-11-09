@@ -210,11 +210,11 @@ export function extractHandOrientation(landmarks, normLandmarks, options = {}) {
   const palmAngleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
 
   let direction = 'OBLIQUE';
-  if (palmAngleDeg >= -130 && palmAngleDeg <= -50) {
+  if (palmAngleDeg >= -125 && palmAngleDeg <= -55) {
     direction = 'UP';
-  } else if (palmAngleDeg >= 50 && palmAngleDeg <= 130) {
+  } else if (palmAngleDeg >= 55 && palmAngleDeg <= 125) {
     direction = 'DOWN';
-  } else if (Math.abs(palmAngleDeg) <= 38 || Math.abs(palmAngleDeg) >= 142) {
+  } else if (Math.abs(palmAngleDeg) <= 25 || Math.abs(palmAngleDeg) >= 155) {
     direction = 'HORIZONTAL';
   }
 
