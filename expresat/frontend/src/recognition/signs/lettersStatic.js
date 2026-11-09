@@ -139,4 +139,87 @@ export const STATIC_LETTER_SIGNS = [
     pesos: { fingers: 0.45, orientation: 0.1, metrics: 0.45 },
     refineScore: (base) => Math.min(0.95, base * 0.96),
   },
+
+  // ============================================================================
+  // GRUPOS G2_INDICE_SOLO (D) y G3_PULGAR_INDICE (G, L)
+  // ============================================================================
+  {
+    id: 'LETRA_D',
+    label: 'D',
+    categoria: SIGN_CATEGORIES.LETRA,
+    tipo: SIGN_TYPES.ESTATICA,
+    fuente: 'imagenes_abecedario/d.png',
+    descripcion: 'Dedo índice extendido recto hacia arriba y punta del dedo medio tocando la punta del pulgar',
+    grupoConfundible: CONFUSABLE_GROUPS.G2_INDICE_SOLO,
+    estado: 'LISTA',
+    aliases: [],
+    orientacion: { directions: ['UP'], palmFacing: ['FRONT', 'SIDE'] },
+    dedos: {
+      thumb: 'NOT_EXTENDED',
+      index: 'EXTENDED',
+      middle: 'NOT_EXTENDED',
+      ring: 'TIGHTLY_CURLED',
+      pinky: 'TIGHTLY_CURLED',
+    },
+    metricas: [
+      { metric: 'thumbMiddleTipDist', min: 0, max: 0.3, slack: 0.05, weight: 2.0, required: true },
+    ],
+    pesos: { fingers: 0.5, orientation: 0.1, metrics: 0.4 },
+    refineScore: (base) => Math.min(0.95, base * 0.96),
+  },
+  {
+    id: 'LETRA_G',
+    label: 'G',
+    categoria: SIGN_CATEGORIES.LETRA,
+    tipo: SIGN_TYPES.ESTATICA,
+    fuente: 'imagenes_abecedario/g.png',
+    descripcion: 'Mano horizontal con dorso al frente, dedo índice apuntando de lado y pulgar extendido',
+    grupoConfundible: CONFUSABLE_GROUPS.G3_PULGAR_INDICE,
+    estado: 'LISTA',
+    aliases: [],
+    orientacion: { directions: ['HORIZONTAL'], palmFacing: ['BACK'], required: true },
+    dedos: {
+      thumb: 'EXTENDED',
+      index: 'EXTENDED',
+      middle: 'TIGHTLY_CURLED',
+      ring: 'TIGHTLY_CURLED',
+      pinky: 'TIGHTLY_CURLED',
+    },
+    metricas: [
+      { metric: 'thumbIndexAngleDeg', min: 25, max: 135, slack: 15, weight: 1.0 },
+    ],
+    pesos: { fingers: 0.55, orientation: 0.3, metrics: 0.15 },
+    refineScore: (base) => Math.min(0.95, base * 0.96),
+  },
+  {
+    id: 'LETRA_L',
+    label: 'L',
+    categoria: SIGN_CATEGORIES.LETRA,
+    tipo: SIGN_TYPES.ESTATICA,
+    fuente: 'imagenes_abecedario/l.png / Learn.jsx#L52',
+    descripcion: 'Dedo índice extendido verticalmente hacia arriba y pulgar extendido lateralmente en ángulo recto',
+    grupoConfundible: CONFUSABLE_GROUPS.G3_PULGAR_INDICE,
+    estado: 'LISTA',
+    aliases: ['Lunes'],
+    orientacion: { directions: ['ANY'], palmFacing: ['ANY'] },
+    dedos: {
+      thumb: 'EXTENDED',
+      index: 'EXTENDED',
+      middle: 'TIGHTLY_CURLED',
+      ring: 'TIGHTLY_CURLED',
+      pinky: 'TIGHTLY_CURLED',
+    },
+    metricas: [
+      { metric: 'thumbIndexAngleDeg', min: 38, max: 135, slack: 15, weight: 1.0 },
+    ],
+    pesos: { fingers: 0.75, metrics: 0.25 },
+    refineScore: (base, features) => {
+      const dir = features.orientation?.direction;
+      const face = features.orientation?.palmFacing;
+      if ((dir === 'HORIZONTAL' || dir === 'OBLIQUE') && face === 'BACK') {
+        return base * 0.72;
+      }
+      return Math.min(0.94, base * 0.94);
+    },
+  },
 ];

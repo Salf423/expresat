@@ -42,4 +42,30 @@ describe('Fase D — Letras Estáticas del Alfabeto LSM por Grupo Confundible', 
       expect(resS.details.margin).toBeGreaterThanOrEqual(0.05);
     });
   });
+
+  describe('Sub-fase D.2 — Grupos G2_INDICE_SOLO (D) y G3_PULGAR_INDICE (G, L)', () => {
+    const g2g3Letters = ['D', 'G', 'L'];
+
+    it('reconoce las letras D, G, L en mano derecha e izquierda y a distintas escalas (0.4x a 3.0x)', () => {
+      for (const letter of g2g3Letters) {
+        for (const handedness of ['Right', 'Left']) {
+          for (const scale of [0.4, 1.0, 3.0]) {
+            const hand = SYNTHETIC_LETTERS[letter]({ handedness, scale });
+            const res = classify(hand, { mode: 'alphabet' });
+            expect(res.label).toBe(letter);
+            expect(res.category).toBe('letra');
+            expect(res.confidence).toBeGreaterThanOrEqual(0.8);
+          }
+        }
+      }
+    });
+
+    it('desempata D vs 1/Uno, y G (HORIZONTAL+BACK) vs L (UP+FRONT) vs 7 (OBLIQUE+BACK)', () => {
+      expect(classify(SYNTHETIC_LETTERS.D(), { mode: 'all' }).label).toBe('D');
+      expect(classify(SYNTHETIC_LETTERS.G(), { mode: 'all' }).label).toBe('G');
+      const resL = classify(SYNTHETIC_LETTERS.L(), { mode: 'alphabet' });
+      expect(resL.label).toBe('L');
+      expect(resL.details.margin).toBeGreaterThanOrEqual(0.05);
+    });
+  });
 });
