@@ -63,13 +63,9 @@ function scoreSingleFinger(fingerName, targetState, features) {
       if (info.extended) return 1.0;
       return scoreRange(info.pipAngle, 135, 180, 20) * 0.5;
     case 'TIGHTLY_CURLED':
-      if (info.tightlyCurled) return 1.0;
-      if (!info.extended && info.pipAngle < 120) return 0.75;
-      return 0.0;
+      return info.tightlyCurled ? 1.0 : 0.0;
     case 'HOOKED':
-      if (info.hooked) return 1.0;
-      if (!info.extended && info.pipAngle >= 70 && info.pipAngle <= 148) return 0.85;
-      return 0.0;
+      return info.hooked ? 1.0 : 0.0;
     case 'CURLED':
     case 'NOT_EXTENDED':
       return !info.extended ? 1.0 : 0.0;

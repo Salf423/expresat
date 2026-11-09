@@ -99,8 +99,9 @@ export const BASE_SIGNS = [
       pinky: 'TIGHTLY_CURLED',
     },
     metricas: [
-      // En el puño base (y S), el pulgar se dobla hacia el centro de la palma (tipCanonicalX >= -0.25)
-      { metric: 'tipCanonicalX', min: -0.26, max: 0.35, slack: 0.1, weight: 1.0, required: true },
+      // En el puño base (y S), el pulgar se dobla hacia el centro de la palma (tipCanonicalX >= -0.10 y tipY >= -0.85)
+      { metric: 'tipCanonicalX', min: -0.1, max: 0.35, slack: 0.06, weight: 1.0, required: true },
+      { metric: 'tipY', min: -0.85, max: 0.2, slack: 0.08, weight: 1.0, required: true },
     ],
     pesos: { fingers: 0.7, metrics: 0.3 },
     refineScore: (base) => Math.min(0.95, base * 0.95),

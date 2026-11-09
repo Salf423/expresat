@@ -301,9 +301,9 @@ function evaluateFinger(canonicalLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx) {
     distTip > distPip * 1.08 &&
     distTip > distMcp * 1.25;
 
-  // Un dedo completamente cerrado en la palma (CURLED) tiene PIP agudo o la punta plegada por debajo de PIP
+  // Un dedo completamente cerrado en la palma (CURLED) tiene PIP muy cerrado o la punta plegada cerca/debajo de MCP
   const tightlyCurled =
-    !extended && (pipAngle < 105 || distTip < distMcp * 1.08 || tip.y > mcp.y - 0.08);
+    !extended && (pipAngle < 70 || distTip < distMcp * 1.12 || tip.y > mcp.y - 0.15);
 
   // Estado intermedio HOOKED (arqueado en C/O o en garra E/X/Q):
   // No está completamente extendido, pero tampoco plegado contra la base de la palma

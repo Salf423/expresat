@@ -77,12 +77,12 @@ export function buildSyntheticHand({
     }
 
     if (mode === 'HOOKED') {
-      // Garra alta para E, X, Q (PIP ~ 90°–110°, punta a media altura por encima de MCP)
+      // Garra alta para E, X, Q (PIP ~ 105°, punta alta por encima de MCP: tip.y < mcp.y - 0.35)
       return [
         mcp,
-        { x: mcpX, y: mcpY - 0.38 * basePalm, z: -0.03 * basePalm },
-        { x: mcpX - 0.04 * basePalm, y: mcpY - 0.36 * basePalm, z: -0.09 * basePalm },
-        { x: mcpX - 0.06 * basePalm, y: mcpY - 0.16 * basePalm, z: -0.08 * basePalm },
+        { x: mcpX, y: mcpY - 0.45 * basePalm, z: -0.03 * basePalm },
+        { x: mcpX - 0.06 * basePalm, y: mcpY - 0.56 * basePalm, z: -0.12 * basePalm },
+        { x: mcpX - 0.08 * basePalm, y: mcpY - 0.4 * basePalm, z: -0.1 * basePalm },
       ];
     }
 
@@ -480,4 +480,230 @@ export const SYNTHETIC_NUMBERS = Object.freeze({
     }
     return frames;
   },
+});
+
+export const SYNTHETIC_LETTERS = Object.freeze({
+  A: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'SIDE_A',
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  B: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: true,
+      adducted: true,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  C: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'ARCHED_C',
+      index: 'ARCHED_C',
+      middle: 'ARCHED_C',
+      ring: 'ARCHED_C',
+      pinky: 'ARCHED_C',
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  D: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'TOUCH_MIDDLE_D',
+      index: true,
+      middle: 'TOUCH_THUMB_D',
+      ring: false,
+      pinky: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  E: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'UNDER_E',
+      index: 'HOOKED',
+      middle: 'HOOKED',
+      ring: 'HOOKED',
+      pinky: 'HOOKED',
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  F: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'PINCH_F',
+      pinch: true,
+      middle: true,
+      ring: true,
+      pinky: true,
+      adducted: true,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  G: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: true,
+      middle: false,
+      ring: false,
+      pinky: false,
+      rotateDeg: 90,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  H: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: true,
+      middle: true,
+      ring: false,
+      pinky: false,
+      adducted: true,
+      rotateDeg: 90,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  I: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: true,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  L: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: true,
+      middle: false,
+      ring: false,
+      pinky: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  M: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: false,
+      adducted: true,
+      rotateDeg: 180,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  N: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: false,
+      pinky: false,
+      adducted: true,
+      rotateDeg: 180,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  O: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'CIRCLE_O',
+      index: 'CIRCLE_O',
+      middle: 'CIRCLE_O',
+      ring: 'CIRCLE_O',
+      pinky: 'CIRCLE_O',
+      ...opts,
+    }),
+  P: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'BETWEEN_PK',
+      index: true,
+      middle: 'SEMI_PK',
+      ring: false,
+      pinky: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  R: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: false,
+      pinky: false,
+      crossIndexMiddle: true,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  S: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'ACROSS_S',
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  T: (opts = {}) =>
+    buildSyntheticHand({
+      thumbMode: 'BETWEEN_T',
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  U: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: false,
+      pinky: false,
+      adducted: true,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  V: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: false,
+      pinky: false,
+      adducted: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  W: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: false,
+      adducted: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  Y: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: true,
+      rotateDeg: 90,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
 });

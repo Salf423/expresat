@@ -52,4 +52,5 @@ export {
   buildSyntheticHand,
   SYNTHETIC_PRESETS,
   SYNTHETIC_NUMBERS,
+  SYNTHETIC_LETTERS,
 } from './syntheticHand.js';
