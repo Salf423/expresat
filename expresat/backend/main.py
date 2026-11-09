@@ -31,10 +31,10 @@ from fastapi.middleware.cors import CORSMiddleware
 # Import config y demo_rules de forma canónica, evitando fragilidad de sys.path.
 # Se prefiere import directo del paquete backend en lugar de relajo sys.path.
 try:
-    from backend.config import DEMO_MODE
+    from backend.config import DEMO_MODE, is_demo_mode_enabled
     from backend.demo_rules import predict_demo, DEMO_LABELS
 except ImportError:
-    from config import DEMO_MODE
+    from config import DEMO_MODE, is_demo_mode_enabled
     from demo_rules import predict_demo, DEMO_LABELS
 
 
@@ -206,7 +206,7 @@ async def run_inference_async(frames: list[dict]) -> dict:
     # que calcula reglas geométricas (ángulos, distancias y extensión de dedos)
     # sobre los landmarks de MediaPipe sin modificar su estructura.
     # Esta implementación es temporal y será reemplazada por el modelo de IA.
-    if DEMO_MODE:
+    if is_demo_mode_enabled():
         # [DEMO] Offload de reglas deterministas a hilo secundario para mantener async
         return await asyncio.to_thread(predict_demo, frames)
 
@@ -271,22 +271,36 @@ def verify_supabase_token(token: str) -> Optional[dict]:
         return None
 
     # --- PRODUCTION: Require valid token from Supabase ---
-    # TODO: Uncomment this block when Supabase credentials are configured in Render
-    # try:
-    #     from supabase import create_client
-    #     supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    #     user = supabase_client.auth.get_user(token)
-    #     if user and user.user:
-    #         return {"id": user.user.id, "email": user.user.email}
-    #     return None
-    # except Exception as e:
-    #     print(f"[WS REJECT] Supabase verification failed: {e}")
-    #     return None
+    if SUPABASE_URL and SUPABASE_KEY and "your-project.supabase.co" not in SUPABASE_URL:
+        try:
+            from supabase import create_client
+            supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            user_resp = supabase_client.auth.get_user(token)
+            if user_resp and getattr(user_resp, "user", None):
+                return {"id": user_resp.user.id, "email": user_resp.user.email}
+            print("[WS REJECT] Supabase get_user returned no user for provided token.")
+            return None
+        except Exception as e:
+            print(f"[WS REJECT] Supabase verification failed: {e}")
+            return None
 
     # In production without valid Supabase config, reject and log warning
     print(f"[WARN] verify_supabase_token: Supabase verification required in production. "
           f"Token provided: {token[:20]}... (truncated).")
     return None
+
+
+def is_origin_allowed(origin: Optional[str]) -> bool:
+    """
+    Valida la cabecera Origin en conexiones WebSocket cuando está presente.
+    Permite orígenes configurados en CORS_ORIGINS o '*'.
+    """
+    if not origin:
+        return True
+    allowed = [o.strip() for o in os.getenv("CORS_ORIGINS", ",".join(CORS_ORIGINS_DEFAULT)).split(",") if o.strip()]
+    if "*" in allowed:
+        return True
+    return origin in allowed
 
 
 # ── WEBSOCKET ENDPOINT — /ws/translate ────────────────────────────────────
@@ -295,36 +309,27 @@ def verify_supabase_token(token: str) -> Optional[dict]:
 async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
     """
     Main WebSocket endpoint for real-time sign language translation.
-
-    Message protocol:
-        Client → Server:
-            {"type": "ping"}
-            {"type": "inference", "payload": [frame1, frame2, ..., frame15]}
-            {"type": "inference", "payload": single_frame_dict}
-
-        Server → Client:
-            {"type": "pong"}
-            {"type": "translation", "payload": {...}}
-            {"type": "error", "payload": "error message"
-
-    The endpoint supports two delivery modes:
-      1. Batch mode: The frontend sends 15 frames at once (optimal)
-      2. Stream mode: The frontend sends frame by frame and the backend
-         accumulates internally until it has 15 (compatible with previous version)
     """
+    origin = websocket.headers.get("origin")
+    demo_active = is_demo_mode_enabled()
+
+    if not is_origin_allowed(origin):
+        reason = f"Origin no autorizado: {origin}"
+        print(f"[WS REJECT] Origin={origin} | {reason} | DEMO_MODE={demo_active} | closing code=1008")
+        await websocket.close(code=1008, reason=reason)
+        return
+
     # --- Verify authentication ---
     user = verify_supabase_token(token)
-    if not user and DEMO_MODE:
+    if not user and demo_active:
         # En modo DEMO_MODE, permitir acceso de demostración sin autenticación estricta
         user = {"id": "demo-user", "email": "demo@expresat.local", "demo": True}
-        print("[WS AUTH] DEMO_MODE=true: sesión de demostración pública iniciada")
+        print(f"[WS AUTH] DEMO_MODE=true: sesión de demostración pública iniciada (Origin={origin or 'none'})")
 
     if not user:
-        # [FIX-MP-2] Log the specific rejection reason with Origin for diagnosis
-        origin = websocket.headers.get("origin", "unknown")
         reason = "Token ausente (no provided)" if not token else "Token inválido o expirado"
-        print(f"[WS REJECT] Origin={origin} | {reason} | "
-              f"DEMO_MODE={DEMO_MODE} | FASTAPI_ENV={os.getenv('FASTAPI_ENV', 'production')} | "
+        print(f"[WS REJECT] Origin={origin or 'unknown'} | {reason} | "
+              f"DEMO_MODE={demo_active} | FASTAPI_ENV={os.getenv('FASTAPI_ENV', 'production')} | "
               f"closing connection code=1008")
         await websocket.close(code=1008, reason=reason)
         return
@@ -463,11 +468,11 @@ async def websocket_legacy(websocket: WebSocket, token: str = Query(None)):
 async def health_check():
     """Basic server health check."""
     engine = get_inference_engine()
+    demo_active = is_demo_mode_enabled()
     return {
         "status": "ok",
         "service": "ExpresaT Backend V2",
-        # [DEMO] Indicador visible de modo demo en el endpoint raíz
-        "demo_mode": DEMO_MODE,
+        "demo_mode": demo_active,
         "model_loaded": engine is not None,
     }
 
@@ -477,17 +482,16 @@ async def health_check():
 async def detailed_health():
     """Detailed health check with model information."""
     engine = get_inference_engine()
+    demo_active = is_demo_mode_enabled()
 
     response = {
         "status": "healthy",
         "service": "ExpresaT Backend V2",
         "connections": len(manager.active_connections),
-        # [DEMO] Exposición de estado de modo demo para el cliente web
-        "demo_mode": DEMO_MODE,
+        "demo_mode": demo_active,
     }
 
-    # [DEMO] Reporte de motor activo según DEMO_MODE
-    if DEMO_MODE:
+    if demo_active:
         response["model"] = {
             "status": "demo_rules_mode",
             "engine": "Deterministic Geometric Rules (Heuristic Demo)",
@@ -505,8 +509,7 @@ async def detailed_health():
 @app.get("/labels")
 async def get_labels():
     """Returns the labels/signs that the model can recognize."""
-    # [DEMO] Si DEMO_MODE es True, retornamos las señas de las reglas deterministas
-    if DEMO_MODE:
+    if is_demo_mode_enabled():
         return {
             "labels": DEMO_LABELS,
             "count": len(DEMO_LABELS),

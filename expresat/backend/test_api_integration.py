@@ -21,13 +21,42 @@ os.environ["EXPRESAT_DEMO_MODE"] = "true"
 from backend.main import (
     app,
     verify_supabase_token,
+    is_origin_allowed,
+    websocket_translate,
     CORS_ORIGINS_DEFAULT,
     health_check,
+    detailed_health,
     get_labels,
     ConnectionManager,
     run_inference_async
 )
 from backend.demo_rules import DEMO_LABELS
+from fastapi import WebSocketDisconnect
+
+
+class FakeWebSocket:
+    def __init__(self, headers=None, incoming=None):
+        self.headers = headers or {}
+        self._incoming = list(incoming or [])
+        self.accepted = False
+        self.closed_code = None
+        self.closed_reason = None
+        self.sent_messages = []
+
+    async def accept(self):
+        self.accepted = True
+
+    async def close(self, code=1000, reason=None):
+        self.closed_code = code
+        self.closed_reason = reason
+
+    async def receive_json(self):
+        if not self._incoming:
+            raise WebSocketDisconnect(code=1000)
+        return self._incoming.pop(0)
+
+    async def send_json(self, message):
+        self.sent_messages.append(message)
 
 
 class TestApiIntegration(unittest.TestCase):
@@ -85,6 +114,43 @@ class TestApiIntegration(unittest.TestCase):
         self.assertIsInstance(result, dict)
         self.assertTrue(result.get("is_demo", False))
         self.assertIn("all_probabilities", result)
+
+    def test_ws_connects_in_demo_mode_without_token(self):
+        """Compuerta Paso 5: /ws/translate acepta conexión (101) en EXPRESAT_DEMO_MODE=true sin token."""
+        os.environ["EXPRESAT_DEMO_MODE"] = "true"
+        os.environ["FASTAPI_ENV"] = "production"
+        ws = FakeWebSocket(
+            headers={"origin": "http://localhost:5173"},
+            incoming=[{"type": "ping"}]
+        )
+        asyncio.run(websocket_translate(ws, token=None))
+        self.assertTrue(ws.accepted)
+        self.assertIsNone(ws.closed_code)
+        self.assertEqual(ws.sent_messages, [{"type": "pong"}])
+
+    def test_ws_rejects_without_token_when_demo_mode_disabled(self):
+        """Compuerta Paso 5: /ws/translate rechaza con 1008 sin token cuando EXPRESAT_DEMO_MODE=false en prod."""
+        old_demo = os.environ.get("EXPRESAT_DEMO_MODE")
+        old_env = os.environ.get("FASTAPI_ENV")
+        try:
+            os.environ["EXPRESAT_DEMO_MODE"] = "false"
+            os.environ["FASTAPI_ENV"] = "production"
+            ws = FakeWebSocket(headers={"origin": "http://localhost:5173"})
+            asyncio.run(websocket_translate(ws, token=None))
+            self.assertFalse(ws.accepted)
+            self.assertEqual(ws.closed_code, 1008)
+            self.assertIn("Token ausente", ws.closed_reason)
+        finally:
+            os.environ["EXPRESAT_DEMO_MODE"] = old_demo or "true"
+            os.environ["FASTAPI_ENV"] = old_env or "development"
+
+    def test_ws_rejects_unauthorized_origin(self):
+        """Compuerta Paso 5: /ws/translate rechaza con 1008 cuando Origin no está en CORS_ORIGINS."""
+        ws = FakeWebSocket(headers={"origin": "https://malicious.example.com"})
+        asyncio.run(websocket_translate(ws, token=None))
+        self.assertFalse(ws.accepted)
+        self.assertEqual(ws.closed_code, 1008)
+        self.assertIn("Origin no autorizado", ws.closed_reason)
 
 
 if __name__ == "__main__":
