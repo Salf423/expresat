@@ -68,4 +68,33 @@ describe('Fase D — Letras Estáticas del Alfabeto LSM por Grupo Confundible', 
       expect(resL.details.margin).toBeGreaterThanOrEqual(0.05);
     });
   });
+
+  describe('Sub-fase D.3 — Grupo G4_DOS_DEDOS (H, N, P, R, U, V)', () => {
+    const g4Letters = ['H', 'N', 'P', 'R', 'U', 'V'];
+
+    it('reconoce las 6 letras de G4_DOS_DEDOS (H, N, P, R, U, V) en mano derecha e izquierda y escalas (0.4x a 3.0x)', () => {
+      for (const letter of g4Letters) {
+        for (const handedness of ['Right', 'Left']) {
+          for (const scale of [0.4, 1.0, 3.0]) {
+            const hand = SYNTHETIC_LETTERS[letter]({ handedness, scale });
+            const res = classify(hand, { mode: 'alphabet' });
+            expect(res.label).toBe(letter);
+            expect(res.category).toBe('letra');
+            expect(res.confidence).toBeGreaterThanOrEqual(0.8);
+          }
+        }
+      }
+    });
+
+    it('desempata sin confusión H vs N vs P vs R vs U vs V en modo global y alfabeto', () => {
+      expect(classify(SYNTHETIC_LETTERS.H(), { mode: 'all' }).label).toBe('H');
+      expect(classify(SYNTHETIC_LETTERS.N(), { mode: 'all' }).label).toBe('N');
+      expect(classify(SYNTHETIC_LETTERS.P(), { mode: 'all' }).label).toBe('P');
+      expect(classify(SYNTHETIC_LETTERS.R(), { mode: 'all' }).label).toBe('R');
+      expect(classify(SYNTHETIC_LETTERS.U(), { mode: 'all' }).label).toBe('U');
+      const resV = classify(SYNTHETIC_LETTERS.V(), { mode: 'alphabet' });
+      expect(resV.label).toBe('V');
+      expect(resV.details.margin).toBeGreaterThanOrEqual(0.05);
+    });
+  });
 });

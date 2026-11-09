@@ -45,7 +45,8 @@ export function buildSyntheticHand({
    */
   function buildFinger(mcpX, mcpY, mode, spreadX = 0) {
     const mcp = { x: mcpX, y: mcpY, z: 0 };
-    const effectiveSpread = adducted ? spreadX * 0.15 : spreadX;
+    // Cuando los dedos están juntos/aducidos (B, U, H, M, N, F), convergen hacia el eje central de la mano
+    const effectiveSpread = adducted ? -mcpX * 0.62 : spreadX;
 
     if (mode === true || mode === 'EXTENDED') {
       return [

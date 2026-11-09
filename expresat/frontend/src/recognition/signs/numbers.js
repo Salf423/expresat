@@ -78,15 +78,16 @@ export const NUMBER_SIGNS = [
       pinky: 'TIGHTLY_CURLED',
     },
     metricas: [
-      { metric: 'indexMiddleSpread2D', min: 0.21, max: 1.5, slack: 0.05, weight: 1.2, required: true },
-      { metric: 'indexMiddleCrossDeltaX', min: -1.2, max: -0.15, slack: 0.06, weight: 1.0, required: true },
+      { metric: 'indexMiddleSpread2D', min: 0.25, max: 1.5, slack: 0.04, weight: 1.5, required: true },
+      { metric: 'indexMiddleCrossDeltaX', min: -1.2, max: -0.2, slack: 0.05, weight: 1.0, required: true },
+      { metric: 'thumbToIndexMiddlePipMid', min: 0.35, max: 2.0, slack: 0.08, weight: 1.0, required: true },
     ],
     pesos: { fingers: 0.65, metrics: 0.35 },
     refineScore: (base, features) => {
       const dir = features.orientation?.direction;
       const face = features.orientation?.palmFacing;
       if ((dir === 'HORIZONTAL' || dir === 'DOWN') && face === 'BACK') {
-        return base * 0.6;
+        return 0;
       }
       return Math.min(0.96, base * 0.96);
     },
