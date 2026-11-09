@@ -1,26 +1,17 @@
 /**
- * src/recognition/syntheticHand.js — Generador determinista de landmarks 3D de mano (21 puntos)
+ * src/recognition/syntheticHand.js — Generador determinista de landmarks 3D de mano (21 puntos) para LSM
  *
- * Útil tanto para las pruebas unitarias de `recognition/` como para el modo demo sintético
- * en pruebas E2E de navegador cuando se usa `--use-fake-device-for-media-stream`.
+ * Soporta:
+ * - Posturas base, números (0–10) y alfabeto completo de LSM (A–Z, Ñ, LL, RR).
+ * - Mano derecha e izquierda (`mirrorX` / `handedness`), palma al frente (`FRONT`), dorso (`BACK`) y perfil (`SIDE`).
+ * - Estados de flexión finos (`EXTENDED`, `HOOKED`, `CURLED`, `SEMI`), adución (`adducted`) y cruce (`crossIndexMiddle`).
+ * - Generación de secuencias dinámicas con timestamps en milisegundos para FPS variable (15–30 FPS).
  */
 
 /**
  * Construye una mano sintética anatómicamente coherente de 21 landmarks.
  * Por defecto `WRIST (0)` está en `(0.5, 0.7, 0)` y `MIDDLE_MCP (9)` en `(0.5, 0.55, 0)`,
  * por lo que `palmScale = 0.15`.
- *
- * @param {Object} config
- * @param {boolean} [config.thumb=false]
- * @param {boolean} [config.index=false]
- * @param {boolean} [config.middle=false]
- * @param {boolean} [config.ring=false]
- * @param {boolean} [config.pinky=false]
- * @param {boolean} [config.pinch=false] Si es true, une la punta del pulgar (4) e índice (8) formando "OK / Pinza"
- * @param {number} [config.scale=1.0] Factor de escala multiplicativo
- * @param {number} [config.rotateDeg=0] Rotación en el plano XY (grados)
- * @param {number} [config.offsetX=0.5] Coordenada X de la muñeca
- * @param {number} [config.offsetY=0.7] Coordenada Y de la muñeca
  */
 export function buildSyntheticHand({
   thumb = false,
@@ -29,10 +20,17 @@ export function buildSyntheticHand({
   ring = false,
   pinky = false,
   pinch = false,
+  thumbMode = null, // 'EXTENDED' | 'CURLED' | 'SIDE_A' | 'ACROSS_S' | 'BETWEEN_T' | 'UNDER_E' | 'CIRCLE_O' | 'TOUCH_MIDDLE_D' | 'PINCH_F' | 'BETWEEN_PK' | 'HOOKED_Q'
+  adducted = false, // Si es true, los dedos extendidos se mantienen juntos (B, U, H, M, N, F)
+  crossIndexMiddle = false, // Si es true, cruza las puntas de índice y medio (R, RR)
+  palmFacing = 'FRONT', // 'FRONT' | 'BACK' | 'SIDE'
+  handedness = 'Right', // 'Right' | 'Left'
+  mirrorX = false,
   scale = 1.0,
   rotateDeg = 0,
   offsetX = 0.5,
   offsetY = 0.7,
+  timestampMs = null,
 } = {}) {
   const basePalm = 0.15 * scale;
   const pts = new Array(21);
@@ -40,18 +38,75 @@ export function buildSyntheticHand({
   // 0: WRIST en el origen local (0, 0, 0)
   pts[0] = { x: 0, y: 0, z: 0 };
 
-  // Helper para dedo largo en coordenadas locales (donde -Y es hacia arriba)
-  function buildFinger(mcpX, mcpY, isExtended, spreadX = 0) {
+  /**
+   * Helper para dedo largo en coordenadas locales (donde -Y es hacia arriba).
+   * `mode` puede ser boolean (`true` = EXTENDED, `false` = CURLED) o string:
+   * `'EXTENDED' | 'HOOKED' | 'ARCHED_C' | 'CIRCLE_O' | 'TOUCH_THUMB_D' | 'SEMI_PK' | 'CURLED'`
+   */
+  function buildFinger(mcpX, mcpY, mode, spreadX = 0) {
     const mcp = { x: mcpX, y: mcpY, z: 0 };
-    if (isExtended) {
+    const effectiveSpread = adducted ? spreadX * 0.15 : spreadX;
+
+    if (mode === true || mode === 'EXTENDED') {
       return [
         mcp,
-        { x: mcpX + spreadX * 0.35, y: mcpY - 0.45 * basePalm, z: 0 },
-        { x: mcpX + spreadX * 0.7, y: mcpY - 0.8 * basePalm, z: 0 },
-        { x: mcpX + spreadX * 1.0, y: mcpY - 1.12 * basePalm, z: 0 },
+        { x: mcpX + effectiveSpread * 0.35, y: mcpY - 0.45 * basePalm, z: 0 },
+        { x: mcpX + effectiveSpread * 0.7, y: mcpY - 0.8 * basePalm, z: 0 },
+        { x: mcpX + effectiveSpread * 1.0, y: mcpY - 1.12 * basePalm, z: 0 },
       ];
     }
-    // Dedo doblado hacia la palma (curled: PIP sube un poco pero DIP y TIP se doblan de regreso hacia la palma)
+
+    if (mode === 'SEMI_PK') {
+      // Dedo medio en P / K: semi-extendido/inclinado hacia adelante y ligeramente más bajo que el índice
+      return [
+        mcp,
+        { x: mcpX - 0.05 * basePalm, y: mcpY - 0.42 * basePalm, z: -0.08 * basePalm },
+        { x: mcpX - 0.12 * basePalm, y: mcpY - 0.66 * basePalm, z: -0.15 * basePalm },
+        { x: mcpX - 0.16 * basePalm, y: mcpY - 0.82 * basePalm, z: -0.2 * basePalm },
+      ];
+    }
+
+    if (mode === 'ARCHED_C') {
+      // Semicírculo abierto para la letra C (PIP ~ 115°–125°, puntas altas y separadas del pulgar)
+      return [
+        mcp,
+        { x: mcpX - 0.08 * basePalm, y: mcpY - 0.42 * basePalm, z: -0.04 * basePalm },
+        { x: mcpX - 0.28 * basePalm, y: mcpY - 0.62 * basePalm, z: -0.08 * basePalm },
+        { x: mcpX - 0.48 * basePalm, y: mcpY - 0.56 * basePalm, z: -0.1 * basePalm },
+      ];
+    }
+
+    if (mode === 'HOOKED') {
+      // Garra alta para E, X, Q (PIP ~ 90°–110°, punta a media altura por encima de MCP)
+      return [
+        mcp,
+        { x: mcpX, y: mcpY - 0.38 * basePalm, z: -0.03 * basePalm },
+        { x: mcpX - 0.04 * basePalm, y: mcpY - 0.36 * basePalm, z: -0.09 * basePalm },
+        { x: mcpX - 0.06 * basePalm, y: mcpY - 0.16 * basePalm, z: -0.08 * basePalm },
+      ];
+    }
+
+    if (mode === 'CIRCLE_O') {
+      // Dedos curvados cuyas puntas convergen al punto de contacto con el pulgar (-0.34, -1.18)
+      return [
+        mcp,
+        { x: mcpX - 0.06 * basePalm, y: mcpY - 0.38 * basePalm, z: -0.03 * basePalm },
+        { x: (mcpX - 0.34 * basePalm) * 0.5, y: -1.32 * basePalm, z: -0.05 * basePalm },
+        { x: -0.31 * basePalm + mcpX * 0.08, y: -1.2 * basePalm, z: -0.03 * basePalm },
+      ];
+    }
+
+    if (mode === 'TOUCH_THUMB_D') {
+      // Dedo medio bajando para tocar la punta del pulgar en la letra D
+      return [
+        mcp,
+        { x: mcpX - 0.05 * basePalm, y: mcpY - 0.32 * basePalm, z: -0.04 * basePalm },
+        { x: -0.16 * basePalm, y: -1.18 * basePalm, z: -0.06 * basePalm },
+        { x: -0.26 * basePalm, y: -1.04 * basePalm, z: -0.04 * basePalm },
+      ];
+    }
+
+    // Dedo doblado hacia la palma (CURLED: PIP sube un poco pero DIP y TIP se pliegan en la palma)
     return [
       mcp,
       { x: mcpX, y: mcpY - 0.25 * basePalm, z: -0.02 * basePalm },
@@ -61,32 +116,89 @@ export function buildSyntheticHand({
   }
 
   // Pulgar (1..4)
-  if (pinch) {
-    // Pulgar e índice convergen al punto de pinza (-0.32 * basePalm, -1.25 * basePalm)
-    pts[1] = { x: -0.25 * basePalm, y: -0.25 * basePalm, z: 0 };
-    pts[2] = { x: -0.38 * basePalm, y: -0.58 * basePalm, z: 0 };
-    pts[3] = { x: -0.42 * basePalm, y: -0.92 * basePalm, z: 0 };
-    pts[4] = { x: -0.32 * basePalm, y: -1.22 * basePalm, z: 0 };
-  } else if (thumb) {
-    // Pulgar extendido abducido hacia la izquierda (-X) en línea recta desde CMC
-    pts[1] = { x: -0.28 * basePalm, y: -0.25 * basePalm, z: 0 };
-    pts[2] = { x: -0.55 * basePalm, y: -0.5 * basePalm, z: 0 };
-    pts[3] = { x: -0.82 * basePalm, y: -0.75 * basePalm, z: 0 };
-    pts[4] = { x: -1.1 * basePalm, y: -1.0 * basePalm, z: 0 };
-  } else {
-    // Pulgar doblado sobre la palma hacia el nudillo medio/anular
-    pts[1] = { x: -0.22 * basePalm, y: -0.22 * basePalm, z: 0 };
-    pts[2] = { x: -0.28 * basePalm, y: -0.45 * basePalm, z: -0.02 * basePalm };
-    pts[3] = { x: -0.12 * basePalm, y: -0.58 * basePalm, z: -0.03 * basePalm };
-    pts[4] = { x: 0.05 * basePalm, y: -0.55 * basePalm, z: -0.03 * basePalm };
+  const effectiveThumbMode =
+    thumbMode || (pinch ? 'PINCH' : thumb === true ? 'EXTENDED' : typeof thumb === 'string' ? thumb : 'CURLED');
+
+  switch (effectiveThumbMode) {
+    case 'PINCH':
+    case 'PINCH_F':
+    case 'CIRCLE_O':
+      pts[1] = { x: -0.25 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.38 * basePalm, y: -0.58 * basePalm, z: 0 };
+      pts[3] = { x: -0.42 * basePalm, y: -0.92 * basePalm, z: 0 };
+      pts[4] = { x: -0.32 * basePalm, y: -1.22 * basePalm, z: 0 };
+      break;
+    case 'SIDE_A':
+      // Letra A: pulgar recto pegado verticalmente al costado radial del índice (x4 < x5 = -0.32)
+      pts[1] = { x: -0.26 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.36 * basePalm, y: -0.52 * basePalm, z: 0 };
+      pts[3] = { x: -0.42 * basePalm, y: -0.82 * basePalm, z: 0 };
+      pts[4] = { x: -0.45 * basePalm, y: -1.1 * basePalm, z: 0 };
+      break;
+    case 'BETWEEN_T':
+      // Letra T: punta del pulgar asomando entre las falanges proximales de índice (-0.32) y medio (0.0)
+      pts[1] = { x: -0.24 * basePalm, y: -0.24 * basePalm, z: 0 };
+      pts[2] = { x: -0.28 * basePalm, y: -0.55 * basePalm, z: -0.01 * basePalm };
+      pts[3] = { x: -0.22 * basePalm, y: -0.88 * basePalm, z: -0.02 * basePalm };
+      pts[4] = { x: -0.16 * basePalm, y: -1.14 * basePalm, z: -0.02 * basePalm };
+      break;
+    case 'BETWEEN_PK':
+      // Letras P y K: punta del pulgar apoyada sobre el dedo medio entre índice y medio
+      pts[1] = { x: -0.24 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.26 * basePalm, y: -0.56 * basePalm, z: -0.02 * basePalm };
+      pts[3] = { x: -0.2 * basePalm, y: -0.88 * basePalm, z: -0.04 * basePalm };
+      pts[4] = { x: -0.14 * basePalm, y: -1.18 * basePalm, z: -0.05 * basePalm };
+      break;
+    case 'UNDER_E':
+      // Letra E: pulgar doblado horizontalmente en la parte baja de la palma, lejos de las puntas en garra
+      pts[1] = { x: -0.22 * basePalm, y: -0.22 * basePalm, z: 0 };
+      pts[2] = { x: -0.26 * basePalm, y: -0.44 * basePalm, z: -0.02 * basePalm };
+      pts[3] = { x: -0.05 * basePalm, y: -0.54 * basePalm, z: -0.03 * basePalm };
+      pts[4] = { x: 0.16 * basePalm, y: -0.54 * basePalm, z: -0.03 * basePalm };
+      break;
+    case 'ARCHED_C':
+      // Letra C: pulgar arqueado hacia adelante dejando una abertura semicircular con el índice (~0.58 * palmScale)
+      pts[1] = { x: -0.25 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.46 * basePalm, y: -0.48 * basePalm, z: -0.02 * basePalm };
+      pts[3] = { x: -0.62 * basePalm, y: -0.72 * basePalm, z: -0.04 * basePalm };
+      pts[4] = { x: -0.68 * basePalm, y: -0.94 * basePalm, z: -0.06 * basePalm };
+      break;
+    case 'HOOKED_Q':
+      // Letra Q: pulgar semi-arqueado oponiéndose al índice en garra
+      pts[1] = { x: -0.26 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.42 * basePalm, y: -0.52 * basePalm, z: -0.02 * basePalm };
+      pts[3] = { x: -0.48 * basePalm, y: -0.8 * basePalm, z: -0.03 * basePalm };
+      pts[4] = { x: -0.42 * basePalm, y: -0.98 * basePalm, z: -0.04 * basePalm };
+      break;
+    case 'TOUCH_MIDDLE_D':
+      // Letra D: pulgar sube para tocar la punta del dedo medio (-0.26, -1.04)
+      pts[1] = { x: -0.24 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.34 * basePalm, y: -0.54 * basePalm, z: -0.02 * basePalm };
+      pts[3] = { x: -0.32 * basePalm, y: -0.82 * basePalm, z: -0.03 * basePalm };
+      pts[4] = { x: -0.26 * basePalm, y: -1.02 * basePalm, z: -0.04 * basePalm };
+      break;
+    case 'EXTENDED':
+      pts[1] = { x: -0.28 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.55 * basePalm, y: -0.5 * basePalm, z: 0 };
+      pts[3] = { x: -0.82 * basePalm, y: -0.75 * basePalm, z: 0 };
+      pts[4] = { x: -1.1 * basePalm, y: -1.0 * basePalm, z: 0 };
+      break;
+    case 'ACROSS_S':
+    case 'CURLED':
+    default:
+      // Pulgar doblado cruzando sobre la palma hacia el nudillo medio/anular (Puño / S)
+      pts[1] = { x: -0.22 * basePalm, y: -0.22 * basePalm, z: 0 };
+      pts[2] = { x: -0.28 * basePalm, y: -0.45 * basePalm, z: -0.02 * basePalm };
+      pts[3] = { x: -0.12 * basePalm, y: -0.58 * basePalm, z: -0.03 * basePalm };
+      pts[4] = { x: 0.05 * basePalm, y: -0.55 * basePalm, z: -0.03 * basePalm };
+      break;
   }
 
   // Índice (5..8)
-  if (pinch) {
+  if (pinch || effectiveThumbMode === 'PINCH_F') {
     pts[5] = { x: -0.32 * basePalm, y: -0.95 * basePalm, z: 0 };
     pts[6] = { x: -0.42 * basePalm, y: -1.28 * basePalm, z: 0 };
     pts[7] = { x: -0.38 * basePalm, y: -1.32 * basePalm, z: 0 };
-    // Punta del índice muy cerca de la punta del pulgar (distancia ~0.08 * palmScale)
     pts[8] = { x: -0.31 * basePalm, y: -1.24 * basePalm, z: 0 };
   } else {
     const idxPts = buildFinger(-0.32 * basePalm, -0.95 * basePalm, index, -0.12 * basePalm);
@@ -96,12 +208,23 @@ export function buildSyntheticHand({
     pts[8] = idxPts[3];
   }
 
-  // Medio (9..12) — NOTA: punto 9 está en (0, -basePalm) para que palmScale sea exactamente basePalm
+  // Medio (9..12) — punto 9 está en (0, -basePalm) para que palmScale sea exactamente basePalm
   const midPts = buildFinger(0, -1.0 * basePalm, middle, 0.04 * basePalm);
   pts[9] = midPts[0];
   pts[10] = midPts[1];
   pts[11] = midPts[2];
   pts[12] = midPts[3];
+
+  if (crossIndexMiddle) {
+    // En la letra R (y RR), las falanges distales de índice y medio convergen y se cruzan
+    pts[6] = { x: -0.18 * basePalm, y: -1.4 * basePalm, z: 0 };
+    pts[7] = { x: -0.08 * basePalm, y: -1.75 * basePalm, z: 0 };
+    pts[8] = { x: 0.02 * basePalm, y: -2.07 * basePalm, z: 0 };
+
+    pts[10] = { x: -0.08 * basePalm, y: -1.45 * basePalm, z: -0.02 * basePalm };
+    pts[11] = { x: -0.12 * basePalm, y: -1.8 * basePalm, z: -0.03 * basePalm };
+    pts[12] = { x: -0.14 * basePalm, y: -2.12 * basePalm, z: -0.04 * basePalm };
+  }
 
   // Anular (13..16)
   const ringPts = buildFinger(0.3 * basePalm, -0.92 * basePalm, ring, 0.1 * basePalm);
@@ -117,16 +240,50 @@ export function buildSyntheticHand({
   pts[19] = pinkyPts[2];
   pts[20] = pinkyPts[3];
 
+  // Ajustar orientación de palma (FRONT, BACK, SIDE) y mano izquierda/derecha:
+  // - Para mano derecha FRONT: flipX = +1
+  // - Para mano derecha BACK (dorso a cámara): la mano gira 180° sobre su eje longitudinal, invirtiendo X (flipX = -1)
+  // - Para mano izquierda FRONT: es el espejo horizontal de la derecha FRONT (flipX = -1)
+  // - Para mano izquierda BACK: flipX = +1
+  const isLeft = typeof handedness === 'string' && handedness.toLowerCase().startsWith('l');
+  let flipX = 1;
+  if (palmFacing === 'BACK') flipX *= -1;
+  if (isLeft) flipX *= -1;
+  if (mirrorX) flipX *= -1;
+
+  const scaleX = palmFacing === 'SIDE' ? 0.25 : 1.0;
+
   // Rotar en el plano XY y trasladar a (offsetX, offsetY)
   const rad = (rotateDeg * Math.PI) / 180;
   const cosA = Math.cos(rad);
   const sinA = Math.sin(rad);
 
-  return pts.map((p) => ({
-    x: Number((offsetX + p.x * cosA - p.y * sinA).toFixed(6)),
-    y: Number((offsetY + p.x * sinA + p.y * cosA).toFixed(6)),
-    z: Number(p.z.toFixed(6)),
-  }));
+  const out = pts.map((p) => {
+    const px = p.x * flipX * scaleX;
+    const py = p.y;
+    return {
+      x: Number((offsetX + px * cosA - py * sinA).toFixed(6)),
+      y: Number((offsetY + px * sinA + py * cosA).toFixed(6)),
+      z: Number(p.z.toFixed(6)),
+    };
+  });
+
+  if (handedness) {
+    Object.defineProperty(out, 'handedness', {
+      value: isLeft ? 'Left' : 'Right',
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  if (typeof timestampMs === 'number') {
+    Object.defineProperty(out, 'timestampMs', {
+      value: timestampMs,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+
+  return out;
 }
 
 export const SYNTHETIC_PRESETS = Object.freeze({

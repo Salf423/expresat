@@ -2,8 +2,12 @@
  * src/recognition/geometry.js — Funciones geométricas y matemáticas puras para manos MediaPipe (21 puntos)
  *
  * Sin dependencias de DOM, cámara ni React.
- * Todas las funciones operan sobre coordenadas 3D { x, y, z } e implementan
- * normalización por tamaño de mano (palmScale) y alineación rotacional en el plano XY.
+ * Todas las funciones operan sobre coordenadas 3D { x, y, z } e implementan:
+ * - Normalización por tamaño de mano (palmScale) y alineación rotacional en el plano XY.
+ * - Conservación de la orientación 2D original de la mano (UP, DOWN, HORIZONTAL, OBLIQUE).
+ * - Detección de palma vs. dorso (FRONT, BACK, SIDE) por producto cruzado 3D + handedness.
+ * - Sistema canónico quiral (invariante a mano izquierda/derecha y espejo de video).
+ * - Estados de flexión tri-valuados (EXTENDED, HOOKED, CURLED) y matriz de contactos inter-digitales.
  */
 
 export const HAND_LANDMARKS = Object.freeze({
@@ -54,7 +58,7 @@ export function isValidHandLandmarks(landmarks) {
   const scale = palmScale(landmarks);
   if (!Number.isFinite(scale) || scale < 0.015 || scale > 5.0) return false;
 
-  // Verificar coherencia anatómica: ningún punto de la mano puede estar a > 4.5 veces palmScale de la muñeca
+  // Verificar coherencia anatómica: ningún punto de la mano puede estar a > 4.2 veces palmScale de la muñeca
   // (rechaza ruido aleatorio uniforme o picos espurios)
   const wrist = landmarks[HAND_LANDMARKS.WRIST];
   for (let i = 1; i < 21; i++) {
@@ -99,6 +103,19 @@ export function distance2D(a, b) {
 }
 
 /**
+ * Distancia robusta con peso reducido en Z (Limitación 6: ruido monocular en Z).
+ * @param {{x:number,y:number,z?:number}} a
+ * @param {{x:number,y:number,z?:number}} b
+ * @param {number} [zWeight=0.35]
+ */
+export function distanceRobust(a, b, zWeight = 0.35) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = ((a.z ?? 0) - (b.z ?? 0)) * zWeight;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+/**
  * Escala de referencia de la palma: distancia 3D entre WRIST (0) y MIDDLE_MCP (9).
  */
 export function palmScale(landmarks) {
@@ -113,9 +130,9 @@ export function palmScale(landmarks) {
  * Ángulo en grados [0, 180] entre dos vectores 3D.
  */
 export function angleBetweenVectorsDeg(v1, v2) {
-  const dot = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
-  const n1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y + v1.z * v1.z);
-  const n2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y + v2.z * v2.z);
+  const dot = v1.x * v2.x + v1.y * v2.y + (v1.z ?? 0) * (v2.z ?? 0);
+  const n1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y + (v1.z ?? 0) * (v1.z ?? 0));
+  const n2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y + (v2.z ?? 0) * (v2.z ?? 0));
   if (n1 < 1e-6 || n2 < 1e-6) return 0;
   const cos = Math.max(-1, Math.min(1, dot / (n1 * n2)));
   return (Math.acos(cos) * 180) / Math.PI;
@@ -172,108 +189,238 @@ export function normalizeHand(landmarks) {
 }
 
 /**
- * Evalúa si un dedo no-pulgar está extendido combinando:
- * - Razón de distancias radiales a la muñeca (`tipDist / pipDist` y `tipDist / mcpDist`)
- * - Ángulo articular en PIP (`jointAngleDeg(MCP, PIP, DIP)`) y DIP (`jointAngleDeg(PIP, DIP, TIP)`)
- * Completamente invariante a escala y rotación 3D.
+ * Extrae la orientación original de la mano antes de rotar en XY y la dirección de la palma
+ * (FRONT, BACK, SIDE) usando el producto cruzado de los vectores de la palma y handedness.
+ *
+ * @param {Array<{x:number, y:number, z?:number}>} landmarks Landmarks crudos
+ * @param {Array<{x:number, y:number, z:number}>} normLandmarks Landmarks normalizados por normalizeHand
+ * @param {Object} [options]
+ * @param {'Right'|'Left'|null} [options.handedness=null] Mano anatómica ('Right' por defecto)
  */
-function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx) {
-  const wrist = normLandmarks[HAND_LANDMARKS.WRIST];
-  const mcp = normLandmarks[mcpIdx];
-  const pip = normLandmarks[pipIdx];
-  const dip = normLandmarks[dipIdx];
-  const tip = normLandmarks[tipIdx];
+export function extractHandOrientation(landmarks, normLandmarks, options = {}) {
+  const wrist = landmarks[HAND_LANDMARKS.WRIST];
+  const midMcp = landmarks[HAND_LANDMARKS.MIDDLE_MCP];
+  const dx = midMcp.x - wrist.x;
+  const dy = midMcp.y - wrist.y;
+
+  // En coordenadas de imagen (+Y hacia abajo):
+  // -90° = apuntando hacia arriba (UP)
+  // +90° = apuntando hacia abajo (DOWN)
+  //   0° o ±180° = apuntando horizontalmente de lado (HORIZONTAL)
+  const palmAngleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+  let direction = 'OBLIQUE';
+  if (palmAngleDeg >= -130 && palmAngleDeg <= -50) {
+    direction = 'UP';
+  } else if (palmAngleDeg >= 50 && palmAngleDeg <= 130) {
+    direction = 'DOWN';
+  } else if (Math.abs(palmAngleDeg) <= 38 || Math.abs(palmAngleDeg) >= 142) {
+    direction = 'HORIZONTAL';
+  }
+
+  // Producto cruzado 3D de los vectores de la palma en coordenadas normalizadas:
+  // u = INDEX_MCP (5) - WRIST (0), v = PINKY_MCP (17) - WRIST (0)
+  const u = normLandmarks[HAND_LANDMARKS.INDEX_MCP];
+  const v = normLandmarks[HAND_LANDMARKS.PINKY_MCP];
+  const crossZ = u.x * v.y - u.y * v.x;
+
+  const handedness = options?.handedness || landmarks?.handedness || 'Right';
+  const isLeft = typeof handedness === 'string' && handedness.toLowerCase().startsWith('l');
+  const signedCrossZ = isLeft ? -crossZ : crossZ;
+
+  // Separación lateral entre INDEX_MCP y PINKY_MCP en la vista actual
+  const mcpLateralSpan = Math.abs(v.x - u.x);
+
+  let palmFacing = 'FRONT';
+  if (mcpLateralSpan < 0.28 || Math.abs(signedCrossZ) < 0.2) {
+    palmFacing = 'SIDE';
+  } else if (signedCrossZ < 0) {
+    palmFacing = 'BACK';
+  } else {
+    palmFacing = 'FRONT';
+  }
+
+  // Signo quiral para canonicalizar la coordenada X:
+  // Garantiza que en coordenadas canónicas el lado radial (índice/pulgar) esté siempre en -X
+  // y el lado ulnar (meñique) esté siempre en +X, sin importar si es mano izquierda, derecha, palma o dorso.
+  const chiralitySign = v.x - u.x >= 0 ? 1 : -1;
+
+  return {
+    palmAngleDeg: Number(palmAngleDeg.toFixed(2)),
+    direction,
+    palmFacing,
+    palmNormalZ: Number(signedCrossZ.toFixed(4)),
+    rawCrossZ: Number(crossZ.toFixed(4)),
+    mcpLateralSpan: Number(mcpLateralSpan.toFixed(4)),
+    chiralitySign,
+    handedness: isLeft ? 'Left' : 'Right',
+  };
+}
+
+/**
+ * Proyecta los landmarks normalizados al sistema canónico quiral donde el lado radial (índice)
+ * siempre tiene X < 0 y el lado ulnar (meñique) siempre tiene X > 0.
+ *
+ * @param {Array<{x:number, y:number, z:number}>} normLandmarks
+ * @param {number} chiralitySign +1 o -1
+ */
+export function canonicalizeHand(normLandmarks, chiralitySign = 1) {
+  const s = chiralitySign >= 0 ? 1 : -1;
+  return normLandmarks.map((pt) => ({
+    x: pt.x * s,
+    y: pt.y,
+    z: pt.z,
+  }));
+}
+
+/**
+ * Evalúa el estado geométrico de un dedo largo (índice, medio, anular o meñique) combinando:
+ * - Razón de distancias radiales a la muñeca (`tipDist / pipDist` y `tipDist / mcpDist`)
+ * - Ángulo articular en MCP (`jointAngleDeg(WRIST, MCP, PIP)`), PIP (`jointAngleDeg(MCP, PIP, DIP)`) y DIP (`jointAngleDeg(PIP, DIP, TIP)`)
+ * - Clasificación tri-valuada: `EXTENDED`, `HOOKED` (garra/arco semicircular para C, E, O, Q, X) o `CURLED` (puño).
+ */
+function evaluateFinger(canonicalLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx) {
+  const wrist = canonicalLandmarks[HAND_LANDMARKS.WRIST];
+  const mcp = canonicalLandmarks[mcpIdx];
+  const pip = canonicalLandmarks[pipIdx];
+  const dip = canonicalLandmarks[dipIdx];
+  const tip = canonicalLandmarks[tipIdx];
 
   const distMcp = distance3D(wrist, mcp);
   const distPip = distance3D(wrist, pip);
   const distTip = distance3D(wrist, tip);
 
+  const mcpAngle = jointAngleDeg(wrist, mcp, pip);
   const pipAngle = jointAngleDeg(mcp, pip, dip);
   const dipAngle = jointAngleDeg(pip, dip, tip);
 
-  // Un dedo extendido tiene articulación PIP abierta (> 135°) y su punta más lejos de la muñeca que PIP y MCP
+  // Un dedo extendido tiene articulación PIP abierta (>= 135°) y su punta más lejos de la muñeca que PIP y MCP
   const extended =
     pipAngle >= 135 &&
     dipAngle >= 130 &&
     distTip > distPip * 1.08 &&
     distTip > distMcp * 1.25;
 
-  const curled = pipAngle < 120 || distTip < distPip * 1.02;
+  // Un dedo completamente cerrado en la palma (CURLED) tiene PIP agudo o la punta plegada por debajo de PIP
+  const tightlyCurled =
+    !extended && (pipAngle < 105 || distTip < distMcp * 1.08 || tip.y > mcp.y - 0.08);
+
+  // Estado intermedio HOOKED (arqueado en C/O o en garra E/X/Q):
+  // No está completamente extendido, pero tampoco plegado contra la base de la palma
+  const hooked = !extended && !tightlyCurled;
+  const curled = !extended;
+
+  let state = 'CURLED';
+  if (extended) {
+    state = 'EXTENDED';
+  } else if (hooked) {
+    state = 'HOOKED';
+  }
 
   return {
     extended,
     curled,
+    hooked,
+    tightlyCurled,
+    state,
+    mcpAngle,
     pipAngle,
     dipAngle,
     tipToWrist: distTip,
+    pipToWrist: distPip,
+    mcpToWrist: distMcp,
+    tipY: tip.y,
+    tipCanonicalX: tip.x,
   };
 }
 
 /**
- * Calcula el estado geométrico detallado de los 5 dedos y relaciones inter-digitales.
- * Es invariante a escala, traslación y rotación en el plano XY.
+ * Calcula el estado geométrico detallado de los 5 dedos, orientación 2D/3D y relaciones inter-digitales.
+ * Mantiene el 100% de las propiedades existentes e incorpora los descriptores para el catálogo de LSM.
  *
  * @param {Array<{x:number, y:number, z?:number}>} landmarks
+ * @param {Object} [options]
+ * @param {'Right'|'Left'|null} [options.handedness=null]
  * @returns {Object|null}
  */
-export function fingerStates(landmarks) {
+export function fingerStates(landmarks, options = {}) {
   const norm = normalizeHand(landmarks);
   if (!norm) return null;
 
   const scale = palmScale(landmarks);
-  const wrist = norm[HAND_LANDMARKS.WRIST];
+  const orientation = extractHandOrientation(landmarks, norm, options);
+  const canonical = canonicalizeHand(norm, orientation.chiralitySign);
+  const wrist = canonical[HAND_LANDMARKS.WRIST];
 
-  // Evaluar los 4 dedos largos sobre las coordenadas normalizadas
+  // Evaluar los 4 dedos largos sobre las coordenadas canónicas normalizadas
   const indexInfo = evaluateFinger(
-    norm,
+    canonical,
     HAND_LANDMARKS.INDEX_MCP,
     HAND_LANDMARKS.INDEX_PIP,
     HAND_LANDMARKS.INDEX_DIP,
     HAND_LANDMARKS.INDEX_TIP
   );
   const middleInfo = evaluateFinger(
-    norm,
+    canonical,
     HAND_LANDMARKS.MIDDLE_MCP,
     HAND_LANDMARKS.MIDDLE_PIP,
     HAND_LANDMARKS.MIDDLE_DIP,
     HAND_LANDMARKS.MIDDLE_TIP
   );
   const ringInfo = evaluateFinger(
-    norm,
+    canonical,
     HAND_LANDMARKS.RING_MCP,
     HAND_LANDMARKS.RING_PIP,
     HAND_LANDMARKS.RING_DIP,
     HAND_LANDMARKS.RING_TIP
   );
   const pinkyInfo = evaluateFinger(
-    norm,
+    canonical,
     HAND_LANDMARKS.PINKY_MCP,
     HAND_LANDMARKS.PINKY_PIP,
     HAND_LANDMARKS.PINKY_DIP,
     HAND_LANDMARKS.PINKY_TIP
   );
 
-  // Evaluar el pulgar:
-  // En coordenadas normalizadas, el pulgar está extendido cuando:
-  // 1. La articulación MCP/IP está recta (ángulo > 135°)
-  // 2. La punta del pulgar (4) está alejada del nudillo del meñique (17) y del nudillo medio (9)
-  const thumbCmc = norm[HAND_LANDMARKS.THUMB_CMC];
-  const thumbMcp = norm[HAND_LANDMARKS.THUMB_MCP];
-  const thumbIp = norm[HAND_LANDMARKS.THUMB_IP];
-  const thumbTip = norm[HAND_LANDMARKS.THUMB_TIP];
-  const indexMcp = norm[HAND_LANDMARKS.INDEX_MCP];
-  const middleMcp = norm[HAND_LANDMARKS.MIDDLE_MCP];
-  const pinkyMcp = norm[HAND_LANDMARKS.PINKY_MCP];
+  // Evaluar el pulgar en coordenadas canónicas
+  const thumbCmc = canonical[HAND_LANDMARKS.THUMB_CMC];
+  const thumbMcp = canonical[HAND_LANDMARKS.THUMB_MCP];
+  const thumbIp = canonical[HAND_LANDMARKS.THUMB_IP];
+  const thumbTip = canonical[HAND_LANDMARKS.THUMB_TIP];
+  const indexMcp = canonical[HAND_LANDMARKS.INDEX_MCP];
+  const indexPip = canonical[HAND_LANDMARKS.INDEX_PIP];
+  const indexDip = canonical[HAND_LANDMARKS.INDEX_DIP];
+  const indexTip = canonical[HAND_LANDMARKS.INDEX_TIP];
+  const middleMcp = canonical[HAND_LANDMARKS.MIDDLE_MCP];
+  const middlePip = canonical[HAND_LANDMARKS.MIDDLE_PIP];
+  const middleTip = canonical[HAND_LANDMARKS.MIDDLE_TIP];
+  const ringMcp = canonical[HAND_LANDMARKS.RING_MCP];
+  const ringTip = canonical[HAND_LANDMARKS.RING_TIP];
+  const pinkyMcp = canonical[HAND_LANDMARKS.PINKY_MCP];
+  const pinkyTip = canonical[HAND_LANDMARKS.PINKY_TIP];
 
   const thumbMcpAngle = jointAngleDeg(thumbCmc, thumbMcp, thumbIp);
   const thumbIpAngle = jointAngleDeg(thumbMcp, thumbIp, thumbTip);
   const thumbToPinkyMcp = distance3D(thumbTip, pinkyMcp);
   const thumbToMiddleMcp = distance3D(thumbTip, middleMcp);
   const thumbToIndexMcp = distance3D(thumbTip, indexMcp);
+  const thumbToIndexPip = distanceRobust(thumbTip, indexPip);
+  const thumbToMiddlePip = distanceRobust(thumbTip, middlePip);
   const thumbToWrist = distance3D(thumbTip, wrist);
 
-  // Distancia entre la punta del pulgar (4) y la punta del índice (8) (para gesto OK / Pinza)
-  const thumbIndexTipDist = distance3D(thumbTip, norm[HAND_LANDMARKS.INDEX_TIP]);
+  // Distancias entre la punta del pulgar (4) y las 4 puntas de los dedos
+  const thumbIndexTipDist = distance3D(thumbTip, indexTip);
+  const thumbMiddleTipDist = distanceRobust(thumbTip, middleTip);
+  const thumbRingTipDist = distanceRobust(thumbTip, ringTip);
+  const thumbPinkyTipDist = distanceRobust(thumbTip, pinkyTip);
+
+  // Punto medio entre INDEX_PIP (6) y MIDDLE_PIP (10), clave para letras T, P y K
+  const indexMiddlePipMid = {
+    x: (indexPip.x + middlePip.x) * 0.5,
+    y: (indexPip.y + middlePip.y) * 0.5,
+    z: (indexPip.z + middlePip.z) * 0.5,
+  };
+  const thumbToIndexMiddlePipMid = distanceRobust(thumbTip, indexMiddlePipMid);
 
   // Si está haciendo pinza con el índice, el pulgar converge hacia el índice, no está "abierto libre"
   const isPinching = thumbIndexTipDist < 0.36;
@@ -295,7 +442,6 @@ export function fingerStates(landmarks) {
     y: thumbTip.y - thumbCmc.y,
     z: thumbTip.z - thumbCmc.z,
   };
-  const indexTip = norm[HAND_LANDMARKS.INDEX_TIP];
   const vIndex = {
     x: indexTip.x - indexMcp.x,
     y: indexTip.y - indexMcp.y,
@@ -303,11 +449,19 @@ export function fingerStates(landmarks) {
   };
   const thumbIndexAngleDeg = angleBetweenVectorsDeg(vThumb, vIndex);
 
-  // Separación entre puntas de índice y medio (normalizada por palmScale)
-  const indexMiddleSpread = distance3D(
-    norm[HAND_LANDMARKS.INDEX_TIP],
-    norm[HAND_LANDMARKS.MIDDLE_TIP]
-  );
+  // Separaciones 2D/3D entre dedos adyacentes (normalizadas por palmScale)
+  const indexMiddleSpread = distance3D(indexTip, middleTip);
+  const indexMiddleSpread2D = distance2D(indexTip, middleTip);
+  const middleRingSpread2D = distance2D(middleTip, ringTip);
+  const ringPinkySpread2D = distance2D(ringTip, pinkyTip);
+  const threeFingersSpread = middleRingSpread2D + ringPinkySpread2D;
+  const fourFingersSpread = indexMiddleSpread2D + middleRingSpread2D + ringPinkySpread2D;
+
+  // Cruce lateral entre índice y medio en el sistema canónico:
+  // En posición normal sin cruzar, el índice está en el lado radial (x más negativo que el medio),
+  // por lo que indexTip.x - middleTip.x < -0.15. Cuando se cruzan (letra R), indexTip.x >= middleTip.x - 0.05.
+  const indexMiddleCrossDeltaX = indexTip.x - middleTip.x;
+  const indexMiddleDipDist2D = distance2D(indexDip, canonical[HAND_LANDMARKS.MIDDLE_DIP]);
 
   const extendedCount =
     (thumbExtended ? 1 : 0) +
@@ -325,9 +479,25 @@ export function fingerStates(landmarks) {
     extendedCount,
     isPinching,
     thumbIndexTipDist,
+    thumbMiddleTipDist,
+    thumbRingTipDist,
+    thumbPinkyTipDist,
     thumbIndexAngleDeg,
     indexMiddleSpread,
+    indexMiddleSpread2D,
+    middleRingSpread2D,
+    ringPinkySpread2D,
+    threeFingersSpread,
+    fourFingersSpread,
+    indexMiddleCrossDeltaX,
+    indexMiddleDipDist2D,
+    thumbToIndexMiddlePipMid,
+    thumbToIndexPip,
+    thumbToMiddlePip,
     palmScale: scale,
+    orientation,
+    canonicalLandmarks: canonical,
+    normalizedLandmarks: norm,
     wristRaw: {
       x: landmarks[HAND_LANDMARKS.WRIST].x,
       y: landmarks[HAND_LANDMARKS.WRIST].y,
@@ -341,6 +511,16 @@ export function fingerStates(landmarks) {
         ipAngle: thumbIpAngle,
         toPinkyMcp: thumbToPinkyMcp,
         toMiddleMcp: thumbToMiddleMcp,
+        toIndexMcp: thumbToIndexMcp,
+        toIndexPip: thumbToIndexPip,
+        toMiddlePip: thumbToMiddlePip,
+        toIndexMiddlePipMid: thumbToIndexMiddlePipMid,
+        tipCanonicalX: thumbTip.x,
+        tipY: thumbTip.y,
+        tipZ: thumbTip.z,
+        indexMcpCanonicalX: indexMcp.x,
+        middleMcpCanonicalX: middleMcp.x,
+        ringMcpCanonicalX: ringMcp.x,
       },
       index: indexInfo,
       middle: middleInfo,

@@ -1,9 +1,9 @@
 /**
- * src/recognition/classifier.js — Clasificador geométrico puro e interfaz Classifier
+ * src/recognition/classifier.js — Clasificador geométrico declarativo e interfaz Classifier
  *
- * Define la interfaz base `Classifier { predict(frames) -> { label, confidence, details } }`
- * con la implementación `GeometricClassifier` hoy (100% en navegador, sin modelo entrenado)
- * y el adaptador `ModelClassifier` listo para enchufar el modelo neuronal ONNX/GRU después.
+ * Extiende la interfaz `Classifier { predict(frames) -> { label, category, confidence, details } }`
+ * conectando el catálogo declarativo (`src/recognition/signs/`), el matcher con desempate por grupo
+ * confundible y el rechazo por baja confianza (`reason: 'LOW_CONFIDENCE'`).
  */
 
 import {
@@ -12,9 +12,15 @@ import {
   fingerStates,
   palmScale,
 } from './geometry.js';
+import {
+  getSignCatalog,
+  matchCatalog,
+  buildTrajectoryContext,
+  SIGN_TYPES,
+} from './signs/index.js';
 
 /**
- * Etiquetas canónicas reconocidas por el clasificador geométrico.
+ * Etiquetas canónicas base (retrocompatibilidad con rearquitectura-demo).
  */
 export const SIGN_LABELS = Object.freeze({
   MANO_ABIERTA: 'Mano Abierta',
@@ -29,163 +35,117 @@ export const SIGN_LABELS = Object.freeze({
 });
 
 /**
- * Extrae el arreglo de 21 landmarks de mano desde distintos formatos de entrada:
- * - Un arreglo directo de 21 puntos `[{x,y,z}, ...]`
- * - Un objeto frame `{ rightHand, leftHand, hands }`
+ * Extrae `{ landmarks, handedness, timestampMs }` desde cualquier formato de frame soportado:
+ * - Arreglo directo de 21 puntos `[{x,y,z}, ...]`
+ * - Objeto `{ rightHand, leftHand, hands, landmarks, handedness, timestampMs }`
  */
-export function extractHandFromFrame(frame) {
+export function extractHandWithMeta(frame, fallbackTs = null) {
   if (!frame) return null;
+
   if (Array.isArray(frame)) {
-    return frame.length >= 21 ? frame : null;
+    if (frame.length < 21) return null;
+    return {
+      landmarks: frame,
+      handedness: typeof frame.handedness === 'string' ? frame.handedness : 'Right',
+      timestampMs: typeof frame.timestampMs === 'number' ? frame.timestampMs : fallbackTs,
+    };
   }
+
   if (typeof frame === 'object') {
+    const ts =
+      typeof frame.timestampMs === 'number'
+        ? frame.timestampMs
+        : typeof frame.timestamp === 'number'
+          ? frame.timestamp
+          : fallbackTs;
+
     if (Array.isArray(frame.rightHand) && frame.rightHand.length >= 21) {
-      return frame.rightHand;
+      return {
+        landmarks: frame.rightHand,
+        handedness: frame.handedness || 'Right',
+        timestampMs: ts,
+      };
     }
     if (Array.isArray(frame.leftHand) && frame.leftHand.length >= 21) {
-      return frame.leftHand;
+      return {
+        landmarks: frame.leftHand,
+        handedness: frame.handedness || 'Left',
+        timestampMs: ts,
+      };
     }
     if (Array.isArray(frame.hands) && frame.hands.length > 0 && Array.isArray(frame.hands[0])) {
-      return frame.hands[0].length >= 21 ? frame.hands[0] : null;
+      if (frame.hands[0].length < 21) return null;
+      return {
+        landmarks: frame.hands[0],
+        handedness: frame.handedness || 'Right',
+        timestampMs: ts,
+      };
     }
     if (Array.isArray(frame.landmarks) && frame.landmarks.length >= 21) {
-      return frame.landmarks;
+      return {
+        landmarks: frame.landmarks,
+        handedness: frame.handedness || 'Right',
+        timestampMs: ts,
+      };
     }
   }
+
   return null;
 }
 
 /**
- * Clasifica un único frame de 21 landmarks de mano en un gesto estático.
- * Función pura e invariante a traslación, escala y rotación en el plano XY.
+ * Extrae el arreglo de 21 landmarks de mano desde distintos formatos de entrada.
+ */
+export function extractHandFromFrame(frame) {
+  const meta = extractHandWithMeta(frame);
+  return meta ? meta.landmarks : null;
+}
+
+/**
+ * Clasifica un único frame de 21 landmarks de mano evaluando las señas estáticas del catálogo declarativo.
  *
  * @param {Array<{x:number, y:number, z?:number}>|Object} frameOrLandmarks
- * @returns {{ label: string|null, confidence: number, states: Object|null, reason: string }}
+ * @param {Object} [options]
+ * @returns {{ label: string|null, category: string|null, confidence: number, states: Object|null, reason: string, details: Object }}
  */
-export function classifyStaticHand(frameOrLandmarks) {
-  const landmarks = extractHandFromFrame(frameOrLandmarks);
-  if (!landmarks || !isValidHandLandmarks(landmarks)) {
+export function classifyStaticHand(frameOrLandmarks, options = {}) {
+  const meta = extractHandWithMeta(frameOrLandmarks);
+  if (!meta || !isValidHandLandmarks(meta.landmarks)) {
     return {
       label: null,
+      category: null,
       confidence: 0,
       states: null,
       reason: 'INVALID_OR_NOISY_LANDMARKS',
+      details: { reason: 'INVALID_OR_NOISY_LANDMARKS', states: null },
     };
   }
 
-  const states = fingerStates(landmarks);
+  const states = fingerStates(meta.landmarks, { handedness: meta.handedness });
   if (!states) {
     return {
       label: null,
+      category: null,
       confidence: 0,
       states: null,
       reason: 'DEGENERATE_HAND_GEOMETRY',
+      details: { reason: 'DEGENERATE_HAND_GEOMETRY', states: null },
     };
   }
 
-  const {
-    thumb,
-    index,
-    middle,
-    ring,
-    pinky,
-    isPinching,
-    thumbIndexTipDist,
-    thumbIndexAngleDeg,
-    indexMiddleSpread,
-  } = states;
+  const staticCatalog = (options.catalog || getSignCatalog()).filter(
+    (s) => s.tipo === SIGN_TYPES.ESTATICA
+  );
 
-  // 1. OK / Pinza: Puntas de pulgar e índice unidas (< 0.36 * palmScale)
-  // Puede hacerse con los otros 3 dedos extendidos (gesto OK clásico) o con los otros 3 doblados (pinza fina)
-  if (isPinching && (!index || middle)) {
-    const tightness = Math.max(0, Math.min(1, 1 - thumbIndexTipDist / 0.45));
-    const bonus = middle && ring && pinky ? 0.06 : 0.0;
-    const confidence = Number(Math.min(0.98, 0.85 + tightness * 0.1 + bonus).toFixed(4));
-    return {
-      label: SIGN_LABELS.OK,
-      confidence,
-      states,
-      reason: 'Pulgar e índice formando pinza/círculo OK',
-    };
-  }
-
-  // 2. Mano Abierta: Los 5 dedos extendidos
-  if (thumb && index && middle && ring && pinky) {
-    return {
-      label: SIGN_LABELS.MANO_ABIERTA,
-      confidence: 0.96,
-      states,
-      reason: 'Cinco dedos extendidos',
-    };
-  }
-
-  // 3. Puño: Los 5 dedos doblados
-  if (!thumb && !index && !middle && !ring && !pinky) {
-    return {
-      label: SIGN_LABELS.PUNO,
-      confidence: 0.95,
-      states,
-      reason: 'Cinco dedos cerrados en puño',
-    };
-  }
-
-  // 4. Uno: Solo el dedo índice extendido
-  if (!thumb && index && !middle && !ring && !pinky) {
-    return {
-      label: SIGN_LABELS.UNO,
-      confidence: 0.95,
-      states,
-      reason: 'Solo dedo índice extendido',
-    };
-  }
-
-  // 5. Dos: Dedos índice y medio extendidos, resto cerrado
-  if (!thumb && index && middle && !ring && !pinky) {
-    const conf = indexMiddleSpread > 0.2 ? 0.96 : 0.91;
-    return {
-      label: SIGN_LABELS.DOS,
-      confidence: conf,
-      states,
-      reason: 'Dedos índice y medio extendidos',
-    };
-  }
-
-  // 6. Te Quiero (ILY): Pulgar, índice y meñique extendidos, medio y anular cerrados
-  if (thumb && index && !middle && !ring && pinky) {
-    return {
-      label: SIGN_LABELS.TE_QUIERO,
-      confidence: 0.95,
-      states,
-      reason: 'Pulgar, índice y meñique extendidos (ILY)',
-    };
-  }
-
-  // 7. Lunes (Letra L): Pulgar e índice extendidos formando ángulo (~45° a 135°)
-  if (thumb && index && !middle && !ring && !pinky) {
-    const conf = thumbIndexAngleDeg >= 45 && thumbIndexAngleDeg <= 135 ? 0.94 : 0.88;
-    return {
-      label: SIGN_LABELS.LUNES,
-      confidence: conf,
-      states,
-      reason: 'Pulgar e índice extendidos en L',
-    };
-  }
-
-  // 8. Bien (Pulgar extendido solo)
-  if (thumb && !index && !middle && !ring && !pinky) {
-    return {
-      label: SIGN_LABELS.BIEN,
-      confidence: 0.93,
-      states,
-      reason: 'Solo pulgar extendido',
-    };
-  }
+  const matched = matchCatalog(staticCatalog, states, null, options);
 
   return {
-    label: null,
-    confidence: 0,
+    label: matched.label,
+    category: matched.category,
+    confidence: matched.confidence,
     states,
-    reason: 'UNRECOGNIZED_CONFIGURATION',
+    reason: matched.details?.reason || 'LOW_CONFIDENCE',
+    details: matched.details,
   };
 }
 
@@ -204,8 +164,9 @@ export function detectWaveMotion(handFrames) {
   const validWrists = [];
   let scaleSum = 0;
 
-  for (const lm of handFrames) {
-    if (isValidHandLandmarks(lm)) {
+  for (const item of handFrames) {
+    const lm = Array.isArray(item) ? item : extractHandFromFrame(item);
+    if (lm && isValidHandLandmarks(lm)) {
       const s = palmScale(lm);
       validWrists.push(lm[HAND_LANDMARKS.WRIST].x);
       scaleSum += s;
@@ -269,12 +230,13 @@ export class SmoothingVoter {
   }
 
   /**
-   * Registra una nueva predicción `{ label, confidence }` y devuelve el consenso suavizado.
-   * @param {{ label: string|null, confidence: number }} prediction
+   * Registra una nueva predicción `{ label, category, confidence }` y devuelve el consenso suavizado.
+   * @param {{ label: string|null, category?: string|null, confidence: number }} prediction
    */
   push(prediction) {
     this.history.push({
       label: prediction?.label ?? null,
+      category: prediction?.category ?? null,
       confidence: prediction?.confidence ?? 0,
     });
     if (this.history.length > this.windowSize) {
@@ -283,11 +245,15 @@ export class SmoothingVoter {
 
     const counts = new Map();
     const confSums = new Map();
+    const categories = new Map();
 
     for (const item of this.history) {
       if (!item.label) continue;
       counts.set(item.label, (counts.get(item.label) || 0) + 1);
       confSums.set(item.label, (confSums.get(item.label) || 0) + item.confidence);
+      if (item.category) {
+        categories.set(item.label, item.category);
+      }
     }
 
     let bestLabel = null;
@@ -304,6 +270,7 @@ export class SmoothingVoter {
       const avgConf = confSums.get(bestLabel) / bestCount;
       return {
         label: bestLabel,
+        category: categories.get(bestLabel) || null,
         confidence: Number(avgConf.toFixed(4)),
         votes: bestCount,
         windowSize: this.history.length,
@@ -312,6 +279,7 @@ export class SmoothingVoter {
 
     return {
       label: null,
+      category: null,
       confidence: 0,
       votes: bestCount,
       windowSize: this.history.length,
@@ -330,7 +298,7 @@ export class SmoothingVoter {
 export class Classifier {
   /**
    * @param {Array<any>|any} _frames Secuencia de frames o un frame individual
-   * @returns {{ label: string|null, confidence: number, details?: Object }}
+   * @returns {{ label: string|null, category?: string|null, confidence: number, details?: Object }}
    */
   predict(_frames) {
     throw new Error('Classifier.predict(frames) debe ser implementado por la subclase');
@@ -340,48 +308,58 @@ export class Classifier {
 }
 
 /**
- * Implementación geométrica determinista en navegador.
- * Soporta tanto predicción directa sobre una ventana de frames `predict(frames)`
- * como acumulación progresiva frame a frame con buffer temporal interno y votación de N frames.
+ * Implementación geométrica declarativa en navegador.
+ * Soporta tanto predicción directa sobre un lote de frames `predict(frames)`
+ * como acumulación progresiva frame a frame con ventana temporal en milisegundos y suavizado por votación.
  */
 export class GeometricClassifier extends Classifier {
   /**
    * @param {Object} [options]
-   * @param {number} [options.bufferSize=15] Tamaño del buffer temporal para señas dinámicas
+   * @param {number} [options.windowMs=750] Ventana temporal en milisegundos para señas dinámicas (15–30 FPS)
+   * @param {number} [options.bufferSize=30] Límite máximo de muestras en el buffer temporal
    * @param {number} [options.smoothingWindow=5] Ventana de frames para suavizado por votación
    * @param {number} [options.minVotes=3] Votos mínimos para emitir etiqueta suavizada
+   * @param {number} [options.minConfidence=0.72] Umbral mínimo de confianza para no rechazar
+   * @param {number} [options.minMargin=0.05] Margen mínimo sobre el segundo mejor candidato distinto
+   * @param {'all'|'legacy'|'alphabet'|'numbers'} [options.mode='all'] Filtro de categoría del catálogo
    */
   constructor(options = {}) {
     super();
-    this.bufferSize = options.bufferSize ?? 15;
+    this.windowMs = options.windowMs ?? 750;
+    this.bufferSize = options.bufferSize ?? 30;
+    this.minConfidence = options.minConfidence ?? 0.72;
+    this.minMargin = options.minMargin ?? 0.05;
+    this.mode = options.mode ?? 'all';
+    this.assumedFps = options.assumedFps ?? 25;
     this.frameBuffer = [];
+    this._seqCounter = 0;
     this.voter = new SmoothingVoter(
       options.smoothingWindow ?? 5,
       options.minVotes ?? Math.ceil((options.smoothingWindow ?? 5) / 2)
     );
   }
 
+  setMode(mode) {
+    this.mode = mode || 'all';
+    this.voter.reset();
+  }
+
   /**
-   * Clasifica un frame o una lista de frames.
-   * - Si recibe un arreglo de frames (`[frame1, frame2, ...]`), evalúa los gestos sobre esa ventana
-   *   aplicando votación sobre los frames del lote y detección de movimiento dinámico ("Hola").
-   * - Si recibe un único frame (`{ rightHand, leftHand }` o `landmarks[21]`), lo añade al buffer
-   *   temporal interno y aplica suavizado por votación.
+   * Clasifica un frame individual o una lista de frames.
    *
    * @param {Array<any>|Object} framesInput
-   * @returns {{ label: string|null, confidence: number, details: Object }}
+   * @returns {{ label: string|null, category: string|null, confidence: number, details: Object }}
    */
   predict(framesInput) {
     if (!framesInput) {
       return {
         label: null,
+        category: null,
         confidence: 0,
         details: { reason: 'EMPTY_INPUT', states: null },
       };
     }
 
-    // Distinguir si `framesInput` es un único arreglo de 21 puntos (`[{x,y,z}, ...]`)
-    // o una secuencia temporal de varios frames (`[frame1, frame2, ...]`).
     const isSingleHandArray =
       Array.isArray(framesInput) &&
       framesInput.length === 21 &&
@@ -392,12 +370,15 @@ export class GeometricClassifier extends Classifier {
       return this._predictBatch(framesInput);
     }
 
-    // Modo frame individual con buffer temporal y suavizado
-    const hand = extractHandFromFrame(framesInput);
-    if (!hand || !isValidHandLandmarks(hand)) {
-      const voted = this.voter.push({ label: null, confidence: 0 });
+    // Modo frame individual con ventana temporal en milisegundos y votación
+    const fallbackTs = this._seqCounter++ * (1000 / this.assumedFps);
+    const meta = extractHandWithMeta(framesInput, fallbackTs);
+
+    if (!meta || !isValidHandLandmarks(meta.landmarks)) {
+      const voted = this.voter.push({ label: null, category: null, confidence: 0 });
       return {
         label: voted.label,
+        category: voted.category,
         confidence: voted.confidence,
         details: {
           rawLabel: null,
@@ -408,90 +389,148 @@ export class GeometricClassifier extends Classifier {
       };
     }
 
-    this.frameBuffer.push(hand);
-    if (this.frameBuffer.length > this.bufferSize) {
+    this.frameBuffer.push(meta);
+    // Podar entradas fuera de la ventana temporal en ms o por tope de memoria
+    const cutoffTs = meta.timestampMs - this.windowMs;
+    while (
+      this.frameBuffer.length > this.bufferSize ||
+      (this.frameBuffer.length > 2 && this.frameBuffer[0].timestampMs < cutoffTs)
+    ) {
       this.frameBuffer.shift();
     }
 
-    const staticRes = classifyStaticHand(hand);
-    let rawLabel = staticRes.label;
-    let rawConfidence = staticRes.confidence;
-    let reason = staticRes.reason;
+    const states = fingerStates(meta.landmarks, { handedness: meta.handedness });
+    const trajContext = buildTrajectoryContext(this.frameBuffer, this.windowMs);
+    const matched = matchCatalog(getSignCatalog(), states, trajContext, {
+      minConfidence: this.minConfidence,
+      minMargin: this.minMargin,
+      mode: this.mode,
+    });
 
-    // Si la mano está abierta y hay oscilación lateral en el buffer temporal -> "Hola"
-    const wave = detectWaveMotion(this.frameBuffer);
-    if (rawLabel === SIGN_LABELS.MANO_ABIERTA && wave.isWaving) {
-      rawLabel = SIGN_LABELS.HOLA;
-      rawConfidence = 0.97;
-      reason = `Mano abierta con saludo dinámico (${wave.directionChanges} cambios de dirección)`;
-    }
+    const voted = this.voter.push({
+      label: matched.label,
+      category: matched.category,
+      confidence: matched.confidence,
+    });
 
-    const voted = this.voter.push({ label: rawLabel, confidence: rawConfidence });
+    const wave = detectWaveMotion(this.frameBuffer.map((f) => f.landmarks));
 
     return {
       label: voted.label,
+      category: voted.category || matched.category,
       confidence: voted.confidence,
       details: {
-        rawLabel,
-        rawConfidence,
+        ...matched.details,
+        rawLabel: matched.label,
+        rawCategory: matched.category,
+        rawConfidence: matched.confidence,
         smoothedLabel: voted.label,
         votes: voted.votes,
-        reason,
-        states: staticRes.states,
+        reason: voted.label ? matched.details.reason : matched.details.reason || 'LOW_CONFIDENCE',
+        states,
         wave,
+        trajectory: trajContext,
       },
     };
   }
 
   /**
-   * Evalúa un lote completo de frames (p. ej. 5 a 15 frames) de forma determinista y sin estado residual.
+   * Evalúa un lote completo de frames de forma determinista y sin estado residual.
    */
   _predictBatch(frames) {
     if (frames.length === 0) {
       return {
         label: null,
+        category: null,
         confidence: 0,
         details: { reason: 'EMPTY_BATCH', states: null },
       };
     }
 
-    const hands = [];
+    const stepMs = 1000 / this.assumedFps;
+    const validMetas = [];
     const batchVoter = new SmoothingVoter(
       frames.length,
       Math.max(1, Math.ceil(frames.length * 0.5))
     );
-    let lastValidStatic = null;
+    let lastValidStates = null;
+    let lastStaticMatch = null;
+    const catalog = getSignCatalog();
+    const staticCatalog = catalog.filter((s) => s.tipo === SIGN_TYPES.ESTATICA);
+    const dynamicCatalog = catalog.filter((s) => s.tipo === SIGN_TYPES.DINAMICA);
 
-    for (const frame of frames) {
-      const hand = extractHandFromFrame(frame);
-      if (hand && isValidHandLandmarks(hand)) {
-        hands.push(hand);
-        const res = classifyStaticHand(hand);
-        lastValidStatic = res;
-        batchVoter.push({ label: res.label, confidence: res.confidence });
+    for (let i = 0; i < frames.length; i++) {
+      const meta = extractHandWithMeta(frames[i], i * stepMs);
+      if (meta && isValidHandLandmarks(meta.landmarks)) {
+        validMetas.push(meta);
+        const st = fingerStates(meta.landmarks, { handedness: meta.handedness });
+        lastValidStates = st;
+        const m = matchCatalog(staticCatalog, st, null, {
+          minConfidence: this.minConfidence,
+          minMargin: this.minMargin,
+          mode: this.mode,
+        });
+        lastStaticMatch = m;
+        batchVoter.push({
+          label: m.label,
+          category: m.category,
+          confidence: m.confidence,
+        });
       } else {
-        batchVoter.push({ label: null, confidence: 0 });
+        batchVoter.push({ label: null, category: null, confidence: 0 });
       }
     }
 
-    if (hands.length === 0 || !lastValidStatic) {
+    if (validMetas.length === 0 || !lastValidStates) {
       return {
         label: null,
+        category: null,
         confidence: 0,
         details: { reason: 'INVALID_OR_NOISY_LANDMARKS', states: null },
       };
     }
 
-    const wave = detectWaveMotion(hands);
+    const trajContext = buildTrajectoryContext(validMetas, Math.max(this.windowMs, frames.length * stepMs));
+    const wave = detectWaveMotion(validMetas.map((m) => m.landmarks));
+
+    // Evaluar primero si la secuencia completa activa una seña dinámica sobre el estado representativo
+    const representativeMeta = validMetas[Math.floor(validMetas.length / 2)];
+    const repStates = fingerStates(representativeMeta.landmarks, {
+      handedness: representativeMeta.handedness,
+    });
+    const dynamicMatch = matchCatalog(dynamicCatalog, repStates, trajContext, {
+      minConfidence: this.minConfidence,
+      minMargin: this.minMargin,
+      mode: this.mode,
+    });
+
+    if (dynamicMatch.label && validMetas.length >= Math.max(3, Math.ceil(frames.length * 0.5))) {
+      return {
+        label: dynamicMatch.label,
+        category: dynamicMatch.category,
+        confidence: dynamicMatch.confidence,
+        details: {
+          ...dynamicMatch.details,
+          states: repStates,
+          votes: validMetas.length,
+          totalFrames: frames.length,
+          wave,
+          trajectory: trajContext,
+        },
+      };
+    }
+
+    // Consenso estático sobre el lote
     const consensus = batchVoter.history.reduce(
       (acc, cur) => {
         if (cur.label) {
           acc.counts[cur.label] = (acc.counts[cur.label] || 0) + 1;
           acc.conf[cur.label] = (acc.conf[cur.label] || 0) + cur.confidence;
+          acc.cat[cur.label] = cur.category;
         }
         return acc;
       },
-      { counts: {}, conf: {} }
+      { counts: {}, conf: {}, cat: {} }
     );
 
     let bestLabel = null;
@@ -507,38 +546,43 @@ export class GeometricClassifier extends Classifier {
     if (!bestLabel || bestCount < minRequired) {
       return {
         label: null,
-        confidence: 0,
+        category: null,
+        confidence: lastStaticMatch?.confidence ?? 0,
         details: {
-          reason: 'NO_CONSENSUS_OR_NOISY_BATCH',
-          states: lastValidStatic.states,
+          ...(lastStaticMatch?.details || {}),
+          reason:
+            validMetas.length < minRequired
+              ? 'NO_CONSENSUS_OR_NOISY_BATCH'
+              : 'LOW_CONFIDENCE',
+          states: lastValidStates,
           wave,
+          trajectory: trajContext,
         },
       };
     }
 
-    let finalLabel = bestLabel;
-    let finalConf = Number((consensus.conf[bestLabel] / bestCount).toFixed(4));
-
-    if (finalLabel === SIGN_LABELS.MANO_ABIERTA && wave.isWaving) {
-      finalLabel = SIGN_LABELS.HOLA;
-      finalConf = 0.97;
-    }
+    const finalConf = Number((consensus.conf[bestLabel] / bestCount).toFixed(4));
+    const finalCategory = consensus.cat[bestLabel] || null;
 
     return {
-      label: finalLabel,
+      label: bestLabel,
+      category: finalCategory,
       confidence: finalConf,
       details: {
-        reason: lastValidStatic.reason,
-        states: lastValidStatic.states,
+        ...(lastStaticMatch?.details || {}),
+        category: finalCategory,
+        states: lastValidStates,
         votes: bestCount,
         totalFrames: frames.length,
         wave,
+        trajectory: trajContext,
       },
     };
   }
 
   reset() {
     this.frameBuffer = [];
+    this._seqCounter = 0;
     this.voter.reset();
   }
 }
@@ -559,6 +603,7 @@ export class ModelClassifier extends Classifier {
     }
     return {
       label: null,
+      category: null,
       confidence: 0,
       details: { reason: 'MODEL_NOT_LOADED' },
     };
@@ -566,24 +611,28 @@ export class ModelClassifier extends Classifier {
 }
 
 /**
- * Función de conveniencia `classify(framesOrLandmarks)` para uso funcional directo.
+ * Función de conveniencia `classify(framesOrLandmarks, options)` para uso funcional directo.
  */
-export function classify(framesOrLandmarks) {
+export function classify(framesOrLandmarks, options = {}) {
   const isSingleHand =
     Array.isArray(framesOrLandmarks) &&
     framesOrLandmarks.length === 21 &&
     framesOrLandmarks[0] &&
     typeof framesOrLandmarks[0].x === 'number';
 
-  if (isSingleHand || (!Array.isArray(framesOrLandmarks) && typeof framesOrLandmarks === 'object')) {
-    const res = classifyStaticHand(framesOrLandmarks);
+  if (
+    isSingleHand ||
+    (!Array.isArray(framesOrLandmarks) && typeof framesOrLandmarks === 'object' && framesOrLandmarks !== null)
+  ) {
+    const res = classifyStaticHand(framesOrLandmarks, options);
     return {
       label: res.label,
+      category: res.category,
       confidence: res.confidence,
-      details: { reason: res.reason, states: res.states },
+      details: res.details,
     };
   }
 
-  const clf = new GeometricClassifier();
+  const clf = new GeometricClassifier(options);
   return clf.predict(framesOrLandmarks);
 }

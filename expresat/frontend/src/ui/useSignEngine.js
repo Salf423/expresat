@@ -24,6 +24,7 @@ export function useSignEngine({
   trackingConfig = { enabled: true },
   classifierInstance = null,
   enableRemoteTransport = true,
+  recognitionMode = 'all',
 } = {}) {
   const [fps, setFps] = useState({ cameraFps: 0, inferenceFps: 0 });
   const [engineStatus, setEngineStatus] = useState({
@@ -36,6 +37,7 @@ export function useSignEngine({
 
   const [gesture, setGesture] = useState({
     label: null,
+    category: null,
     confidence: 0,
     source: 'local', // 'local' | 'remote'
     details: null,
@@ -66,6 +68,12 @@ export function useSignEngine({
     trackingConfigRef.current = trackingConfig;
   }, [trackingConfig]);
 
+  useEffect(() => {
+    if (classifierRef.current && typeof classifierRef.current.setMode === 'function') {
+      classifierRef.current.setMode(recognitionMode);
+    }
+  }, [recognitionMode]);
+
   // 1. Inicializar Transporte WebSocket Opcional (desacoplado del motor de visión)
   useEffect(() => {
     if (!enableRemoteTransport) {
@@ -89,6 +97,7 @@ export function useSignEngine({
       if (msg.type === 'translation' && msg.payload?.label) {
         setGesture((prev) => ({
           label: msg.payload.label,
+          category: msg.payload.category ?? prev.category,
           confidence: msg.payload.confidence ?? prev.confidence,
           source: 'remote',
           details: {
@@ -166,7 +175,8 @@ export function useSignEngine({
     const classifier =
       classifierInstance ||
       new GeometricClassifier({
-        bufferSize: 15,
+        windowMs: 750,
+        bufferSize: 30,
         smoothingWindow: 5,
         minVotes: 3,
       });
@@ -240,17 +250,22 @@ export function useSignEngine({
       if (localPrediction.label) {
         setGesture({
           label: localPrediction.label,
+          category: localPrediction.category || localPrediction.details?.category || null,
           confidence: localPrediction.confidence,
           source: 'local',
           details: localPrediction.details,
         });
-      } else if (frameData.hands.length === 0) {
-        // Actualizar detalles de dedos cuando no hay mano sin borrar la última palabra traducida
-        setGesture((prev) => ({
-          ...prev,
+      } else if (frameData.hands.length > 0) {
+        // Hay mano frente a cámara pero fue rechazada por baja confianza (LOW_CONFIDENCE)
+        setGesture({
+          label: null,
+          category: null,
+          confidence: localPrediction.confidence,
+          source: 'local',
           details: localPrediction.details,
-        }));
+        });
       } else {
+        // No hay mano en escena: conservar última etiqueta o limpiar detalles
         setGesture((prev) => ({
           ...prev,
           details: localPrediction.details,
@@ -305,6 +320,7 @@ export function useSignEngine({
     classifierRef.current?.reset();
     setGesture({
       label: null,
+      category: null,
       confidence: 0,
       source: 'local',
       details: null,
@@ -319,6 +335,7 @@ export function useSignEngine({
     wsSnapshot,
     landmarksCount,
     telemetry,
+    latestFrameRef,
     reconnectTransport,
     clearGesture,
   };

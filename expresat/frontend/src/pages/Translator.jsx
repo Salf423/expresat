@@ -36,12 +36,19 @@ const FINGER_NAMES_ES = Object.freeze([
   { key: 'pinky', label: 'Meñique' },
 ]);
 
+const CATEGORY_LABELS_ES = Object.freeze({
+  letra: 'Letra',
+  numero: 'Número',
+  basica: 'Seña base',
+});
+
 const Translator = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   const [copied, setCopied] = useState(false);
   const [debugVisible, setDebugVisible] = useState(false);
+  const [recognitionMode, setRecognitionMode] = useState('all');
   const [trackingConfig, setTrackingConfig] = useState({
     enabled: true,
     showTrails: true,
@@ -67,6 +74,7 @@ const Translator = () => {
     canvasRef,
     trackingConfig,
     enableRemoteTransport: true,
+    recognitionMode,
   });
 
   // Atajos de teclado: Ctrl+Shift+D (Debug) y Ctrl+Shift+T (Tracker)
@@ -85,6 +93,10 @@ const Translator = () => {
   }, []);
 
   const translation = gesture.label || '';
+  const gestureCategory = gesture.category || gesture.details?.category || null;
+  const categoryLabel = gestureCategory ? CATEGORY_LABELS_ES[gestureCategory] || gestureCategory : null;
+  const isLowConfidenceRejection =
+    !translation && gesture.details?.reason === 'LOW_CONFIDENCE';
   const confidencePct = gesture.confidence ? Math.round(gesture.confidence * 100) : 0;
   const fingerStates = gesture.details?.states || null;
   const isWsOpen = wsSnapshot.state === WS_STATES.OPEN;
@@ -649,33 +661,73 @@ const Translator = () => {
 
         {/* Panel 2: Live Translation & Finger State */}
         <section className="glass-panel translator-panel" aria-label="Resultado de Traducción">
-          <div className="panel-header">
+          <div className="panel-header" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
             <MessageSquare size={20} color="var(--accent-secondary)" />
             <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>Gesto Detectado</h2>
-            {translation && (
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.35rem' }}>
+            <div
+              role="group"
+              aria-label="Modo de vocabulario LSM"
+              style={{
+                marginLeft: 'auto',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.3rem',
+                flexWrap: 'wrap',
+              }}
+            >
+              {[
+                { id: 'all', label: 'Todo' },
+                { id: 'alphabet', label: 'Alfabeto' },
+                { id: 'numbers', label: 'Números' },
+                { id: 'legacy', label: 'Básicas' },
+              ].map((m) => (
                 <button
+                  key={m.id}
                   type="button"
-                  onClick={handleSpeak}
-                  className="btn-icon"
-                  title="Pronunciar texto en voz alta"
-                  aria-label="Pronunciar traducción"
-                  style={{ width: '32px', height: '32px' }}
+                  data-testid={`mode-btn-${m.id}`}
+                  onClick={() => setRecognitionMode(m.id)}
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '0.2rem 0.55rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${
+                      recognitionMode === m.id ? 'var(--accent-primary)' : 'var(--panel-border)'
+                    }`,
+                    background:
+                      recognitionMode === m.id ? 'var(--accent-primary-bg)' : 'var(--input-bg)',
+                    color: recognitionMode === m.id ? 'var(--accent-primary)' : 'var(--text-muted)',
+                    fontWeight: recognitionMode === m.id ? 700 : 500,
+                    cursor: 'pointer',
+                  }}
                 >
-                  <Volume2 size={16} />
+                  {m.label}
                 </button>
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="btn-icon"
-                  title="Copiar al portapapeles"
-                  aria-label="Copiar traducción al portapapeles"
-                  style={{ width: '32px', height: '32px' }}
-                >
-                  {copied ? <Check size={16} color="var(--success-color)" /> : <Copy size={16} />}
-                </button>
-              </div>
-            )}
+              ))}
+              {translation && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleSpeak}
+                    className="btn-icon"
+                    title="Pronunciar texto en voz alta"
+                    aria-label="Pronunciar traducción"
+                    style={{ width: '32px', height: '32px' }}
+                  >
+                    <Volume2 size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    className="btn-icon"
+                    title="Copiar al portapapeles"
+                    aria-label="Copiar traducción al portapapeles"
+                    style={{ width: '32px', height: '32px' }}
+                  >
+                    {copied ? <Check size={16} color="var(--success-color)" /> : <Copy size={16} />}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <div
@@ -694,17 +746,42 @@ const Translator = () => {
           >
             {translation ? (
               <div style={{ textAlign: 'center', animation: 'fade-up 0.2s ease-out' }}>
-                <span
-                  className="chip"
+                <div
                   style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    flexWrap: 'wrap',
                     marginBottom: '0.75rem',
-                    background: 'var(--success-bg)',
-                    color: 'var(--success-color)',
-                    borderColor: 'transparent',
                   }}
                 >
-                  Confianza: {confidencePct}% ({gesture.source === 'remote' ? 'Servidor' : 'Local'})
-                </span>
+                  {categoryLabel && (
+                    <span
+                      data-testid="detected-category"
+                      className="chip"
+                      style={{
+                        background: 'var(--accent-primary-bg)',
+                        color: 'var(--accent-primary)',
+                        borderColor: 'var(--accent-primary)',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Categoría: {categoryLabel}
+                    </span>
+                  )}
+                  <span
+                    data-testid="detected-confidence"
+                    className="chip"
+                    style={{
+                      background: 'var(--success-bg)',
+                      color: 'var(--success-color)',
+                      borderColor: 'transparent',
+                    }}
+                  >
+                    Confianza: {confidencePct}% ({gesture.source === 'remote' ? 'Servidor' : 'Local'})
+                  </span>
+                </div>
                 <p
                   data-testid="detected-gesture"
                   className="translation-text"
@@ -712,6 +789,52 @@ const Translator = () => {
                 >
                   {translation}
                 </p>
+                {Array.isArray(gesture.details?.aliases) && gesture.details.aliases.length > 0 && (
+                  <p
+                    data-testid="detected-aliases"
+                    style={{
+                      margin: '0.45rem 0 0 0',
+                      fontSize: '0.78rem',
+                      color: 'var(--text-muted)',
+                    }}
+                  >
+                    Equivalente en LSM: {gesture.details.aliases.join(', ')}
+                  </p>
+                )}
+              </div>
+            ) : isLowConfidenceRejection ? (
+              <div
+                style={{
+                  textAlign: 'center',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '0.6rem',
+                }}
+              >
+                <span
+                  data-testid="detected-category"
+                  className="chip"
+                  style={{
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    color: '#F59E0B',
+                    borderColor: 'transparent',
+                  }}
+                >
+                  Baja confianza ({confidencePct}%)
+                </span>
+                <p
+                  data-testid="detected-gesture"
+                  className="translation-placeholder"
+                  style={{ margin: 0, color: 'var(--text-color)', fontWeight: 600 }}
+                >
+                  No reconocido
+                </p>
+                <span
+                  style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', maxWidth: '300px' }}
+                >
+                  Ajusta la postura u orientación de tu mano frente a la cámara
+                </span>
               </div>
             ) : (
               <div
@@ -732,9 +855,9 @@ const Translator = () => {
                   Esperando señas frente a la cámara...
                 </p>
                 <span
-                  style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', maxWidth: '300px' }}
+                  style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', maxWidth: '320px' }}
                 >
-                  Realiza Mano Abierta, Puño, Uno, Dos, OK/Pinza, Bien, Te Quiero, Lunes u Hola
+                  Realiza números (0–10), letras del alfabeto LSM (A–Z, Ñ, LL, RR) o señas base
                 </span>
               </div>
             )}
