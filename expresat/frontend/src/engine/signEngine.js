@@ -727,7 +727,9 @@ export class SignEngine {
     let rawPose = null;
 
     if (this._handLandmarker) {
-      const handRes = this._handLandmarker.detectForVideo(video, timestampMs);
+      const handRes = this._handLandmarker.detectForVideo(video, timestampMs, {
+        imageProcessingOptions: { rotationDegrees: 0 },
+      });
       rawHands = handRes?.landmarks || [];
       rawHandedness = handRes?.handedness || [];
 
@@ -805,7 +807,7 @@ export class SignEngine {
 
   _dispatchNormalizedResults({ pose, hands, handedness, timestamp, latencyMs }) {
     const filtered = this.smoothLandmarks
-      ? this._emaFilter.filter({ pose, hands, handedness })
+      ? this._emaFilter.smoothResults({ pose, hands, handedness })
       : { pose, hands, handedness };
 
     // En cámara frontal (selfie), MediaPipe etiqueta la mano derecha del usuario como 'Left'
