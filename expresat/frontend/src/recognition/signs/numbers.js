@@ -271,6 +271,7 @@ export const NUMBER_SIGNS = [
     grupoConfundible: CONFUSABLE_GROUPS.G6_CUATRO_CINCO,
     estado: 'LISTA',
     aliases: [],
+    staticCounterparts: ['5', 'Mano Abierta'],
     priority: 0.04,
     orientacion: { directions: ['ANY'], palmFacing: ['ANY'] },
     dedos: {

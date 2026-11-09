@@ -707,4 +707,258 @@ export const SYNTHETIC_LETTERS = Object.freeze({
       palmFacing: 'BACK',
       ...opts,
     }),
+
+  // ============================================================================
+  // Letras Dinámicas del Alfabeto LSM (J, K, LL, Ñ, Q, RR, X, Z)
+  // Devuelven una secuencia de frames con `timestampMs` para cualquier `fps` (15–30)
+  // ============================================================================
+  J: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const scale = opts.scale ?? 1.0;
+    const stepMs = 1000 / fps;
+    const basePalm = 0.15 * scale;
+    const tpl = [
+      { x: 0.35, y: -0.48 },
+      { x: 0.35, y: -0.22 },
+      { x: 0.35, y: 0.05 },
+      { x: 0.32, y: 0.28 },
+      { x: 0.2, y: 0.44 },
+      { x: 0.0, y: 0.48 },
+      { x: -0.22, y: 0.42 },
+      { x: -0.35, y: 0.24 },
+      { x: -0.38, y: 0.05 },
+    ];
+    const count = Math.max(9, Math.ceil((650 / 1000) * fps));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const u = (i / (count - 1)) * (tpl.length - 1);
+      const idx = Math.min(tpl.length - 2, Math.floor(u));
+      const frac = u - idx;
+      const dx = (tpl[idx].x + frac * (tpl[idx + 1].x - tpl[idx].x)) * 0.65 * basePalm;
+      const dy = (tpl[idx].y + frac * (tpl[idx + 1].y - tpl[idx].y)) * 0.65 * basePalm;
+      frames.push(
+        buildSyntheticHand({
+          thumb: false,
+          index: false,
+          middle: false,
+          ring: false,
+          pinky: true,
+          palmFacing: 'FRONT',
+          ...opts,
+          offsetX: (opts.offsetX ?? 0.5) + dx,
+          offsetY: (opts.offsetY ?? 0.7) + dy,
+          timestampMs: i * stepMs,
+        })
+      );
+    }
+    return frames;
+  },
+
+  K: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const scale = opts.scale ?? 1.0;
+    const stepMs = 1000 / fps;
+    const basePalm = 0.15 * scale;
+    const count = Math.max(8, Math.ceil((600 / 1000) * fps));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const phase = (i / (count - 1)) * Math.PI * 2;
+      const dy = -0.18 * basePalm * Math.sin(phase);
+      frames.push(
+        buildSyntheticHand({
+          thumbMode: 'BETWEEN_PK',
+          index: true,
+          middle: 'SEMI_PK',
+          ring: false,
+          pinky: false,
+          palmFacing: 'FRONT',
+          ...opts,
+          offsetY: (opts.offsetY ?? 0.7) + dy,
+          timestampMs: i * stepMs,
+        })
+      );
+    }
+    return frames;
+  },
+
+  LL: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const scale = opts.scale ?? 1.0;
+    const stepMs = 1000 / fps;
+    const basePalm = 0.15 * scale;
+    const count = Math.max(8, Math.ceil((600 / 1000) * fps));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const dx = ((i / (count - 1)) - 0.5) * 0.35 * basePalm;
+      frames.push(
+        buildSyntheticHand({
+          thumb: true,
+          index: true,
+          middle: false,
+          ring: false,
+          pinky: false,
+          palmFacing: 'FRONT',
+          ...opts,
+          offsetX: (opts.offsetX ?? 0.5) + dx,
+          timestampMs: i * stepMs,
+        })
+      );
+    }
+    return frames;
+  },
+
+  Ñ: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const scale = opts.scale ?? 1.0;
+    const stepMs = 1000 / fps;
+    const basePalm = 0.15 * scale;
+    const count = Math.max(8, Math.ceil((600 / 1000) * fps));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const phase = (i / (count - 1)) * Math.PI * 2;
+      const dx = 0.16 * basePalm * Math.sin(phase);
+      frames.push(
+        buildSyntheticHand({
+          thumb: false,
+          index: true,
+          middle: true,
+          ring: false,
+          pinky: false,
+          adducted: true,
+          rotateDeg: 180,
+          palmFacing: 'BACK',
+          ...opts,
+          offsetX: (opts.offsetX ?? 0.5) + dx,
+          timestampMs: i * stepMs,
+        })
+      );
+    }
+    return frames;
+  },
+
+  Q: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const scale = opts.scale ?? 1.0;
+    const stepMs = 1000 / fps;
+    const basePalm = 0.15 * scale;
+    const count = Math.max(8, Math.ceil((600 / 1000) * fps));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const phase = (i / (count - 1)) * Math.PI * 2;
+      const dx = 0.16 * basePalm * Math.sin(phase);
+      frames.push(
+        buildSyntheticHand({
+          thumbMode: 'HOOKED_Q',
+          index: 'HOOKED',
+          middle: false,
+          ring: false,
+          pinky: false,
+          rotateDeg: 180,
+          palmFacing: 'BACK',
+          ...opts,
+          offsetX: (opts.offsetX ?? 0.5) + dx,
+          timestampMs: i * stepMs,
+        })
+      );
+    }
+    return frames;
+  },
+
+  RR: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const scale = opts.scale ?? 1.0;
+    const stepMs = 1000 / fps;
+    const basePalm = 0.15 * scale;
+    const count = Math.max(8, Math.ceil((600 / 1000) * fps));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const dx = ((i / (count - 1)) - 0.5) * 0.35 * basePalm;
+      frames.push(
+        buildSyntheticHand({
+          thumb: false,
+          index: true,
+          middle: true,
+          ring: false,
+          pinky: false,
+          crossIndexMiddle: true,
+          palmFacing: 'FRONT',
+          ...opts,
+          offsetX: (opts.offsetX ?? 0.5) + dx,
+          timestampMs: i * stepMs,
+        })
+      );
+    }
+    return frames;
+  },
+
+  X: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const scale = opts.scale ?? 1.0;
+    const stepMs = 1000 / fps;
+    const basePalm = 0.15 * scale;
+    const count = Math.max(8, Math.ceil((600 / 1000) * fps));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const phase = (i / (count - 1)) * Math.PI * 2;
+      const dx = 0.16 * basePalm * Math.sin(phase);
+      frames.push(
+        buildSyntheticHand({
+          thumbMode: 'HOOKED_Q',
+          index: 'HOOKED',
+          middle: false,
+          ring: false,
+          pinky: false,
+          palmFacing: 'FRONT',
+          ...opts,
+          offsetX: (opts.offsetX ?? 0.5) + dx,
+          timestampMs: i * stepMs,
+        })
+      );
+    }
+    return frames;
+  },
+
+  Z: (opts = {}) => {
+    const fps = opts.fps ?? 25;
+    const scale = opts.scale ?? 1.0;
+    const stepMs = 1000 / fps;
+    const basePalm = 0.15 * scale;
+    const tpl = [
+      { x: -0.45, y: -0.42 },
+      { x: -0.15, y: -0.42 },
+      { x: 0.15, y: -0.42 },
+      { x: 0.45, y: -0.42 },
+      { x: 0.22, y: -0.18 },
+      { x: 0.0, y: 0.0 },
+      { x: -0.22, y: 0.18 },
+      { x: -0.45, y: 0.42 },
+      { x: -0.15, y: 0.42 },
+      { x: 0.15, y: 0.42 },
+      { x: 0.45, y: 0.42 },
+    ];
+    const count = Math.max(11, Math.ceil((700 / 1000) * fps));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const u = (i / (count - 1)) * (tpl.length - 1);
+      const idx = Math.min(tpl.length - 2, Math.floor(u));
+      const frac = u - idx;
+      const dx = (tpl[idx].x + frac * (tpl[idx + 1].x - tpl[idx].x)) * 0.75 * basePalm;
+      const dy = (tpl[idx].y + frac * (tpl[idx + 1].y - tpl[idx].y)) * 0.75 * basePalm;
+      frames.push(
+        buildSyntheticHand({
+          thumb: false,
+          index: true,
+          middle: false,
+          ring: false,
+          pinky: false,
+          palmFacing: 'FRONT',
+          ...opts,
+          offsetX: (opts.offsetX ?? 0.5) + dx,
+          offsetY: (opts.offsetY ?? 0.7) + dy,
+          timestampMs: i * stepMs,
+        })
+      );
+    }
+    return frames;
+  },
 });

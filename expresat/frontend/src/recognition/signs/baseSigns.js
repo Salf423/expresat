@@ -18,6 +18,7 @@ export const BASE_SIGNS = [
     grupoConfundible: CONFUSABLE_GROUPS.G6_CUATRO_CINCO,
     estado: 'LISTA',
     aliases: [],
+    staticCounterparts: ['Mano Abierta', '5'],
     priority: 0.05,
     orientacion: { directions: ['ANY'], palmFacing: ['ANY'] },
     dedos: {

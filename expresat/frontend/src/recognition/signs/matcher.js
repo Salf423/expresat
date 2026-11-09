@@ -292,13 +292,20 @@ export function scoreSign(signDef, features, trajectoryContext = null) {
 }
 
 /**
- * Verifica si dos entradas del catálogo comparten la misma configuración física (son alias entre sí).
+ * Verifica si dos entradas del catálogo comparten la misma configuración física (son alias entre sí)
+ * o si `entryA` es la versión dinámica que promueve a su contraparte estática `entryB`.
  */
-function areAliases(entryA, entryB) {
+function areAliasesOrCounterparts(entryA, entryB) {
   if (!entryA || !entryB) return false;
   if (entryA.id === entryB.id || entryA.label === entryB.label) return true;
   if (Array.isArray(entryA.aliases) && entryA.aliases.includes(entryB.label)) return true;
   if (Array.isArray(entryB.aliases) && entryB.aliases.includes(entryA.label)) return true;
+  if (
+    Array.isArray(entryA.staticCounterparts) &&
+    entryA.staticCounterparts.includes(entryB.label)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -378,10 +385,10 @@ export function matchCatalog(catalog, features, trajectoryContext = null, option
 
   const best = scored[0];
 
-  // Buscar el segundo mejor candidato que NO sea un alias geométrico del primero
+  // Buscar el segundo mejor candidato que NO sea un alias geométrico ni la contraparte estática promovida del primero
   let secondDistinct = null;
   for (let i = 1; i < scored.length; i++) {
-    if (!areAliases(best.entry, scored[i].entry)) {
+    if (!areAliasesOrCounterparts(best.entry, scored[i].entry)) {
       secondDistinct = scored[i];
       break;
     }
