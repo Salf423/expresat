@@ -54,3 +54,9 @@ export {
   SYNTHETIC_NUMBERS,
   SYNTHETIC_LETTERS,
 } from './syntheticHand.js';
+
+export {
+  addLandmarkJitter,
+  evaluateConfusionMatrix,
+  buildFullSyntheticBenchmark,
+} from './confusionMatrix.js';

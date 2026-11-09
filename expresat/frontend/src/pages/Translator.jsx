@@ -49,6 +49,8 @@ const Translator = () => {
   const [copied, setCopied] = useState(false);
   const [debugVisible, setDebugVisible] = useState(false);
   const [recognitionMode, setRecognitionMode] = useState('all');
+  const [devTargetLabel, setDevTargetLabel] = useState('A');
+  const [devRecording, setDevRecording] = useState(false);
   const [trackingConfig, setTrackingConfig] = useState({
     enabled: true,
     showTrails: true,
@@ -68,6 +70,7 @@ const Translator = () => {
     wsSnapshot,
     landmarksCount,
     telemetry,
+    latestFrameRef,
     reconnectTransport,
   } = useSignEngine({
     videoRef,
@@ -76,6 +79,45 @@ const Translator = () => {
     enableRemoteTransport: true,
     recognitionMode,
   });
+
+  const handleRecordRealFixture = () => {
+    if (devRecording) return;
+    setDevRecording(true);
+    const captured = [];
+    const startTs = performance.now();
+
+    const timer = window.setInterval(() => {
+      const current = latestFrameRef?.current;
+      const now = performance.now();
+      if (current && Array.isArray(current.hands) && current.hands.length > 0) {
+        captured.push({
+          landmarks: current.hands[0],
+          handedness: current.rightHand ? 'Right' : 'Left',
+          timestampMs: Math.round(now - startTs),
+        });
+      }
+      if (now - startTs >= 1800) {
+        window.clearInterval(timer);
+        setDevRecording(false);
+        const payload = {
+          expectedLabel: devTargetLabel,
+          mode: /^[0-9]+$/.test(devTargetLabel) ? 'numbers' : 'alphabet',
+          recordedAt: new Date().toISOString(),
+          sampleCount: captured.length,
+          frames: captured,
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+          type: 'application/json',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `fixture_${devTargetLabel}_${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    }, 50);
+  };
 
   // Atajos de teclado: Ctrl+Shift+D (Debug) y Ctrl+Shift+T (Tracker)
   React.useEffect(() => {
@@ -933,19 +975,14 @@ const Translator = () => {
                 letterSpacing: '0.04em',
               }}
             >
-              Señas geométricas soportadas (Modo Demo):
+              Vocabulario LSM soportado (Números 0–10 + Alfabeto A–Z, Ñ, LL, RR):
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
               {[
-                'Mano Abierta',
-                'Puño / Sí',
-                'Uno / No',
-                'Dos / V',
-                'OK / Pinza',
-                'Bien (Pulgar)',
-                'Te Quiero (ILY)',
-                'Lunes (L)',
-                'Hola (Saludo)',
+                'Números: 0 al 10',
+                'Estáticas: A B C D E F G H I L M N O P R S T U V W Y',
+                'Dinámicas: J K LL Ñ Q RR X Z',
+                'Básicas: Mano Abierta, Puño, OK, Bien, Te Quiero, Lunes, Hola',
               ].map((sign) => (
                 <span
                   key={sign}
@@ -962,6 +999,69 @@ const Translator = () => {
                 </span>
               ))}
             </div>
+
+            {!CONFIG.isProdBuild && (
+              <div
+                data-testid="dev-fixture-recorder"
+                style={{
+                  marginTop: '0.5rem',
+                  paddingTop: '0.6rem',
+                  borderTop: '1px dashed var(--panel-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '0.5rem',
+                }}
+              >
+                <span style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                  [DEV] Grabar fixture real (~1.8s):
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <select
+                    aria-label="Seleccionar seña a grabar"
+                    value={devTargetLabel}
+                    onChange={(e) => setDevTargetLabel(e.target.value)}
+                    style={{
+                      fontSize: '0.72rem',
+                      padding: '0.2rem 0.45rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--input-bg)',
+                      color: 'var(--text-color)',
+                      border: '1px solid var(--panel-border)',
+                    }}
+                  >
+                    {[
+                      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10',
+                      'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'LL',
+                      'M', 'N', 'Ñ', 'O', 'P', 'Q', 'R', 'RR', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+                    ].map((lbl) => (
+                      <option key={lbl} value={lbl}>
+                        Seña {lbl}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    data-testid="dev-record-fixture-btn"
+                    onClick={handleRecordRealFixture}
+                    disabled={devRecording}
+                    style={{
+                      fontSize: '0.72rem',
+                      padding: '0.22rem 0.65rem',
+                      borderRadius: 'var(--radius-sm)',
+                      background: devRecording ? 'rgba(239,68,68,0.2)' : 'var(--accent-primary-bg)',
+                      color: devRecording ? '#FCA5A5' : 'var(--accent-primary)',
+                      border: '1px solid var(--accent-primary)',
+                      cursor: devRecording ? 'wait' : 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {devRecording ? 'Grabando...' : 'Descargar JSON'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </div>

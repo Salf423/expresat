@@ -88,11 +88,11 @@ export function buildSyntheticHand({
     }
 
     if (mode === 'CIRCLE_O') {
-      // Dedos curvados cuyas puntas convergen al punto de contacto con el pulgar (-0.34, -1.18)
+      // Dedos curvados en arco C/O (PIP ~ 88°–105°) cuyas puntas convergen al pulgar (-0.32, -1.22)
       return [
         mcp,
-        { x: mcpX - 0.06 * basePalm, y: mcpY - 0.38 * basePalm, z: -0.03 * basePalm },
-        { x: (mcpX - 0.34 * basePalm) * 0.5, y: -1.32 * basePalm, z: -0.05 * basePalm },
+        { x: mcpX + 0.04 * basePalm, y: mcpY - 0.42 * basePalm, z: -0.03 * basePalm },
+        { x: -0.36 * basePalm + mcpX * 0.25, y: -1.38 * basePalm, z: -0.06 * basePalm },
         { x: -0.31 * basePalm + mcpX * 0.08, y: -1.2 * basePalm, z: -0.03 * basePalm },
       ];
     }
