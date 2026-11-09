@@ -55,7 +55,7 @@ export const BASE_SIGNS = [
     },
     metricas: [
       { metric: 'thumbIndexTipDist', min: 0, max: 0.36, slack: 0.06, weight: 1.5, required: true },
-      { metric: 'threeFingersSpread', min: 0.36, max: 2.5, slack: 0.12, weight: 1.0 },
+      { metric: 'threeFingersSpread', min: 0.4, max: 2.5, slack: 0.05, weight: 1.5, required: true },
     ],
     pesos: { fingers: 0.55, metrics: 0.45 },
   },

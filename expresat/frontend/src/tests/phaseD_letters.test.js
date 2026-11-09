@@ -97,4 +97,47 @@ describe('Fase D — Letras Estáticas del Alfabeto LSM por Grupo Confundible', 
       expect(resV.details.margin).toBeGreaterThanOrEqual(0.05);
     });
   });
+
+  describe('Sub-fase D.4 — Grupos G5 (F, M, W), G6 (B, C) y G7 (I, Y) y Matriz de 21 Letras Estáticas', () => {
+    const g5g6g7Letters = ['F', 'M', 'W', 'B', 'C', 'I', 'Y'];
+    const all21StaticLetters = [
+      'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'L',
+      'M', 'N', 'O', 'P', 'R', 'S', 'T', 'U', 'V', 'W', 'Y',
+    ];
+
+    it('reconoce las 7 letras de G5, G6 y G7 (F, M, W, B, C, I, Y) en mano derecha e izquierda y escalas (0.4x a 3.0x)', () => {
+      for (const letter of g5g6g7Letters) {
+        for (const handedness of ['Right', 'Left']) {
+          for (const scale of [0.4, 1.0, 3.0]) {
+            const hand = SYNTHETIC_LETTERS[letter]({ handedness, scale });
+            const res = classify(hand, { mode: 'alphabet' });
+            expect(res.label).toBe(letter);
+            expect(res.category).toBe('letra');
+            expect(res.confidence).toBeGreaterThanOrEqual(0.8);
+          }
+        }
+      }
+    });
+
+    it('desempata F (dedos juntos) vs OK/Pinza (dedos abiertos), B (juntos) vs 4 (abiertos), C vs E, M (DOWN) vs W (UP), e I vs Y vs Te Quiero', () => {
+      expect(classify(SYNTHETIC_LETTERS.F(), { mode: 'all' }).label).toBe('F');
+      expect(classify(SYNTHETIC_LETTERS.M(), { mode: 'all' }).label).toBe('M');
+      expect(classify(SYNTHETIC_LETTERS.B(), { mode: 'all' }).label).toBe('B');
+      expect(classify(SYNTHETIC_LETTERS.C(), { mode: 'all' }).label).toBe('C');
+      expect(classify(SYNTHETIC_LETTERS.I(), { mode: 'all' }).label).toBe('I');
+      expect(classify(SYNTHETIC_LETTERS.Y(), { mode: 'all' }).label).toBe('Y');
+      const resW = classify(SYNTHETIC_LETTERS.W(), { mode: 'alphabet' });
+      expect(resW.label).toBe('W');
+      expect(resW.details.margin).toBeGreaterThanOrEqual(0.05);
+    });
+
+    it('clasifica sin errores las 21 letras estáticas del alfabeto LSM (100% precisión diagonal)', () => {
+      for (const letter of all21StaticLetters) {
+        const hand = SYNTHETIC_LETTERS[letter]();
+        const res = classify(hand, { mode: 'alphabet' });
+        expect(res.label).toBe(letter);
+        expect(res.details.margin).toBeGreaterThanOrEqual(0.05);
+      }
+    });
+  });
 });
