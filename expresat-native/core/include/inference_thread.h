@@ -59,9 +59,11 @@ private:
   static std::array<float, HAND_POINTS * HAND_COORDS>
   extract_hand(const std::vector<HandLandmark> &hand);
 
-  static void normalize_to_shoulders(float *features, int n,
+  static bool normalize_to_shoulders(float *features, int n,
                                      const PoseLandmark &left_shoulder,
-                                     const PoseLandmark &right_shoulder);
+                                     const PoseLandmark &right_shoulder,
+                                     const std::vector<HandLandmark> &left_hand,
+                                     const std::vector<HandLandmark> &right_hand);
 
   static std::vector<float> softmax(const std::vector<float> &logits);
 

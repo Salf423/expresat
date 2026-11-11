@@ -188,10 +188,14 @@ InferenceThread::preprocess_sequence() const {
 
         // Normalize landmarks relative to shoulders (pose 11 & 12)
         if (frame.pose.size() > 12) {
-            normalize_to_shoulders(
+            bool valid = normalize_to_shoulders(
                 frame_ptr, NUM_FEATURES,
-                frame.pose[11], frame.pose[12]
+                frame.pose[11], frame.pose[12],
+                frame.left_hand, frame.right_hand
             );
+            if (!valid) {
+                std::fill(frame_ptr, frame_ptr + NUM_FEATURES, 0.0f);
+            }
         }
     }
     return tensor;
@@ -227,31 +231,68 @@ InferenceThread::extract_hand(const std::vector<HandLandmark>& hand) {
     return out;
 }
 
-// Normalizes coordinates: relative to shoulder midpoint, scaled by shoulder distance
-void InferenceThread::normalize_to_shoulders(
+// Normalizes coordinates: relative to shoulder midpoint, scaled by shoulder distance (FEATURE_SPEC v1.2.1)
+bool InferenceThread::normalize_to_shoulders(
     float* features, int n,
-    const PoseLandmark& ls, const PoseLandmark& rs)
+    const PoseLandmark& ls, const PoseLandmark& rs,
+    const std::vector<HandLandmark>& left_hand,
+    const std::vector<HandLandmark>& right_hand)
 {
+    (void)n;
+    constexpr float SHOULDERS_D_MIN = 0.08f;
+    constexpr float SHOULDER_VIS_THRESH = 0.40f;
+
+    if (ls.visibility < SHOULDER_VIS_THRESH || rs.visibility < SHOULDER_VIS_THRESH) {
+        return false;
+    }
+
     const float cx = (ls.x + rs.x) * 0.5f;
     const float cy = (ls.y + rs.y) * 0.5f;
     const float cz = (ls.z + rs.z) * 0.5f;
 
     const float dx = ls.x - rs.x;
     const float dy = ls.y - rs.y;
-    const float scale = std::max(std::sqrt(dx * dx + dy * dy), 1e-6f);
+    const float dz = ls.z - rs.z;
+    const float scale = std::sqrt(dx * dx + dy * dy + dz * dz);
 
+    if (scale < SHOULDERS_D_MIN) {
+        return false;
+    }
+
+    // Upper Pose [0..51]: x'=(x-cx)/D, y'=(y-cy)/D, z'=(z-cz)/D, vis'=clamp(vis, 0, 1)
     constexpr int POSE_END = static_cast<int>(POSE_UPPER_INDICES.size()) * POSE_COORDS;
     for (int j = 0; j < POSE_END; j += POSE_COORDS) {
         features[j + 0] = (features[j + 0] - cx) / scale;
         features[j + 1] = (features[j + 1] - cy) / scale;
         features[j + 2] = (features[j + 2] - cz) / scale;
+        features[j + 3] = std::max(0.0f, std::min(1.0f, features[j + 3]));
     }
 
-    for (int j = POSE_END; j < n; j += HAND_COORDS) {
-        features[j + 0] = (features[j + 0] - cx) / scale;
-        features[j + 1] = (features[j + 1] - cy) / scale;
-        features[j + 2] = (features[j + 2] - cz) / scale;
+    // Left Hand [52..114]: x'=(x-cx)/D, y'=(y-cy)/D, z'=(z-z_wrist)/D. Missing = 63 exact zeros.
+    if (!left_hand.empty()) {
+        const float z_wrist = left_hand[0].z;
+        for (std::size_t i = 0; i < std::min(left_hand.size(), static_cast<std::size_t>(HAND_POINTS)); ++i) {
+            features[52 + i * 3 + 0] = (left_hand[i].x - cx) / scale;
+            features[52 + i * 3 + 1] = (left_hand[i].y - cy) / scale;
+            features[52 + i * 3 + 2] = (left_hand[i].z - z_wrist) / scale;
+        }
+    } else {
+        std::fill(features + 52, features + 115, 0.0f);
     }
+
+    // Right Hand [115..177]: x'=(x-cx)/D, y'=(y-cy)/D, z'=(z-z_wrist)/D. Missing = 63 exact zeros.
+    if (!right_hand.empty()) {
+        const float z_wrist = right_hand[0].z;
+        for (std::size_t i = 0; i < std::min(right_hand.size(), static_cast<std::size_t>(HAND_POINTS)); ++i) {
+            features[115 + i * 3 + 0] = (right_hand[i].x - cx) / scale;
+            features[115 + i * 3 + 1] = (right_hand[i].y - cy) / scale;
+            features[115 + i * 3 + 2] = (right_hand[i].z - z_wrist) / scale;
+        }
+    } else {
+        std::fill(features + 115, features + 178, 0.0f);
+    }
+
+    return true;
 }
 
 std::vector<float> InferenceThread::softmax(const std::vector<float>& logits) {
