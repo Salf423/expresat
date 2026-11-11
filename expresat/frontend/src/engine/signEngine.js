@@ -848,6 +848,11 @@ export class SignEngine {
       leftHand: cleanCoords(leftHand, false),
       rightHand: cleanCoords(rightHand, false),
       pose: cleanCoords(filtered.pose, true),
+      raw: {
+        hands: Array.isArray(hands) ? hands.map((h) => cleanCoords(h, false)) : [],
+        handedness: handedness || [],
+        pose: cleanCoords(pose, true),
+      },
       timestamp,
       latencyMs,
     };
