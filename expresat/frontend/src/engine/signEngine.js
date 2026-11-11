@@ -18,6 +18,10 @@ import {
 import { CONFIG } from '../config.js';
 import { LandmarkEMAFilter } from '../services/landmarkFilter.js';
 
+if (typeof window !== 'undefined') {
+  window.__TasksVision__ = { FilesetResolver, HandLandmarker, PoseLandmarker };
+}
+
 export const ENGINE_ERROR_CODES = Object.freeze({
   CAMERA_UNSUPPORTED: 'CAMERA_UNSUPPORTED',
   CAMERA_DENIED: 'CAMERA_DENIED',
