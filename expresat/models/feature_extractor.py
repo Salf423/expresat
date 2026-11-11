@@ -1,23 +1,20 @@
 """
-feature_extractor.py — ExpresaT: Extractores Canónicos de Vectores 178D v1.2.1
+feature_extractor.py — ExpresaT: Extractores Canónicos de Vectores 178D v1.2.2
 
-Implementa estrictamente la especificación docs/dataset-generator/FEATURE_SPEC.md v1.2.1.
+Implementa estrictamente la especificación docs/dataset-generator/FEATURE_SPEC.md v1.2.2.
 Topología por frame:
   - [0..51] Upper Pose (13 landmarks × 4 coords: x, y, z, visibility)
   - [52..114] Mano Izquierda (21 landmarks × 3 coords: x, y, z)
   - [115..177] Mano Derecha (21 landmarks × 3 coords: x, y, z)
 Total: 178 features float32 por frame. Invariante de ventana: (1, 15, 178).
 
-Constantes canónicas:
-  - FEATURE_SPEC_VERSION = '1.2.1'
-  - TOTAL_FEATURES = 178
-  - POSE_UPPER_INDICES = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-  - SEQUENCE_LENGTH = 15
-  - SHOULDER_VIS_THRESH = 0.40
-  - SHOULDERS_D_MIN = 0.08
-  - HAND_DISCONNECTED_THRESH = 1.75
-  - HAND_AMBIGUITY_THRESH = 0.15
-  - MAX_GAP_MS = 100.0
+Secuencia estricta de ExtractWindow (Sección 5):
+  1. Validar hombros crudos y brechas temporales (<= 100 ms)
+  2. Asignar manos por frame crudo (costo conjunto + etiquetas + continuidad temporal)
+  3. Remuestrear temporalmente por bloque a 15 frames equidistantes (Δt = 66.67 ms)
+  4. Escala D y Centro C por ventana (mediana de 15 frames, D >= 0.08)
+  5. Filtro EMA temporal por bloque (α = 0.50, reinicio por bloque independiente)
+  6. Normalizar hombros y muñeca Z -> Tensor (1, 15, 178) float32
 """
 
 from __future__ import annotations
@@ -25,15 +22,15 @@ from __future__ import annotations
 import copy
 import math
 import statistics
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# 1. Constantes canónicas
+# 1. Constantes canónicas v1.2.2
 # ---------------------------------------------------------------------------
 
-FEATURE_SPEC_VERSION: str = "1.2.1"
+FEATURE_SPEC_VERSION: str = "1.2.2"
 TOTAL_FEATURES: int = 178
 SEQUENCE_LENGTH: int = 15
 
@@ -47,8 +44,7 @@ HAND_LANDMARKS: int = 21
 HAND_COORDS: int = 3  # x, y, z
 HAND_FEATURES_COUNT: int = HAND_LANDMARKS * HAND_COORDS  # 63
 
-# Landmark pairing for mirroring bilateral pose points
-# MediaPipe Pose bilateral pairs: (11,12), (13,14), (15,16), (17,18), (19,20), (21,22)
+# Bilateral pairs for mirroring
 POSE_BILATERAL_PAIRS: list[tuple[int, int]] = [
     (11, 12),  # Shoulders
     (13, 14),  # Elbows
@@ -58,14 +54,6 @@ POSE_BILATERAL_PAIRS: list[tuple[int, int]] = [
     (21, 22),  # Thumbs
 ]
 
-# Indices in POSE_UPPER_INDICES (0-based positions in the 13-landmark list):
-# 0 -> 0 (Nose)
-# 1 -> 11, 2 -> 12
-# 3 -> 13, 4 -> 14
-# 5 -> 15, 6 -> 16
-# 7 -> 17, 8 -> 18
-# 9 -> 19, 10 -> 20
-# 11 -> 21, 12 -> 22
 UPPER_BILATERAL_INDEX_PAIRS: list[tuple[int, int]] = [
     (1, 2),
     (3, 4),
@@ -75,12 +63,17 @@ UPPER_BILATERAL_INDEX_PAIRS: list[tuple[int, int]] = [
     (11, 12),
 ]
 
-# Umbrales provisionales (Sección 8 del spec)
+# Umbrales
 SHOULDER_VIS_THRESH: float = 0.40
 SHOULDERS_D_MIN: float = 0.08
 HAND_DISCONNECTED_THRESH: float = 1.75
 HAND_AMBIGUITY_THRESH: float = 0.15
+POSE_WRIST_MIN_VIS: float = 0.50
 MAX_GAP_MS: float = 100.0
+
+# Pesos para asignación de manos
+WEIGHT_LABEL_PENALTY: float = 0.30
+WEIGHT_TEMPORAL_CONTINUITY: float = 0.20
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +99,6 @@ def _get_detected_hands_and_labels(raw_frame: dict) -> tuple[list[list[dict]], l
     """
     Normaliza el frame de entrada para extraer una lista de manos detectadas
     y sus etiquetas categoryName correspondientes.
-    Soporta formato con 'hands' + 'handedness' o claves legacy 'leftHand' / 'rightHand'.
     """
     hands: list[list[dict]] = []
     labels: list[Optional[str]] = []
@@ -123,16 +115,12 @@ def _get_detected_hands_and_labels(raw_frame: dict) -> tuple[list[list[dict]], l
                 labels.append(lbl)
         return hands, labels
 
-    # Fallback a claves separadas leftHand / rightHand
-    # NOTA: En la convención de MediaPipe no espejada:
-    # La mano derecha del usuario (visible en la izquierda) recibe categoryName 'Left'.
-    # La mano izquierda del usuario (visible en la derecha) recibe categoryName 'Right'.
     if "leftHand" in raw_frame and raw_frame["leftHand"]:
         hands.append(raw_frame["leftHand"])
-        labels.append("Right")  # Left hand of signer corresponds to MediaPipe 'Right'
+        labels.append("Right")
     if "rightHand" in raw_frame and raw_frame["rightHand"]:
         hands.append(raw_frame["rightHand"])
-        labels.append("Left")   # Right hand of signer corresponds to MediaPipe 'Left'
+        labels.append("Left")
 
     return hands, labels
 
@@ -143,12 +131,7 @@ def _hand_to_features(
     Cx: float,
     Cy: float,
 ) -> np.ndarray:
-    """
-    Normaliza los 21 landmarks de una mano a un vector de 63 float64:
-      x' = (x - Cx) / D
-      y' = (y - Cy) / D
-      z' = (z - z_wrist) / D  (donde z_wrist = z del landmark 0)
-    """
+    """Normaliza los 21 landmarks de una mano a un vector de 63 float64."""
     out = np.zeros(HAND_FEATURES_COUNT, dtype=np.float64)
     if not raw_hand:
         return out
@@ -167,35 +150,156 @@ def _hand_to_features(
 
 
 # ---------------------------------------------------------------------------
-# 3. Función canónica: extract_frame_features (1 frame individual)
+# 3. Asignación anatómica de manos con término de etiqueta y continuidad
+# ---------------------------------------------------------------------------
+
+def assign_hands_to_anatomical_slots(
+    raw_frame: dict,
+    pose: list[dict],
+    D: float,
+    prev_left_wrist: Optional[tuple[float, float]] = None,
+    prev_right_wrist: Optional[tuple[float, float]] = None,
+) -> tuple[Optional[list[dict]], Optional[list[dict]], bool]:
+    """
+    Asigna las manos detectadas en un frame a (assigned_left_hand, assigned_right_hand).
+    Retorna (left_hand, right_hand, is_ambiguous).
+
+    Reglas:
+      1. Descarte por desconexión: min(d_left, d_right) > 1.75 * D SOLO si vis(P_wrist) >= 0.50.
+      2. Si 2 manos: costo conjunto considerando distancias a P15/P16, penalización de etiqueta
+         y continuidad temporal respecto al frame anterior.
+      3. Ambigüedad: registrada cuando |costo_A - costo_B| < 0.15 * D (en 2 manos) o |d_left - d_right| < 0.15*D.
+    """
+    detected_hands, detected_labels = _get_detected_hands_and_labels(raw_frame)
+
+    pw15_x = float(pose[15].get("x", 0.0))
+    pw15_y = float(pose[15].get("y", 0.0))
+    pw15_vis = float(pose[15].get("visibility", 1.0))
+
+    pw16_x = float(pose[16].get("x", 0.0))
+    pw16_y = float(pose[16].get("y", 0.0))
+    pw16_vis = float(pose[16].get("visibility", 1.0))
+
+    # Filtrar manos desconectadas respetando la visibilidad de la muñeca de pose
+    valid_hands: list[tuple[list[dict], Optional[str], float, float]] = []
+    for h, lbl in zip(detected_hands, detected_labels):
+        hw_x = float(h[0].get("x", 0.0))
+        hw_y = float(h[0].get("y", 0.0))
+        d_left = math.hypot(hw_x - pw15_x, hw_y - pw15_y)
+        d_right = math.hypot(hw_x - pw16_x, hw_y - pw16_y)
+
+        # Determinar si la muñeca más cercana tiene visibilidad suficiente para descartar
+        closer_wrist_vis = pw15_vis if d_left <= d_right else pw16_vis
+        is_disconnected = (min(d_left, d_right) > HAND_DISCONNECTED_THRESH * D) and (closer_wrist_vis >= POSE_WRIST_MIN_VIS)
+
+        if not is_disconnected:
+            valid_hands.append((h, lbl, d_left, d_right))
+
+    assigned_left: Optional[list[dict]] = None
+    assigned_right: Optional[list[dict]] = None
+    is_ambiguous: bool = False
+
+    if len(valid_hands) >= 2:
+        h0, lbl0, d0_l, d0_r = valid_hands[0]
+        h1, lbl1, d1_l, d1_r = valid_hands[1]
+
+        hw0_x, hw0_y = float(h0[0].get("x", 0.0)), float(h0[0].get("y", 0.0))
+        hw1_x, hw1_y = float(h1[0].get("x", 0.0)), float(h1[0].get("y", 0.0))
+
+        # Costo base espacial
+        cost_A = d0_l + d1_r  # H0 -> Left, H1 -> Right
+        cost_B = d1_l + d0_r  # H1 -> Left, H0 -> Right
+
+        # Término de penalización por etiqueta MediaPipe:
+        # MediaPipe 'Left' -> mano derecha del usuario
+        # MediaPipe 'Right' -> mano izquierda del usuario
+        penalty_A = 0.0
+        penalty_B = 0.0
+
+        if lbl0 == "Left":  # H0 prefiere slot derecho
+            penalty_A += WEIGHT_LABEL_PENALTY * D
+        elif lbl0 == "Right":  # H0 prefiere slot izquierdo
+            penalty_B += WEIGHT_LABEL_PENALTY * D
+
+        if lbl1 == "Left":  # H1 prefiere slot derecho
+            penalty_B += WEIGHT_LABEL_PENALTY * D
+        elif lbl1 == "Right":  # H1 prefiere slot izquierdo
+            penalty_A += WEIGHT_LABEL_PENALTY * D
+
+        # Término de continuidad temporal respecto al frame previo
+        if prev_left_wrist is not None and prev_right_wrist is not None:
+            c_temp_A = (
+                math.hypot(hw0_x - prev_left_wrist[0], hw0_y - prev_left_wrist[1])
+                + math.hypot(hw1_x - prev_right_wrist[0], hw1_y - prev_right_wrist[1])
+            )
+            c_temp_B = (
+                math.hypot(hw1_x - prev_left_wrist[0], hw1_y - prev_left_wrist[1])
+                + math.hypot(hw0_x - prev_right_wrist[0], hw0_y - prev_right_wrist[1])
+            )
+            penalty_A += WEIGHT_TEMPORAL_CONTINUITY * c_temp_A
+            penalty_B += WEIGHT_TEMPORAL_CONTINUITY * c_temp_B
+
+        total_cost_A = cost_A + penalty_A
+        total_cost_B = cost_B + penalty_B
+
+        if abs(total_cost_A - total_cost_B) < HAND_AMBIGUITY_THRESH * D:
+            is_ambiguous = True
+
+        if total_cost_A <= total_cost_B:
+            assigned_left = h0
+            assigned_right = h1
+        else:
+            assigned_left = h1
+            assigned_right = h0
+
+    elif len(valid_hands) == 1:
+        h0, lbl0, d0_l, d0_r = valid_hands[0]
+        hw0_x, hw0_y = float(h0[0].get("x", 0.0)), float(h0[0].get("y", 0.0))
+
+        ambiguity_cond = (
+            abs(d0_l - d0_r) < HAND_AMBIGUITY_THRESH * D
+            or pw15_vis < POSE_WRIST_MIN_VIS
+            or pw16_vis < POSE_WRIST_MIN_VIS
+        )
+        if ambiguity_cond:
+            is_ambiguous = True
+
+        # Desempate por etiqueta o continuidad temporal
+        if lbl0 in ("Left", "Right"):
+            if lbl0 == "Left":
+                assigned_right = h0
+            else:
+                assigned_left = h0
+        elif prev_left_wrist is not None or prev_right_wrist is not None:
+            # Evaluar cercanía a la última posición conocida
+            dist_prev_l = math.hypot(hw0_x - prev_left_wrist[0], hw0_y - prev_left_wrist[1]) if prev_left_wrist else float("inf")
+            dist_prev_r = math.hypot(hw0_x - prev_right_wrist[0], hw0_y - prev_right_wrist[1]) if prev_right_wrist else float("inf")
+            if dist_prev_l <= dist_prev_r:
+                assigned_left = h0
+            else:
+                assigned_right = h0
+        else:
+            if d0_l <= d0_r:
+                assigned_left = h0
+            else:
+                assigned_right = h0
+
+    return assigned_left, assigned_right, is_ambiguous
+
+
+# ---------------------------------------------------------------------------
+# 4. Función canónica: extract_frame_features (1 frame individual)
 # ---------------------------------------------------------------------------
 
 def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool, Optional[str]]:
     """
     Extrae y normaliza un frame individual a 178 características float32
-    siguiendo estrictamente docs/dataset-generator/FEATURE_SPEC.md v1.2.1.
-
-    Validaciones:
-      1. pose == None o len(pose) < 23 -> ERR_POSE_MISSING
-      2. vis(P11) < 0.40 o vis(P12) < 0.40 -> ERR_SHOULDER_VISIBILITY
-      3. Hombros fuera de cuadro [0,1] -> ERR_OUT_OF_BOUNDS
-      4. Distancia inter-humeral 3D D < 0.08 -> ERR_SHOULDERS_TOO_SMALL
-
-    Normalización:
-      - Upper Pose [0..51]: x'=(x-Cx)/D, y'=(y-Cy)/D, z'=(z-Cz)/D, vis'=clamp(vis, 0, 1)
-      - Manos [52..114] y [115..177]:
-        - Descarte si min(d_left, d_right) > 1.75 * D
-        - Asignación conjunta de costo mínimo a muñecas de pose P15 / P16
-        - Desempate por categoryName no espejado si |d_left - d_right| < 0.15*D o vis(muñeca) < 0.50
-        - x'=(x-Cx)/D, y'=(y-Cy)/D, z'=(z-z_wrist)/D
-        - Mano ausente: 63 ceros exactos (0.0f)
+    siguiendo estrictamente docs/dataset-generator/FEATURE_SPEC.md v1.2.2.
     """
-    # 1. Validación de Pose
     pose = raw_frame.get("pose")
     if pose is None or len(pose) < 23:
         return None, False, "ERR_POSE_MISSING"
 
-    # 2. Validación de visibilidad de hombros
     p11 = pose[11]
     p12 = pose[12]
     vis_11 = float(p11.get("visibility", 1.0))
@@ -203,7 +307,6 @@ def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool,
     if vis_11 < SHOULDER_VIS_THRESH or vis_12 < SHOULDER_VIS_THRESH:
         return None, False, "ERR_SHOULDER_VISIBILITY"
 
-    # 3. Validación out-of-bounds (hombros en [0.0, 1.0])
     x11 = float(p11.get("x", 0.0))
     y11 = float(p11.get("y", 0.0))
     x12 = float(p12.get("x", 0.0))
@@ -211,7 +314,6 @@ def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool,
     if not (0.0 <= x11 <= 1.0 and 0.0 <= y11 <= 1.0 and 0.0 <= x12 <= 1.0 and 0.0 <= y12 <= 1.0):
         return None, False, "ERR_OUT_OF_BOUNDS"
 
-    # 4. Centro y distancia inter-humeral 3D
     z11 = float(p11.get("z", 0.0))
     z12 = float(p12.get("z", 0.0))
     cx = (x11 + x12) / 2.0
@@ -226,10 +328,9 @@ def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool,
     if D < SHOULDERS_D_MIN:
         return None, False, "ERR_SHOULDERS_TOO_SMALL"
 
-    # Construcción en float64
     features = np.zeros(TOTAL_FEATURES, dtype=np.float64)
 
-    # 5. Upper Pose [0..51] (13 landmarks x 4)
+    # Upper Pose [0..51] (13 landmarks x 4)
     for i, p_idx in enumerate(POSE_UPPER_INDICES):
         lm = pose[p_idx]
         px = float(lm.get("x", 0.0))
@@ -242,93 +343,16 @@ def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool,
         features[i * 4 + 2] = (pz - cz) / D
         features[i * 4 + 3] = max(0.0, min(1.0, pvis))
 
-    # 6. Extracción y asignación anatómica de manos
-    detected_hands, detected_labels = _get_detected_hands_and_labels(raw_frame)
+    # Asignación de manos anatómicas
+    assigned_left, assigned_right, _ = assign_hands_to_anatomical_slots(raw_frame, pose, D)
 
-    # Muñecas de pose en espacio crudo 2D (P15 = izquierda, P16 = derecha)
-    pw15_x = float(pose[15].get("x", 0.0))
-    pw15_y = float(pose[15].get("y", 0.0))
-    pw15_vis = float(pose[15].get("visibility", 1.0))
-
-    pw16_x = float(pose[16].get("x", 0.0))
-    pw16_y = float(pose[16].get("y", 0.0))
-    pw16_vis = float(pose[16].get("visibility", 1.0))
-
-    # Filtrar manos desconectadas (min(d_left, d_right) > 1.75 * D)
-    valid_hands: list[tuple[list[dict], Optional[str], float, float]] = []
-    for h, lbl in zip(detected_hands, detected_labels):
-        hw_x = float(h[0].get("x", 0.0))
-        hw_y = float(h[0].get("y", 0.0))
-        d_left = math.hypot(hw_x - pw15_x, hw_y - pw15_y)
-        d_right = math.hypot(hw_x - pw16_x, hw_y - pw16_y)
-
-        if min(d_left, d_right) <= HAND_DISCONNECTED_THRESH * D:
-            valid_hands.append((h, lbl, d_left, d_right))
-        # Si está desconectada se descarta silenciosamente (la ranura quedará en 0.0f)
-
-    # Variables para asignación final
-    assigned_left_hand: Optional[list[dict]] = None
-    assigned_right_hand: Optional[list[dict]] = None
-
-    if len(valid_hands) >= 2:
-        # Tomar las dos primeras manos válidas
-        h0, lbl0, d0_left, d0_right = valid_hands[0]
-        h1, lbl1, d1_left, d1_right = valid_hands[1]
-
-        cost_A = d0_left + d1_right  # H0 -> Left, H1 -> Right
-        cost_B = d1_left + d0_right  # H1 -> Left, H0 -> Right
-
-        # Si el costo es muy cercano (|cost_A - cost_B| < 0.15*D) y hay etiquetas MediaPipe:
-        if abs(cost_A - cost_B) < HAND_AMBIGUITY_THRESH * D and (lbl0 or lbl1):
-            # MediaPipe 'Left' -> Mano Derecha del firmante
-            # MediaPipe 'Right' -> Mano Izquierda del firmante
-            if lbl0 == "Left" or lbl1 == "Right":
-                # H0 a la derecha, H1 a la izquierda
-                assigned_left_hand = h1
-                assigned_right_hand = h0
-            else:
-                assigned_left_hand = h0
-                assigned_right_hand = h1
-        elif cost_A <= cost_B:
-            assigned_left_hand = h0
-            assigned_right_hand = h1
-        else:
-            assigned_left_hand = h1
-            assigned_right_hand = h0
-
-    elif len(valid_hands) == 1:
-        h0, lbl0, d0_left, d0_right = valid_hands[0]
-
-        # Criterio de ambigüedad para 1 mano (Sección 6.2 #4):
-        # |d_left - d_right| < 0.15 * D  Ó  vis(P15) < 0.50  Ó  vis(P16) < 0.50
-        is_ambiguous = (
-            abs(d0_left - d0_right) < HAND_AMBIGUITY_THRESH * D
-            or pw15_vis < 0.50
-            or pw16_vis < 0.50
-        )
-
-        if is_ambiguous and lbl0 in ("Left", "Right"):
-            if lbl0 == "Left":
-                # MediaPipe 'Left' -> Mano Derecha del firmante
-                assigned_right_hand = h0
-            else:
-                # MediaPipe 'Right' -> Mano Izquierda del firmante
-                assigned_left_hand = h0
-        else:
-            if d0_left < d0_right:
-                assigned_left_hand = h0
-            else:
-                assigned_right_hand = h0
-
-    # Normalizar mano izquierda asignada (o 63 ceros)
-    if assigned_left_hand is not None:
-        features[52:115] = _hand_to_features(assigned_left_hand, D, cx, cy)
+    if assigned_left is not None:
+        features[52:115] = _hand_to_features(assigned_left, D, cx, cy)
     else:
         features[52:115] = 0.0
 
-    # Normalizar mano derecha asignada (o 63 ceros)
-    if assigned_right_hand is not None:
-        features[115:178] = _hand_to_features(assigned_right_hand, D, cx, cy)
+    if assigned_right is not None:
+        features[115:178] = _hand_to_features(assigned_right, D, cx, cy)
     else:
         features[115:178] = 0.0
 
@@ -336,7 +360,7 @@ def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool,
 
 
 # ---------------------------------------------------------------------------
-# 4. Función de ventana: extract_window (Secuencia canónica Sección 5)
+# 5. Función de ventana: extract_window (Orden canónico por bloques v1.2.2)
 # ---------------------------------------------------------------------------
 
 def extract_window(
@@ -345,25 +369,20 @@ def extract_window(
     duration_ms: float = 1000.0,
 ) -> tuple[Optional[np.ndarray], bool, Optional[str]]:
     """
-    Implementa la secuencia estricta e inmutable de ExtractWindow (Sección 5 del spec):
-      1. Validación previa de hombros crudos (P11 y P12 presentes, vis >= 0.40, en [0,1])
-      2. Validación de brecha temporal (Brecha > 100 ms -> ERR_INVALID_FRAME_GAP_TOO_LARGE)
-      3. Remuestreo temporal por milisegundos a 15 frames equidistantes (Δt = 66.67 ms)
-         - Manos: interpolar si presente en ambos extremos; frame más cercano si en uno solo; si no, ausente.
-      4. Cálculo de Escala y Centro por Ventana:
-         - D_ventana = mediana(D_1..D_15), C_ventana = mediana(C_1..C_15)
-         - Si D_ventana < 0.08 -> ERR_SHOULDERS_TOO_SMALL
-      5. Filtro EMA (α = 0.50):
-         - Reinicio al inicio de la ventana y reinicio de mano cuando reaparece.
-      6. Asignación Anatómica de Manos (costo mínimo a P15/P16 usando D_ventana)
-      7. Normalización con C_ventana y D_ventana -> Tensor (1, 15, 178) float32.
+    Implementa la secuencia estricta por bloques de ExtractWindow v1.2.2:
+      1. Validar hombros crudos y brechas continuas (gap <= 100 ms)
+      2. Asignar manos por frame crudo -> raw_left_hand y raw_right_hand por separado
+      3. Remuestrear temporalmente por bloque anatómico a 15 frames (Δt = 66.67 ms)
+      4. Calcular D_ventana y C_ventana (mediana de 15 frames, D >= 0.08)
+      5. Filtro EMA temporal por bloque (α = 0.50, reinicio al reaparecer cada mano)
+      6. Normalizar y ensamblar tensor (1, 15, 178) float32
     """
     if not frames_with_timestamps:
         return None, False, "ERR_POSE_MISSING"
 
-    dt_nominal = duration_ms / SEQUENCE_LENGTH  # 1000 / 15 = 66.6666... ms
+    dt_nominal = duration_ms / SEQUENCE_LENGTH
 
-    # --- 1. Filtrar y validar frames con hombros válidos ---
+    # --- Paso 1: Validar hombros crudos y filtrar frames válidos ---
     valid_raw_frames: list[dict] = []
     for fr in frames_with_timestamps:
         if fr is None:
@@ -377,10 +396,8 @@ def extract_window(
         vis12 = float(p12.get("visibility", 1.0))
         if vis11 < SHOULDER_VIS_THRESH or vis12 < SHOULDER_VIS_THRESH:
             continue
-        x11 = float(p11.get("x", 0.0))
-        y11 = float(p11.get("y", 0.0))
-        x12 = float(p12.get("x", 0.0))
-        y12 = float(p12.get("y", 0.0))
+        x11, y11 = float(p11.get("x", 0.0)), float(p11.get("y", 0.0))
+        x12, y12 = float(p12.get("x", 0.0)), float(p12.get("y", 0.0))
         if not (0.0 <= x11 <= 1.0 and 0.0 <= y11 <= 1.0 and 0.0 <= x12 <= 1.0 and 0.0 <= y12 <= 1.0):
             continue
         valid_raw_frames.append(fr)
@@ -388,11 +405,9 @@ def extract_window(
     if not valid_raw_frames:
         return None, False, "ERR_POSE_MISSING"
 
-    # Ordenar por timestamp
     valid_raw_frames.sort(key=lambda f: float(f.get("timestamp_ms", 0.0)))
 
-    # --- 2. Validación de brechas temporales (Sección 7) ---
-    # Brecha = t_siguiente - t_anterior - dt_nominal
+    # Validación de brechas temporales (gap <= 100 ms)
     for i in range(len(valid_raw_frames) - 1):
         t_curr = float(valid_raw_frames[i].get("timestamp_ms", 0.0))
         t_next = float(valid_raw_frames[i + 1].get("timestamp_ms", 0.0))
@@ -400,100 +415,125 @@ def extract_window(
         if gap > MAX_GAP_MS:
             return None, False, "ERR_INVALID_FRAME_GAP_TOO_LARGE"
 
-    t_start = float(valid_raw_frames[0].get("timestamp_ms", 0.0))
+    # --- Paso 2: Asignar manos por frame crudo (bloques anatómicos desacoplados) ---
+    frames_with_assigned_blocks: list[dict] = []
+    prev_left_w: Optional[tuple[float, float]] = None
+    prev_right_w: Optional[tuple[float, float]] = None
 
-    # --- 3. Remuestreo temporal a SEQUENCE_LENGTH frames ---
-    resampled_frames: list[dict] = []
+    for fr in valid_raw_frames:
+        pose = fr["pose"]
+        p11 = pose[11]
+        p12 = pose[12]
+        dx = float(p11.get("x", 0.0)) - float(p12.get("x", 0.0))
+        dy = float(p11.get("y", 0.0)) - float(p12.get("y", 0.0))
+        dz = float(p11.get("z", 0.0)) - float(p12.get("z", 0.0))
+        d_frame = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+        assigned_l, assigned_r, _ = assign_hands_to_anatomical_slots(
+            fr, pose, d_frame, prev_left_w, prev_right_w
+        )
+
+        if assigned_l is not None:
+            prev_left_w = (float(assigned_l[0].get("x", 0.0)), float(assigned_l[0].get("y", 0.0)))
+        if assigned_r is not None:
+            prev_right_w = (float(assigned_r[0].get("x", 0.0)), float(assigned_r[0].get("y", 0.0)))
+
+        frames_with_assigned_blocks.append({
+            "pose": copy.deepcopy(pose),
+            "left_hand": copy.deepcopy(assigned_l),
+            "right_hand": copy.deepcopy(assigned_r),
+            "timestamp_ms": float(fr.get("timestamp_ms", 0.0)),
+        })
+
+    t_start = frames_with_assigned_blocks[0]["timestamp_ms"]
+
+    # --- Paso 3: Remuestreo temporal por bloque a SEQUENCE_LENGTH frames ---
+    resampled_blocks: list[dict] = []
 
     for k in range(SEQUENCE_LENGTH):
         t_target = t_start + k * dt_nominal
 
-        # Encontrar frames anterior y posterior
-        prev_f = valid_raw_frames[0]
-        next_f = valid_raw_frames[-1]
+        prev_f = frames_with_assigned_blocks[0]
+        next_f = frames_with_assigned_blocks[-1]
 
-        for f in valid_raw_frames:
-            ts = float(f.get("timestamp_ms", 0.0))
+        for f in frames_with_assigned_blocks:
+            ts = f["timestamp_ms"]
             if ts <= t_target:
                 prev_f = f
             if ts >= t_target:
                 next_f = f
                 break
 
-        t_prev = float(prev_f.get("timestamp_ms", 0.0))
-        t_next = float(next_f.get("timestamp_ms", 0.0))
-
-        if t_prev == t_next:
-            tau = 0.0
-        else:
-            tau = (t_target - t_prev) / (t_next - t_prev)
-            tau = max(0.0, min(1.0, tau))
+        t_prev = prev_f["timestamp_ms"]
+        t_next = next_f["timestamp_ms"]
+        tau = 0.0 if t_prev == t_next else max(0.0, min(1.0, (t_target - t_prev) / (t_next - t_prev)))
 
         # Interpolar Pose linealmente
         interp_pose: list[dict] = []
-        pose_prev = prev_f["pose"]
-        pose_next = next_f["pose"]
-        n_pts = min(len(pose_prev), len(pose_next))
-        for p_i in range(n_pts):
-            lm_p = pose_prev[p_i]
-            lm_n = pose_next[p_i]
+        for p_i in range(min(len(prev_f["pose"]), len(next_f["pose"]))):
+            lp = prev_f["pose"][p_i]
+            ln = next_f["pose"][p_i]
             interp_pose.append({
-                "x": (1.0 - tau) * float(lm_p.get("x", 0.0)) + tau * float(lm_n.get("x", 0.0)),
-                "y": (1.0 - tau) * float(lm_p.get("y", 0.0)) + tau * float(lm_n.get("y", 0.0)),
-                "z": (1.0 - tau) * float(lm_p.get("z", 0.0)) + tau * float(lm_n.get("z", 0.0)),
-                "visibility": (1.0 - tau) * float(lm_p.get("visibility", 1.0)) + tau * float(lm_n.get("visibility", 1.0)),
+                "x": (1.0 - tau) * float(lp.get("x", 0.0)) + tau * float(ln.get("x", 0.0)),
+                "y": (1.0 - tau) * float(lp.get("y", 0.0)) + tau * float(ln.get("y", 0.0)),
+                "z": (1.0 - tau) * float(lp.get("z", 0.0)) + tau * float(ln.get("z", 0.0)),
+                "visibility": (1.0 - tau) * float(lp.get("visibility", 1.0)) + tau * float(ln.get("visibility", 1.0)),
             })
 
-        # Interpolar Manos (Sección 5):
-        # "se interpola solo si está presente en ambos extremos; si no, se toma del frame más cercano; si no hay mano, ausente"
-        hands_prev, labels_prev = _get_detected_hands_and_labels(prev_f)
-        hands_next, labels_next = _get_detected_hands_and_labels(next_f)
+        # Interpolar Bloque Mano Izquierda
+        lh_p = prev_f["left_hand"]
+        lh_n = next_f["left_hand"]
+        interp_left_hand: Optional[list[dict]] = None
+        if lh_p is not None and lh_n is not None:
+            interp_left_hand = []
+            for pt_i in range(min(len(lh_p), len(lh_n))):
+                interp_left_hand.append({
+                    "x": (1.0 - tau) * float(lh_p[pt_i].get("x", 0.0)) + tau * float(lh_n[pt_i].get("x", 0.0)),
+                    "y": (1.0 - tau) * float(lh_p[pt_i].get("y", 0.0)) + tau * float(lh_n[pt_i].get("y", 0.0)),
+                    "z": (1.0 - tau) * float(lh_p[pt_i].get("z", 0.0)) + tau * float(lh_n[pt_i].get("z", 0.0)),
+                })
+        elif tau < 0.5 and lh_p is not None:
+            interp_left_hand = copy.deepcopy(lh_p)
+        elif tau >= 0.5 and lh_n is not None:
+            interp_left_hand = copy.deepcopy(lh_n)
 
-        interp_hands: list[list[dict]] = []
-        interp_labels: list[Optional[str]] = []
+        # Interpolar Bloque Mano Derecha
+        rh_p = prev_f["right_hand"]
+        rh_n = next_f["right_hand"]
+        interp_right_hand: Optional[list[dict]] = None
+        if rh_p is not None and rh_n is not None:
+            interp_right_hand = []
+            for pt_i in range(min(len(rh_p), len(rh_n))):
+                interp_right_hand.append({
+                    "x": (1.0 - tau) * float(rh_p[pt_i].get("x", 0.0)) + tau * float(rh_n[pt_i].get("x", 0.0)),
+                    "y": (1.0 - tau) * float(rh_p[pt_i].get("y", 0.0)) + tau * float(rh_n[pt_i].get("y", 0.0)),
+                    "z": (1.0 - tau) * float(rh_p[pt_i].get("z", 0.0)) + tau * float(rh_n[pt_i].get("z", 0.0)),
+                })
+        elif tau < 0.5 and rh_p is not None:
+            interp_right_hand = copy.deepcopy(rh_p)
+        elif tau >= 0.5 and rh_n is not None:
+            interp_right_hand = copy.deepcopy(rh_n)
 
-        if len(hands_prev) == len(hands_next) and len(hands_prev) > 0:
-            # Ambas presentes en ambos extremos
-            for h_idx in range(len(hands_prev)):
-                hp = hands_prev[h_idx]
-                hn = hands_next[h_idx]
-                h_interp: list[dict] = []
-                for pt_i in range(min(len(hp), len(hn))):
-                    h_interp.append({
-                        "x": (1.0 - tau) * float(hp[pt_i].get("x", 0.0)) + tau * float(hn[pt_i].get("x", 0.0)),
-                        "y": (1.0 - tau) * float(hp[pt_i].get("y", 0.0)) + tau * float(hn[pt_i].get("y", 0.0)),
-                        "z": (1.0 - tau) * float(hp[pt_i].get("z", 0.0)) + tau * float(hn[pt_i].get("z", 0.0)),
-                    })
-                interp_hands.append(h_interp)
-                interp_labels.append(labels_prev[h_idx] if tau < 0.5 else labels_next[h_idx])
-        elif tau < 0.5 and len(hands_prev) > 0:
-            interp_hands = copy.deepcopy(hands_prev)
-            interp_labels = list(labels_prev)
-        elif tau >= 0.5 and len(hands_next) > 0:
-            interp_hands = copy.deepcopy(hands_next)
-            interp_labels = list(labels_next)
-
-        resampled_frames.append({
+        resampled_blocks.append({
             "pose": interp_pose,
-            "hands": interp_hands,
-            "handedness": [{"categoryName": lbl} if lbl else {} for lbl in interp_labels],
+            "left_hand": interp_left_hand,
+            "right_hand": interp_right_hand,
             "timestamp_ms": t_target,
         })
 
-    # --- 4. Escala y Centro por Ventana (Mediana) ---
+    # --- Paso 4: Escala D y Centro C por ventana (Mediana) ---
     D_per_frame: list[float] = []
     Cx_per_frame: list[float] = []
     Cy_per_frame: list[float] = []
     Cz_per_frame: list[float] = []
 
-    for fr in resampled_frames:
+    for fr in resampled_blocks:
         p11 = fr["pose"][11]
         p12 = fr["pose"][12]
         x11, y11, z11 = float(p11.get("x", 0.0)), float(p11.get("y", 0.0)), float(p11.get("z", 0.0))
         x12, y12, z12 = float(p12.get("x", 0.0)), float(p12.get("y", 0.0)), float(p12.get("z", 0.0))
         dx, dy, dz = x11 - x12, y11 - y12, z11 - z12
-        d_val = math.sqrt(dx * dx + dy * dy + dz * dz)
-        D_per_frame.append(d_val)
+        D_per_frame.append(math.sqrt(dx * dx + dy * dy + dz * dz))
         Cx_per_frame.append((x11 + x12) / 2.0)
         Cy_per_frame.append((y11 + y12) / 2.0)
         Cz_per_frame.append((z11 + z12) / 2.0)
@@ -506,17 +546,17 @@ def extract_window(
     if D_ventana < SHOULDERS_D_MIN:
         return None, False, "ERR_SHOULDERS_TOO_SMALL"
 
-    # --- 5. Filtro EMA temporal (α = 0.50) ---
-    # Reinicio al inicio de la ventana (k=0) y al reaparecer una mano
+    # --- Paso 5: Filtro EMA temporal por bloque (α = 0.50) ---
     alpha = 0.50
-    smoothed_frames: list[dict] = []
+    smoothed_blocks: list[dict] = []
     prev_pose: Optional[list[dict]] = None
-    prev_hands: dict[str, list[dict]] = {}  # tracked by side or index
+    prev_left_h: Optional[list[dict]] = None
+    prev_right_h: Optional[list[dict]] = None
 
-    for k, fr in enumerate(resampled_frames):
+    for k, fr in enumerate(resampled_blocks):
+        # 1. Pose
         curr_pose = fr["pose"]
         smooth_pose: list[dict] = []
-
         if k == 0 or prev_pose is None:
             smooth_pose = copy.deepcopy(curr_pose)
         else:
@@ -531,44 +571,49 @@ def extract_window(
                 })
         prev_pose = smooth_pose
 
-        # Suavizado de manos
-        curr_hands = fr["hands"]
-        smooth_hands: list[list[dict]] = []
-        for h_i, h in enumerate(curr_hands):
-            prev_h = prev_hands.get(str(h_i))
-            if prev_h is None or len(prev_h) != len(h):
-                # Mano reaparece -> reinicio de estado
-                h_smooth = copy.deepcopy(h)
+        # 2. Bloque Mano Izquierda
+        curr_lh = fr["left_hand"]
+        smooth_lh: Optional[list[dict]] = None
+        if curr_lh is not None:
+            if prev_left_h is None or len(prev_left_h) != len(curr_lh):
+                smooth_lh = copy.deepcopy(curr_lh)  # Reinicio al reaparecer
             else:
-                h_smooth = []
-                for pt_idx in range(len(h)):
-                    c_pt = h[pt_idx]
-                    p_pt = prev_h[pt_idx]
-                    h_smooth.append({
-                        "x": alpha * float(c_pt.get("x", 0.0)) + (1.0 - alpha) * float(p_pt.get("x", 0.0)),
-                        "y": alpha * float(c_pt.get("y", 0.0)) + (1.0 - alpha) * float(p_pt.get("y", 0.0)),
-                        "z": alpha * float(c_pt.get("z", 0.0)) + (1.0 - alpha) * float(p_pt.get("z", 0.0)),
+                smooth_lh = []
+                for pt_idx in range(len(curr_lh)):
+                    smooth_lh.append({
+                        "x": alpha * float(curr_lh[pt_idx].get("x", 0.0)) + (1.0 - alpha) * float(prev_left_h[pt_idx].get("x", 0.0)),
+                        "y": alpha * float(curr_lh[pt_idx].get("y", 0.0)) + (1.0 - alpha) * float(prev_left_h[pt_idx].get("y", 0.0)),
+                        "z": alpha * float(curr_lh[pt_idx].get("z", 0.0)) + (1.0 - alpha) * float(prev_left_h[pt_idx].get("z", 0.0)),
                     })
-            smooth_hands.append(h_smooth)
-            prev_hands[str(h_i)] = h_smooth
+        prev_left_h = smooth_lh
 
-        # Limpiar manos que ya no existen para que reinicien estado si vuelven
-        curr_indices = {str(i) for i in range(len(curr_hands))}
-        for old_idx in list(prev_hands.keys()):
-            if old_idx not in curr_indices:
-                del prev_hands[old_idx]
+        # 3. Bloque Mano Derecha
+        curr_rh = fr["right_hand"]
+        smooth_rh: Optional[list[dict]] = None
+        if curr_rh is not None:
+            if prev_right_h is None or len(prev_right_h) != len(curr_rh):
+                smooth_rh = copy.deepcopy(curr_rh)  # Reinicio al reaparecer
+            else:
+                smooth_rh = []
+                for pt_idx in range(len(curr_rh)):
+                    smooth_rh.append({
+                        "x": alpha * float(curr_rh[pt_idx].get("x", 0.0)) + (1.0 - alpha) * float(prev_right_h[pt_idx].get("x", 0.0)),
+                        "y": alpha * float(curr_rh[pt_idx].get("y", 0.0)) + (1.0 - alpha) * float(prev_right_h[pt_idx].get("y", 0.0)),
+                        "z": alpha * float(curr_rh[pt_idx].get("z", 0.0)) + (1.0 - alpha) * float(prev_right_h[pt_idx].get("z", 0.0)),
+                    })
+        prev_right_h = smooth_rh
 
-        smoothed_frames.append({
+        smoothed_blocks.append({
             "pose": smooth_pose,
-            "hands": smooth_hands,
-            "handedness": fr["handedness"],
+            "left_hand": smooth_lh,
+            "right_hand": smooth_rh,
             "timestamp_ms": fr["timestamp_ms"],
         })
 
-    # --- 6. Normalización y Ensamble del Tensor (1, 15, 178) usando C_ventana y D_ventana ---
+    # --- Paso 6: Normalización y Ensamble del Tensor (1, 15, 178) ---
     tensor_data = np.zeros((SEQUENCE_LENGTH, TOTAL_FEATURES), dtype=np.float64)
 
-    for k, fr in enumerate(smoothed_frames):
+    for k, fr in enumerate(smoothed_blocks):
         pose = fr["pose"]
 
         # Upper pose [0..51]
@@ -579,66 +624,15 @@ def extract_window(
             tensor_data[k, i * 4 + 2] = (float(lm.get("z", 0.0)) - Cz_ventana) / D_ventana
             tensor_data[k, i * 4 + 3] = max(0.0, min(1.0, float(lm.get("visibility", 1.0))))
 
-        # Manos [52..114] y [115..177]
-        detected_hands, detected_labels = _get_detected_hands_and_labels(fr)
-        pw15_x = float(pose[15].get("x", 0.0))
-        pw15_y = float(pose[15].get("y", 0.0))
-        pw15_vis = float(pose[15].get("visibility", 1.0))
-        pw16_x = float(pose[16].get("x", 0.0))
-        pw16_y = float(pose[16].get("y", 0.0))
-        pw16_vis = float(pose[16].get("visibility", 1.0))
-
-        valid_hands = []
-        for h, lbl in zip(detected_hands, detected_labels):
-            hw_x = float(h[0].get("x", 0.0))
-            hw_y = float(h[0].get("y", 0.0))
-            d_left = math.hypot(hw_x - pw15_x, hw_y - pw15_y)
-            d_right = math.hypot(hw_x - pw16_x, hw_y - pw16_y)
-            if min(d_left, d_right) <= HAND_DISCONNECTED_THRESH * D_ventana:
-                valid_hands.append((h, lbl, d_left, d_right))
-
-        assigned_left: Optional[list[dict]] = None
-        assigned_right: Optional[list[dict]] = None
-
-        if len(valid_hands) >= 2:
-            h0, lbl0, d0_l, d0_r = valid_hands[0]
-            h1, lbl1, d1_l, d1_r = valid_hands[1]
-            cost_A = d0_l + d1_r
-            cost_B = d1_l + d0_r
-            if abs(cost_A - cost_B) < HAND_AMBIGUITY_THRESH * D_ventana and (lbl0 or lbl1):
-                if lbl0 == "Left" or lbl1 == "Right":
-                    assigned_left, assigned_right = h1, h0
-                else:
-                    assigned_left, assigned_right = h0, h1
-            elif cost_A <= cost_B:
-                assigned_left, assigned_right = h0, h1
-            else:
-                assigned_left, assigned_right = h1, h0
-        elif len(valid_hands) == 1:
-            h0, lbl0, d0_l, d0_r = valid_hands[0]
-            is_amb = (
-                abs(d0_l - d0_r) < HAND_AMBIGUITY_THRESH * D_ventana
-                or pw15_vis < 0.50
-                or pw16_vis < 0.50
-            )
-            if is_amb and lbl0 in ("Left", "Right"):
-                if lbl0 == "Left":
-                    assigned_right = h0
-                else:
-                    assigned_left = h0
-            else:
-                if d0_l < d0_r:
-                    assigned_left = h0
-                else:
-                    assigned_right = h0
-
-        if assigned_left is not None:
-            tensor_data[k, 52:115] = _hand_to_features(assigned_left, D_ventana, Cx_ventana, Cy_ventana)
+        # Mano Izquierda [52..114]
+        if fr["left_hand"] is not None:
+            tensor_data[k, 52:115] = _hand_to_features(fr["left_hand"], D_ventana, Cx_ventana, Cy_ventana)
         else:
             tensor_data[k, 52:115] = 0.0
 
-        if assigned_right is not None:
-            tensor_data[k, 115:178] = _hand_to_features(assigned_right, D_ventana, Cx_ventana, Cy_ventana)
+        # Mano Derecha [115..177]
+        if fr["right_hand"] is not None:
+            tensor_data[k, 115:178] = _hand_to_features(fr["right_hand"], D_ventana, Cx_ventana, Cy_ventana)
         else:
             tensor_data[k, 115:178] = 0.0
 
@@ -647,28 +641,20 @@ def extract_window(
 
 
 # ---------------------------------------------------------------------------
-# 5. Funciones canónicas de simetría y espejo
+# 6. Funciones de simetría y espejo
 # ---------------------------------------------------------------------------
 
 def mirror_raw_frame(raw_frame: dict) -> dict:
-    """
-    Aplica la transformación de espejo sobre landmarks crudos (en espacio [0, 1]):
-      1. Coordenadas x invertidas: x' = 1.0 - x
-      2. Intercambio de landmarks bilaterales de pose:
-         (11,12) hombros, (13,14) codos, (15,16) muñecas, (17,18) meñiques, (19,20) índices, (21,22) pulgares
-      3. Intercambio de categoryName de manos: 'Left' <-> 'Right'
-    """
+    """Aplica la transformación de espejo sobre landmarks crudos (en espacio [0, 1])."""
     mirrored = copy.deepcopy(raw_frame)
 
     # 1. Pose
     pose = mirrored.get("pose")
     if pose:
-        # Flip x en todos
         for lm in pose:
             if "x" in lm:
                 lm["x"] = 1.0 - float(lm["x"])
 
-        # Intercambiar bilateralmente
         for idx_l, idx_r in POSE_BILATERAL_PAIRS:
             if idx_l < len(pose) and idx_r < len(pose):
                 temp = pose[idx_l]
@@ -705,50 +691,28 @@ def mirror_raw_frame(raw_frame: dict) -> dict:
 
 
 def mirror_features_178(features: np.ndarray) -> np.ndarray:
-    """
-    Aplica la transformación de espejo analítica sobre el vector de 178 features:
-      1. Upper Pose [0..51]:
-         - Landmark 0 (Nose, [0..3]): x' = -x
-         - Pares bilaterales: se intercambian los bloques de 4 floats entre izquierda y derecha,
-           invirtiendo x' = -x en ambos.
-      2. Manos:
-         - Se intercambia el bloque [52..114] con [115..177]
-         - En ambas manos se invierte x' = -x (cada 3er elemento comenzando en 0)
-
-    Garantía matemática (Sección 10):
-      Extract(Mirror(raw)) == MirrorFeatures(Extract(raw)) con error <= 10^-6
-    """
+    """Aplica la transformación de espejo analítica sobre el vector de 178 features."""
     out = features.copy().astype(np.float64)
 
-    # 1. Upper Pose
-    # Landmark 0: Nariz (índice 0 en pose upper)
+    # Upper Pose
     out[0] = -out[0]
-
-    # Pares bilaterales de pose upper
     for idx_l, idx_r in UPPER_BILATERAL_INDEX_PAIRS:
         start_l = idx_l * 4
         start_r = idx_r * 4
         block_l = out[start_l:start_l + 4].copy()
         block_r = out[start_r:start_r + 4].copy()
-
-        # Invertir x en ambos
         block_l[0] = -block_l[0]
         block_r[0] = -block_r[0]
-
-        # Intercambiar
         out[start_l:start_l + 4] = block_r
         out[start_r:start_r + 4] = block_l
 
-    # 2. Manos
+    # Manos
     left_hand = out[52:115].copy()
     right_hand = out[115:178].copy()
-
-    # Invertir x en cada uno de los 21 landmarks
     for i in range(HAND_LANDMARKS):
         left_hand[i * 3 + 0] = -left_hand[i * 3 + 0]
         right_hand[i * 3 + 0] = -right_hand[i * 3 + 0]
 
-    # Intercambiar manos (Mano izquierda <-> Mano derecha)
     out[52:115] = right_hand
     out[115:178] = left_hand
 

@@ -1,17 +1,25 @@
 /**
- * src/engine/featureExtractor.js — ExpresaT: Extractor Canónico de Vectores 178D v1.2.1
+ * src/engine/featureExtractor.js — ExpresaT: Extractor Canónico de Vectores 178D v1.2.2
  *
- * Implementación idéntica a expresat/models/feature_extractor.py y docs/dataset-generator/FEATURE_SPEC.md v1.2.1.
- * Paridad matemática demostrada con tolerancia <= 1e-6.
+ * Implementación idéntica a expresat/models/feature_extractor.py y docs/dataset-generator/FEATURE_SPEC.md v1.2.2.
+ * Paridad matemática demostrada con tolerancia L_inf <= 1e-6.
  *
  * Topología:
  *   - [0..51] Upper Pose (13 landmarks × 4 coords: x, y, z, visibility)
  *   - [52..114] Mano Izquierda (21 landmarks × 3 coords: x, y, z)
  *   - [115..177] Mano Derecha (21 landmarks × 3 coords: x, y, z)
  * Total: 178 features float32. Invariante de ventana: 15 frames × 178 features.
+ *
+ * Secuencia estricta de ExtractWindow:
+ *   1. Validar hombros crudos y brechas (gap <= 100 ms)
+ *   2. Asignar manos por frame crudo (costo conjunto + etiquetas + continuidad temporal)
+ *   3. Remuestrear temporalmente por bloque a 15 frames (Δt = 66.67 ms)
+ *   4. D_ventana y C_ventana (mediana de 15 frames, D >= 0.08)
+ *   5. Filtro EMA temporal por bloque (α = 0.50, reinicio por bloque independiente)
+ *   6. Normalizar hombros y muñeca Z -> Tensor (1, 15, 178) float32
  */
 
-export const FEATURE_SPEC_VERSION = '1.2.1';
+export const FEATURE_SPEC_VERSION = '1.2.2';
 export const TOTAL_FEATURES = 178;
 export const SEQUENCE_LENGTH = 15;
 
@@ -24,7 +32,11 @@ export const SHOULDER_VIS_THRESH = 0.40;
 export const SHOULDERS_D_MIN = 0.08;
 export const HAND_DISCONNECTED_THRESH = 1.75;
 export const HAND_AMBIGUITY_THRESH = 0.15;
+export const POSE_WRIST_MIN_VIS = 0.50;
 export const MAX_GAP_MS = 100.0;
+
+export const WEIGHT_LABEL_PENALTY = 0.30;
+export const WEIGHT_TEMPORAL_CONTINUITY = 0.20;
 
 const POSE_BILATERAL_PAIRS = Object.freeze([
   [11, 12],
@@ -74,14 +86,13 @@ function getDetectedHandsAndLabels(rawFrame) {
     return { hands, labels };
   }
 
-  // Fallback a claves separadas leftHand / rightHand
   if (Array.isArray(rawFrame.leftHand) && rawFrame.leftHand.length > 0) {
     hands.push(rawFrame.leftHand);
-    labels.push('Right'); // Mano izquierda del usuario -> 'Right' en MediaPipe
+    labels.push('Right');
   }
   if (Array.isArray(rawFrame.rightHand) && rawFrame.rightHand.length > 0) {
     hands.push(rawFrame.rightHand);
-    labels.push('Left'); // Mano derecha del usuario -> 'Left' en MediaPipe
+    labels.push('Left');
   }
 
   return { hands, labels };
@@ -117,9 +128,124 @@ function median(arr) {
 }
 
 /**
+ * Asigna las manos detectadas en un frame a { assignedLeftHand, assignedRightHand, isAmbiguous }.
+ */
+export function assignHandsToAnatomicalSlots(
+  rawFrame,
+  pose,
+  D,
+  prevLeftWrist = null,
+  prevRightWrist = null
+) {
+  const { hands: detectedHands, labels: detectedLabels } = getDetectedHandsAndLabels(rawFrame);
+
+  const pw15X = Number(pose[15]?.x ?? 0.0);
+  const pw15Y = Number(pose[15]?.y ?? 0.0);
+  const pw15Vis = Number(pose[15]?.visibility ?? 1.0);
+
+  const pw16X = Number(pose[16]?.x ?? 0.0);
+  const pw16Y = Number(pose[16]?.y ?? 0.0);
+  const pw16Vis = Number(pose[16]?.visibility ?? 1.0);
+
+  const validHands = [];
+  for (let i = 0; i < detectedHands.length; i++) {
+    const h = detectedHands[i];
+    const lbl = detectedLabels[i];
+    const hwX = Number(h[0]?.x ?? 0.0);
+    const hwY = Number(h[0]?.y ?? 0.0);
+    const dLeft = Math.hypot(hwX - pw15X, hwY - pw15Y);
+    const dRight = Math.hypot(hwX - pw16X, hwY - pw16Y);
+
+    const closerWristVis = dLeft <= dRight ? pw15Vis : pw16Vis;
+    const isDisconnected = Math.min(dLeft, dRight) > HAND_DISCONNECTED_THRESH * D && closerWristVis >= POSE_WRIST_MIN_VIS;
+
+    if (!isDisconnected) {
+      validHands.push({ hand: h, label: lbl, dLeft, dRight, hwX, hwY });
+    }
+  }
+
+  let assignedLeftHand = null;
+  let assignedRightHand = null;
+  let isAmbiguous = false;
+
+  if (validHands.length >= 2) {
+    const h0 = validHands[0];
+    const h1 = validHands[1];
+
+    const costA = h0.dLeft + h1.dRight;
+    const costB = h1.dLeft + h0.dRight;
+
+    let penaltyA = 0.0;
+    let penaltyB = 0.0;
+
+    if (h0.label === 'Left') penaltyA += WEIGHT_LABEL_PENALTY * D;
+    else if (h0.label === 'Right') penaltyB += WEIGHT_LABEL_PENALTY * D;
+
+    if (h1.label === 'Left') penaltyB += WEIGHT_LABEL_PENALTY * D;
+    else if (h1.label === 'Right') penaltyA += WEIGHT_LABEL_PENALTY * D;
+
+    if (prevLeftWrist && prevRightWrist) {
+      const cTempA =
+        Math.hypot(h0.hwX - prevLeftWrist[0], h0.hwY - prevLeftWrist[1]) +
+        Math.hypot(h1.hwX - prevRightWrist[0], h1.hwY - prevRightWrist[1]);
+      const cTempB =
+        Math.hypot(h1.hwX - prevLeftWrist[0], h1.hwY - prevLeftWrist[1]) +
+        Math.hypot(h0.hwX - prevRightWrist[0], h0.hwY - prevRightWrist[1]);
+      penaltyA += WEIGHT_TEMPORAL_CONTINUITY * cTempA;
+      penaltyB += WEIGHT_TEMPORAL_CONTINUITY * cTempB;
+    }
+
+    const totalCostA = costA + penaltyA;
+    const totalCostB = costB + penaltyB;
+
+    if (Math.abs(totalCostA - totalCostB) < HAND_AMBIGUITY_THRESH * D) {
+      isAmbiguous = true;
+    }
+
+    if (totalCostA <= totalCostB) {
+      assignedLeftHand = h0.hand;
+      assignedRightHand = h1.hand;
+    } else {
+      assignedLeftHand = h1.hand;
+      assignedRightHand = h0.hand;
+    }
+  } else if (validHands.length === 1) {
+    const h0 = validHands[0];
+    const ambigCond =
+      Math.abs(h0.dLeft - h0.dRight) < HAND_AMBIGUITY_THRESH * D ||
+      pw15Vis < POSE_WRIST_MIN_VIS ||
+      pw16Vis < POSE_WRIST_MIN_VIS;
+
+    if (ambigCond) {
+      isAmbiguous = true;
+    }
+
+    if (h0.label === 'Left') {
+      assignedRightHand = h0.hand;
+    } else if (h0.label === 'Right') {
+      assignedLeftHand = h0.hand;
+    } else if (prevLeftWrist || prevRightWrist) {
+      const distPrevL = prevLeftWrist ? Math.hypot(h0.hwX - prevLeftWrist[0], h0.hwY - prevLeftWrist[1]) : Infinity;
+      const distPrevR = prevRightWrist ? Math.hypot(h0.hwX - prevRightWrist[0], h0.hwY - prevRightWrist[1]) : Infinity;
+      if (distPrevL <= distPrevR) {
+        assignedLeftHand = h0.hand;
+      } else {
+        assignedRightHand = h0.hand;
+      }
+    } else {
+      if (h0.dLeft <= h0.dRight) {
+        assignedLeftHand = h0.hand;
+      } else {
+        assignedRightHand = h0.hand;
+      }
+    }
+  }
+
+  return { assignedLeftHand, assignedRightHand, isAmbiguous };
+}
+
+/**
  * Extrae y normaliza un frame individual a 178 características Float32Array.
- * @param {Object} rawFrame Frame crudo con { pose, hands, handedness } o { pose, leftHand, rightHand }
- * @returns {{ features: Float32Array|null, valid: boolean, error: string|null }}
  */
 export function extractFrameFeatures(rawFrame) {
   const pose = rawFrame?.pose;
@@ -175,76 +301,8 @@ export function extractFrameFeatures(rawFrame) {
     features[i * 4 + 3] = Math.max(0.0, Math.min(1.0, pvis));
   }
 
-  // Manos y asignación conjunta a P15 / P16
-  const { hands: detectedHands, labels: detectedLabels } = getDetectedHandsAndLabels(rawFrame);
-
-  const pw15X = Number(pose[15]?.x ?? 0.0);
-  const pw15Y = Number(pose[15]?.y ?? 0.0);
-  const pw15Vis = Number(pose[15]?.visibility ?? 1.0);
-
-  const pw16X = Number(pose[16]?.x ?? 0.0);
-  const pw16Y = Number(pose[16]?.y ?? 0.0);
-  const pw16Vis = Number(pose[16]?.visibility ?? 1.0);
-
-  const validHands = [];
-  for (let i = 0; i < detectedHands.length; i++) {
-    const h = detectedHands[i];
-    const lbl = detectedLabels[i];
-    const hwX = Number(h[0]?.x ?? 0.0);
-    const hwY = Number(h[0]?.y ?? 0.0);
-    const dLeft = Math.hypot(hwX - pw15X, hwY - pw15Y);
-    const dRight = Math.hypot(hwX - pw16X, hwY - pw16Y);
-
-    if (Math.min(dLeft, dRight) <= HAND_DISCONNECTED_THRESH * D) {
-      validHands.push({ hand: h, label: lbl, dLeft, dRight });
-    }
-  }
-
-  let assignedLeftHand = null;
-  let assignedRightHand = null;
-
-  if (validHands.length >= 2) {
-    const h0 = validHands[0];
-    const h1 = validHands[1];
-    const costA = h0.dLeft + h1.dRight;
-    const costB = h1.dLeft + h0.dRight;
-
-    if (Math.abs(costA - costB) < HAND_AMBIGUITY_THRESH * D && (h0.label || h1.label)) {
-      if (h0.label === 'Left' || h1.label === 'Right') {
-        assignedLeftHand = h1.hand;
-        assignedRightHand = h0.hand;
-      } else {
-        assignedLeftHand = h0.hand;
-        assignedRightHand = h1.hand;
-      }
-    } else if (costA <= costB) {
-      assignedLeftHand = h0.hand;
-      assignedRightHand = h1.hand;
-    } else {
-      assignedLeftHand = h1.hand;
-      assignedRightHand = h0.hand;
-    }
-  } else if (validHands.length === 1) {
-    const h0 = validHands[0];
-    const isAmbiguous =
-      Math.abs(h0.dLeft - h0.dRight) < HAND_AMBIGUITY_THRESH * D ||
-      pw15Vis < 0.50 ||
-      pw16Vis < 0.50;
-
-    if (isAmbiguous && (h0.label === 'Left' || h0.label === 'Right')) {
-      if (h0.label === 'Left') {
-        assignedRightHand = h0.hand;
-      } else {
-        assignedLeftHand = h0.hand;
-      }
-    } else {
-      if (h0.dLeft < h0.dRight) {
-        assignedLeftHand = h0.hand;
-      } else {
-        assignedRightHand = h0.hand;
-      }
-    }
-  }
+  // Asignación de manos
+  const { assignedLeftHand, assignedRightHand } = assignHandsToAnatomicalSlots(rawFrame, pose, D);
 
   if (assignedLeftHand) {
     const leftFeats = handToFeatures(assignedLeftHand, D, cx, cy);
@@ -268,12 +326,7 @@ export function extractFrameFeatures(rawFrame) {
 }
 
 /**
- * Secuencia estricta de ExtractWindow (Sección 5).
- * @param {Array<Object>} framesWithTimestamps Lista de frames con timestamp_ms
- * @param {Object} [options]
- * @param {number} [options.targetFps=15]
- * @param {number} [options.durationMs=1000]
- * @returns {{ tensor: Float32Array|null, valid: boolean, error: string|null }} Tensor de 15 * 178 floats
+ * Secuencia estricta por bloques de ExtractWindow v1.2.2.
  */
 export function extractWindow(framesWithTimestamps, options = {}) {
   if (!Array.isArray(framesWithTimestamps) || framesWithTimestamps.length === 0) {
@@ -306,7 +359,7 @@ export function extractWindow(framesWithTimestamps, options = {}) {
 
   validFrames.sort((a, b) => Number(a.timestamp_ms ?? 0) - Number(b.timestamp_ms ?? 0));
 
-  // 2. Validación de brechas
+  // Validación de brechas (gap <= 100 ms)
   for (let i = 0; i < validFrames.length - 1; i++) {
     const tCurr = Number(validFrames[i].timestamp_ms ?? 0);
     const tNext = Number(validFrames[i + 1].timestamp_ms ?? 0);
@@ -316,18 +369,55 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     }
   }
 
-  const tStart = Number(validFrames[0].timestamp_ms ?? 0);
+  // 2. Asignar manos por frame crudo (desacoplamiento anatómico)
+  const framesWithBlocks = [];
+  let prevLeftW = null;
+  let prevRightW = null;
 
-  // 3. Remuestreo temporal
-  const resampled = [];
+  for (const fr of validFrames) {
+    const pose = fr.pose;
+    const p11 = pose[11];
+    const p12 = pose[12];
+    const dx = Number(p11.x ?? 0.0) - Number(p12.x ?? 0.0);
+    const dy = Number(p11.y ?? 0.0) - Number(p12.y ?? 0.0);
+    const dz = Number(p11.z ?? 0.0) - Number(p12.z ?? 0.0);
+    const dFrame = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    const { assignedLeftHand, assignedRightHand } = assignHandsToAnatomicalSlots(
+      fr,
+      pose,
+      dFrame,
+      prevLeftW,
+      prevRightW
+    );
+
+    if (assignedLeftHand) {
+      prevLeftW = [Number(assignedLeftHand[0]?.x ?? 0.0), Number(assignedLeftHand[0]?.y ?? 0.0)];
+    }
+    if (assignedRightHand) {
+      prevRightW = [Number(assignedRightHand[0]?.x ?? 0.0), Number(assignedRightHand[0]?.y ?? 0.0)];
+    }
+
+    framesWithBlocks.push({
+      pose: JSON.parse(JSON.stringify(pose)),
+      leftHand: assignedLeftHand ? JSON.parse(JSON.stringify(assignedLeftHand)) : null,
+      rightHand: assignedRightHand ? JSON.parse(JSON.stringify(assignedRightHand)) : null,
+      timestamp_ms: Number(fr.timestamp_ms ?? 0),
+    });
+  }
+
+  const tStart = framesWithBlocks[0].timestamp_ms;
+
+  // 3. Remuestreo temporal por bloque anatómico
+  const resampledBlocks = [];
   for (let k = 0; k < SEQUENCE_LENGTH; k++) {
     const tTarget = tStart + k * dtNominal;
 
-    let prevF = validFrames[0];
-    let nextF = validFrames[validFrames.length - 1];
+    let prevF = framesWithBlocks[0];
+    let nextF = framesWithBlocks[framesWithBlocks.length - 1];
 
-    for (const f of validFrames) {
-      const ts = Number(f.timestamp_ms ?? 0);
+    for (const f of framesWithBlocks) {
+      const ts = f.timestamp_ms;
       if (ts <= tTarget) prevF = f;
       if (ts >= tTarget) {
         nextF = f;
@@ -335,8 +425,8 @@ export function extractWindow(framesWithTimestamps, options = {}) {
       }
     }
 
-    const tPrev = Number(prevF.timestamp_ms ?? 0);
-    const tNext = Number(nextF.timestamp_ms ?? 0);
+    const tPrev = prevF.timestamp_ms;
+    const tNext = nextF.timestamp_ms;
     const tau = tPrev === tNext ? 0.0 : Math.max(0.0, Math.min(1.0, (tTarget - tPrev) / (tNext - tPrev)));
 
     // Pose interpolada
@@ -353,40 +443,46 @@ export function extractWindow(framesWithTimestamps, options = {}) {
       });
     }
 
-    // Manos interpoladas
-    const hPrev = getDetectedHandsAndLabels(prevF);
-    const hNext = getDetectedHandsAndLabels(nextF);
-    let interpHands = [];
-    let interpLabels = [];
-
-    if (hPrev.hands.length === hNext.hands.length && hPrev.hands.length > 0) {
-      for (let hIdx = 0; hIdx < hPrev.hands.length; hIdx++) {
-        const hp = hPrev.hands[hIdx];
-        const hn = hNext.hands[hIdx];
-        const hPoints = [];
-        const nPoints = Math.min(hp.length, hn.length);
-        for (let ptI = 0; ptI < nPoints; ptI++) {
-          hPoints.push({
-            x: (1.0 - tau) * Number(hp[ptI].x ?? 0.0) + tau * Number(hn[ptI].x ?? 0.0),
-            y: (1.0 - tau) * Number(hp[ptI].y ?? 0.0) + tau * Number(hn[ptI].y ?? 0.0),
-            z: (1.0 - tau) * Number(hp[ptI].z ?? 0.0) + tau * Number(hn[ptI].z ?? 0.0),
-          });
-        }
-        interpHands.push(hPoints);
-        interpLabels.push(tau < 0.5 ? hPrev.labels[hIdx] : hNext.labels[hIdx]);
+    // Bloque Mano Izquierda interpolado
+    let interpLH = null;
+    if (prevF.leftHand && nextF.leftHand) {
+      interpLH = [];
+      const nPtsH = Math.min(prevF.leftHand.length, nextF.leftHand.length);
+      for (let i = 0; i < nPtsH; i++) {
+        interpLH.push({
+          x: (1.0 - tau) * Number(prevF.leftHand[i].x ?? 0.0) + tau * Number(nextF.leftHand[i].x ?? 0.0),
+          y: (1.0 - tau) * Number(prevF.leftHand[i].y ?? 0.0) + tau * Number(nextF.leftHand[i].y ?? 0.0),
+          z: (1.0 - tau) * Number(prevF.leftHand[i].z ?? 0.0) + tau * Number(nextF.leftHand[i].z ?? 0.0),
+        });
       }
-    } else if (tau < 0.5 && hPrev.hands.length > 0) {
-      interpHands = JSON.parse(JSON.stringify(hPrev.hands));
-      interpLabels = [...hPrev.labels];
-    } else if (tau >= 0.5 && hNext.hands.length > 0) {
-      interpHands = JSON.parse(JSON.stringify(hNext.hands));
-      interpLabels = [...hNext.labels];
+    } else if (tau < 0.5 && prevF.leftHand) {
+      interpLH = JSON.parse(JSON.stringify(prevF.leftHand));
+    } else if (tau >= 0.5 && nextF.leftHand) {
+      interpLH = JSON.parse(JSON.stringify(nextF.leftHand));
     }
 
-    resampled.push({
+    // Bloque Mano Derecha interpolado
+    let interpRH = null;
+    if (prevF.rightHand && nextF.rightHand) {
+      interpRH = [];
+      const nPtsH = Math.min(prevF.rightHand.length, nextF.rightHand.length);
+      for (let i = 0; i < nPtsH; i++) {
+        interpRH.push({
+          x: (1.0 - tau) * Number(prevF.rightHand[i].x ?? 0.0) + tau * Number(nextF.rightHand[i].x ?? 0.0),
+          y: (1.0 - tau) * Number(prevF.rightHand[i].y ?? 0.0) + tau * Number(nextF.rightHand[i].y ?? 0.0),
+          z: (1.0 - tau) * Number(prevF.rightHand[i].z ?? 0.0) + tau * Number(nextF.rightHand[i].z ?? 0.0),
+        });
+      }
+    } else if (tau < 0.5 && prevF.rightHand) {
+      interpRH = JSON.parse(JSON.stringify(prevF.rightHand));
+    } else if (tau >= 0.5 && nextF.rightHand) {
+      interpRH = JSON.parse(JSON.stringify(nextF.rightHand));
+    }
+
+    resampledBlocks.push({
       pose: interpPose,
-      hands: interpHands,
-      handedness: interpLabels.map((lbl) => (lbl ? { categoryName: lbl } : {})),
+      leftHand: interpLH,
+      rightHand: interpRH,
       timestamp_ms: tTarget,
     });
   }
@@ -397,22 +493,16 @@ export function extractWindow(framesWithTimestamps, options = {}) {
   const cyPerFrame = [];
   const czPerFrame = [];
 
-  for (const fr of resampled) {
+  for (const fr of resampledBlocks) {
     const p11 = fr.pose[11];
     const p12 = fr.pose[12];
-    const x11 = Number(p11.x ?? 0.0);
-    const y11 = Number(p11.y ?? 0.0);
-    const z11 = Number(p11.z ?? 0.0);
-    const x12 = Number(p12.x ?? 0.0);
-    const y12 = Number(p12.y ?? 0.0);
-    const z12 = Number(p12.z ?? 0.0);
-    const dx = x11 - x12;
-    const dy = y11 - y12;
-    const dz = z11 - z12;
+    const dx = Number(p11.x ?? 0.0) - Number(p12.x ?? 0.0);
+    const dy = Number(p11.y ?? 0.0) - Number(p12.y ?? 0.0);
+    const dz = Number(p11.z ?? 0.0) - Number(p12.z ?? 0.0);
     dPerFrame.push(Math.sqrt(dx * dx + dy * dy + dz * dz));
-    cxPerFrame.push((x11 + x12) / 2.0);
-    cyPerFrame.push((y11 + y12) / 2.0);
-    czPerFrame.push((z11 + z12) / 2.0);
+    cxPerFrame.push((Number(p11.x ?? 0.0) + Number(p12.x ?? 0.0)) / 2.0);
+    cyPerFrame.push((Number(p11.y ?? 0.0) + Number(p12.y ?? 0.0)) / 2.0);
+    czPerFrame.push((Number(p11.z ?? 0.0) + Number(p12.z ?? 0.0)) / 2.0);
   }
 
   const dVentana = median(dPerFrame);
@@ -424,17 +514,19 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     return { tensor: null, valid: false, error: 'ERR_SHOULDERS_TOO_SMALL' };
   }
 
-  // 5. Filtro EMA temporal (alpha = 0.50)
+  // 5. Filtro EMA temporal por bloque (alpha = 0.50)
   const alpha = 0.50;
   const smoothed = [];
   let prevPose = null;
-  const prevHands = new Map();
+  let prevLH = null;
+  let prevRH = null;
 
   for (let k = 0; k < SEQUENCE_LENGTH; k++) {
-    const fr = resampled[k];
+    const fr = resampledBlocks[k];
+
+    // Pose
     const currPose = fr.pose;
     const smoothPose = [];
-
     if (k === 0 || !prevPose) {
       for (const pt of currPose) smoothPose.push({ ...pt });
     } else {
@@ -451,39 +543,46 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     }
     prevPose = smoothPose;
 
-    const smoothHands = [];
-    for (let hI = 0; hI < fr.hands.length; hI++) {
-      const h = fr.hands[hI];
-      const prevH = prevHands.get(hI);
-      if (!prevH || prevH.length !== h.length) {
-        smoothHands.push(JSON.parse(JSON.stringify(h)));
+    // Mano Izquierda
+    let smoothLH = null;
+    if (fr.leftHand) {
+      if (!prevLH || prevLH.length !== fr.leftHand.length) {
+        smoothLH = JSON.parse(JSON.stringify(fr.leftHand)); // Reinicio al reaparecer
       } else {
-        const hSmooth = [];
-        for (let ptI = 0; ptI < h.length; ptI++) {
-          const c = h[ptI];
-          const p = prevH[ptI];
-          hSmooth.push({
-            x: alpha * Number(c.x ?? 0.0) + (1.0 - alpha) * Number(p.x ?? 0.0),
-            y: alpha * Number(c.y ?? 0.0) + (1.0 - alpha) * Number(p.y ?? 0.0),
-            z: alpha * Number(c.z ?? 0.0) + (1.0 - alpha) * Number(p.z ?? 0.0),
+        smoothLH = [];
+        for (let i = 0; i < fr.leftHand.length; i++) {
+          smoothLH.push({
+            x: alpha * Number(fr.leftHand[i].x ?? 0.0) + (1.0 - alpha) * Number(prevLH[i].x ?? 0.0),
+            y: alpha * Number(fr.leftHand[i].y ?? 0.0) + (1.0 - alpha) * Number(prevLH[i].y ?? 0.0),
+            z: alpha * Number(fr.leftHand[i].z ?? 0.0) + (1.0 - alpha) * Number(prevLH[i].z ?? 0.0),
           });
         }
-        smoothHands.push(hSmooth);
       }
-      prevHands.set(hI, smoothHands[smoothHands.length - 1]);
     }
+    prevLH = smoothLH;
 
-    // Cleanup absent hands
-    for (const oldKey of prevHands.keys()) {
-      if (oldKey >= fr.hands.length) {
-        prevHands.delete(oldKey);
+    // Mano Derecha
+    let smoothRH = null;
+    if (fr.rightHand) {
+      if (!prevRH || prevRH.length !== fr.rightHand.length) {
+        smoothRH = JSON.parse(JSON.stringify(fr.rightHand)); // Reinicio al reaparecer
+      } else {
+        smoothRH = [];
+        for (let i = 0; i < fr.rightHand.length; i++) {
+          smoothRH.push({
+            x: alpha * Number(fr.rightHand[i].x ?? 0.0) + (1.0 - alpha) * Number(prevRH[i].x ?? 0.0),
+            y: alpha * Number(fr.rightHand[i].y ?? 0.0) + (1.0 - alpha) * Number(prevRH[i].y ?? 0.0),
+            z: alpha * Number(fr.rightHand[i].z ?? 0.0) + (1.0 - alpha) * Number(prevRH[i].z ?? 0.0),
+          });
+        }
       }
     }
+    prevRH = smoothRH;
 
     smoothed.push({
       pose: smoothPose,
-      hands: smoothHands,
-      handedness: fr.handedness,
+      leftHand: smoothLH,
+      rightHand: smoothRH,
       timestamp_ms: fr.timestamp_ms,
     });
   }
@@ -505,82 +604,17 @@ export function extractWindow(framesWithTimestamps, options = {}) {
       tensor[offset + i * 4 + 3] = Math.max(0.0, Math.min(1.0, Number(lm.visibility ?? 1.0)));
     }
 
-    // Manos
-    const { hands: detectedHands, labels: detectedLabels } = getDetectedHandsAndLabels(fr);
-    const pw15X = Number(fr.pose[15]?.x ?? 0.0);
-    const pw15Y = Number(fr.pose[15]?.y ?? 0.0);
-    const pw15Vis = Number(fr.pose[15]?.visibility ?? 1.0);
-    const pw16X = Number(fr.pose[16]?.x ?? 0.0);
-    const pw16Y = Number(fr.pose[16]?.y ?? 0.0);
-    const pw16Vis = Number(fr.pose[16]?.visibility ?? 1.0);
-
-    const validHands = [];
-    for (let i = 0; i < detectedHands.length; i++) {
-      const h = detectedHands[i];
-      const lbl = detectedLabels[i];
-      const hwX = Number(h[0]?.x ?? 0.0);
-      const hwY = Number(h[0]?.y ?? 0.0);
-      const dLeft = Math.hypot(hwX - pw15X, hwY - pw15Y);
-      const dRight = Math.hypot(hwX - pw16X, hwY - pw16Y);
-      if (Math.min(dLeft, dRight) <= HAND_DISCONNECTED_THRESH * dVentana) {
-        validHands.push({ hand: h, label: lbl, dLeft, dRight });
-      }
-    }
-
-    let assignedLeft = null;
-    let assignedRight = null;
-
-    if (validHands.length >= 2) {
-      const h0 = validHands[0];
-      const h1 = validHands[1];
-      const costA = h0.dLeft + h1.dRight;
-      const costB = h1.dLeft + h0.dRight;
-      if (Math.abs(costA - costB) < HAND_AMBIGUITY_THRESH * dVentana && (h0.label || h1.label)) {
-        if (h0.label === 'Left' || h1.label === 'Right') {
-          assignedLeft = h1.hand;
-          assignedRight = h0.hand;
-        } else {
-          assignedLeft = h0.hand;
-          assignedRight = h1.hand;
-        }
-      } else if (costA <= costB) {
-        assignedLeft = h0.hand;
-        assignedRight = h1.hand;
-      } else {
-        assignedLeft = h1.hand;
-        assignedRight = h0.hand;
-      }
-    } else if (validHands.length === 1) {
-      const h0 = validHands[0];
-      const isAmb =
-        Math.abs(h0.dLeft - h0.dRight) < HAND_AMBIGUITY_THRESH * dVentana ||
-        pw15Vis < 0.50 ||
-        pw16Vis < 0.50;
-
-      if (isAmb && (h0.label === 'Left' || h0.label === 'Right')) {
-        if (h0.label === 'Left') {
-          assignedRight = h0.hand;
-        } else {
-          assignedLeft = h0.hand;
-        }
-      } else {
-        if (h0.dLeft < h0.dRight) {
-          assignedLeft = h0.hand;
-        } else {
-          assignedRight = h0.hand;
-        }
-      }
-    }
-
-    if (assignedLeft) {
-      const lf = handToFeatures(assignedLeft, dVentana, cxVentana, cyVentana);
+    // Mano Izquierda
+    if (fr.leftHand) {
+      const lf = handToFeatures(fr.leftHand, dVentana, cxVentana, cyVentana);
       tensor.set(lf, offset + 52);
     } else {
       tensor.fill(0.0, offset + 52, offset + 115);
     }
 
-    if (assignedRight) {
-      const rf = handToFeatures(assignedRight, dVentana, cxVentana, cyVentana);
+    // Mano Derecha
+    if (fr.rightHand) {
+      const rf = handToFeatures(fr.rightHand, dVentana, cxVentana, cyVentana);
       tensor.set(rf, offset + 115);
     } else {
       tensor.fill(0.0, offset + 115, offset + 178);
@@ -652,16 +686,12 @@ export function mirrorRawFrame(rawFrame) {
 
 /**
  * Espeja analíticamente un vector de 178 features ya normalizado.
- * @param {Float32Array|Array<number>} features Vector 178D
- * @returns {Float32Array}
  */
 export function mirrorFeatures178(features) {
   const out = new Float64Array(features);
 
-  // Upper pose nariz
   out[0] = -out[0];
 
-  // Upper pose pares bilaterales
   for (const [idxL, idxR] of UPPER_BILATERAL_INDEX_PAIRS) {
     const startL = idxL * 4;
     const startR = idxR * 4;
@@ -676,7 +706,6 @@ export function mirrorFeatures178(features) {
     out.set(bL, startR);
   }
 
-  // Manos: swap e inversión de x
   const leftHand = out.slice(52, 115);
   const rightHand = out.slice(115, 178);
 
