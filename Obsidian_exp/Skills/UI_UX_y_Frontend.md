@@ -71,9 +71,13 @@ Este conjunto de skills está diseñado específicamente para abordar la experie
 
 Cuando un agente trabaje en el frontend web (`expresat/frontend`) o en la interfaz C++ con ImGui (`expresat-dataset-generator/src/gui`):
 
-1. **Lectura Previa:** Inspeccionar [[../Explicacion del codigo/Frontend/Vite_React]] y verificar la relación entre `Translator.jsx`, `apiService.js` y `mediapipeEngine.js`.
-2. **Prioridad de Rendimiento:** El renderizado del DOM no debe interrumpir el loop de la cámara web (15 FPS). Delegar operaciones pesadas a Web Workers.
+1. **Lectura Previa:** Inspeccionar [[../Explicacion del codigo/Frontend/Vite_React]] y verificar la interacción entre `Translator.jsx`, `useSignEngine.js`, `signEngine.js`, `featureExtractor.js` y `wsClient.js`.
+2. **Prioridad de Rendimiento:** El renderizado del DOM no debe interrumpir el loop de la cámara web. `SignEngine` opera en CPU en el main-thread de forma altamente optimizada con limpieza idempotente.
 3. **Validación de Accesibilidad:** Ejecutar checklist con `wcag-audit-patterns`:
    - [ ] Relación de contraste mínimo 4.5:1 para texto normal y 3:1 para elementos de control.
    - [ ] Navegabilidad completa por teclado (`Tab`, `Enter`, `Space`, `Esc`).
    - [ ] Feedback explícito ante fallos en la cámara o pérdida de conexión con el WebSocket.
+4. **Comprobación de Compuertas de Calidad:**
+   - [ ] Ejecutar linter: `npm run lint` (ESLint con reglas stricts de hooks).
+   - [ ] Ejecutar tests de Vitest: `npx vitest run`.
+   - [ ] Ejecutar tests E2E: `npx playwright test`.

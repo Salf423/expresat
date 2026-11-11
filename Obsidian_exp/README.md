@@ -13,6 +13,7 @@ Para comenzar a explorar la documentación con el grafo completo de dependencias
 
 O accede directamente a las secciones principales:
 - **Especificaciones de IA y Features:** [[Caracteristicas]]
+- **Especificación Canónica 178D (v1.2.1):** [[Especificacion_Feature_Spec_v1_2_1]]
 - **Flujo de Datos y Streaming:** [[Flujo de datos]]
 - **Protocolo WebSocket:** [[Websocket]]
 - **Estructura del Proyecto:** [[Estructura del proyecto]]

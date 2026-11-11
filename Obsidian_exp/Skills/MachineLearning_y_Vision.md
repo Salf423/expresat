@@ -1,23 +1,24 @@
 ---
 title: "Skills Especializadas: Machine Learning, Visión por Computadora y Datos"
-description: "Habilidades para entrenamiento de redes neuronales GRU en PyTorch, exportación a ONNX, cuantización INT8, MediaPipe Holistic y generación sintética de datasets."
-version: "2.0.0"
+description: "Habilidades para entrenamiento de redes neuronales GRU en PyTorch, exportación a ONNX, cuantización INT8, MediaPipe Tasks Vision y especificación canónica 178D (FEATURE_SPEC v1.2.1)."
+version: "2.2.1"
 category: "Skills / IA & Visión"
-target_agents: ["ml-engineer", "data-scientist", "mlops-engineer"]
+target_agents: ["ml-engineer", "data-scientist", "mlops-engineer", "data-engineering-data-pipeline"]
 related_docs:
   - "[[00_Matriz_General_Skills]]"
   - "[[../Caracteristicas]]"
+  - "[[../Especificacion_Feature_Spec_v1_2_1]]"
   - "[[../Flujo de datos]]"
   - "[[../Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION]]"
   - "[[../Explicacion del codigo/Funciones_Modelo/INFERENCIA]]"
-  - "[[../Explicacion del codigo/Dataset_Generator/Cpp_Generator]]"
+  - "[[../Explicacion del codigo/Dataset_Generator/06_Arquitectura_Dataset_Generator_v2]]"
 ---
 
 # 🧠 Skills Especializadas: Machine Learning, Visión por Computadora y Datos
 
 > **Navegación:** [[../00_INDICE_MAESTRO|🏠 Índice Maestro]] > [[00_Matriz_General_Skills|🧭 Matriz de Skills]] > **Machine Learning, Visión y Datos**
 
-El núcleo de inteligencia artificial de **ExpresaT** combina visión por computadora geométrica (MediaPipe Holistic) para la extracción de puntos de referencia corporales con una red neuronal recurrente compacta (**`SignLanguageGRU`**) optimizada para inferencia en CPU en menos de 3 milisegundos.
+El núcleo de inteligencia artificial de **ExpresaT** combina visión por computadora geométrica (MediaPipe Tasks Vision en CPU) para la extracción de puntos de referencia corporales con una red neuronal recurrente compacta (**`SignLanguageGRU`**) optimizada para inferencia en CPU en menos de 3 milisegundos, bajo el contrato matemático estricto de [[../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]].
 
 ---
 
@@ -29,34 +30,34 @@ El núcleo de inteligencia artificial de **ExpresaT** combina visión por comput
   - `~/.gemini/config/skills/ai-engineer/SKILL.md`
 - **Objetivo:** Definición de arquitecturas neuronales con PyTorch, selección de hiperparámetros, funciones de pérdida (CrossEntropyLoss), optimizadores (AdamW) y evaluación de métricas de clasificación (Precisión, Recall, F1-Score).
 - **Cuándo invocar:**
-  - Añadir nuevas clases/gestos al vocabulario de lengua de señas.
-  - Ajustar el tamaño oculto (`hidden_size`) o la tasa de dropout de `SignLanguageGRU`.
+  - Añadir nuevas clases/gestos al catálogo oficial de lengua de señas (`catalog/signs_catalog.json`).
+  - Ajustar hiperparámetros de `SignLanguageGRU` o afinar el extractor `feature_extractor.py`.
 
 ### 2. `mlops-engineer` & `machine-learning-ops-ml-pipeline`
 - **Ubicación:**
   - `~/.gemini/config/skills/mlops-engineer/SKILL.md`
   - `~/.gemini/config/skills/machine-learning-ops-ml-pipeline/SKILL.md`
-- **Objetivo:** Orquestación de pipelines de entrenamiento y exportación continua (PyTorch `.pt` → ONNX Float32 → ONNX INT8 dinámico → Benchmark de latencia).
+- **Objetivo:** Orquestación de pipelines de reentrenamiento, versionado de modelos, exportación continua (PyTorch `.pt` → ONNX Float32 → ONNX INT8 dinámico → Benchmark de latencia) y verificación de `config_hash`.
 - **Cuándo invocar:**
-  - Automatizar re-entrenamientos cuando se suben nuevos archivos `dataset/*.json`.
+  - Automatizar pipelines CI/CD cuando se generen nuevos shards `.npy` con el generador v2.
   - Asegurar la compatibilidad del `opset_version` (opset 17) para ejecuciones tanto en Python como en C++.
 
 ### 3. `data-engineering-data-pipeline` & `data-quality-frameworks`
 - **Ubicación:**
   - `~/.gemini/config/skills/data-engineering-data-pipeline/SKILL.md`
   - `~/.gemini/config/skills/data-quality-frameworks/SKILL.md`
-- **Objetivo:** Validación de esquemas de datos vectoriales, detección de valores atípicos (outliers o pérdidas de tracking en MediaPipe), comprobación de integridad y contratos de datos.
+- **Objetivo:** Validación de esquemas de datos vectoriales 178D, comprobación de integridad, detección de outliers y cuarentena de datasets corruptos.
 - **Cuándo invocar:**
-  - Validar los archivos generados por `expresat-dataset-generator`.
-  - Auditar la normalización relativa al centro de los hombros ($C_{shoulder}$) para garantizar invariancia ante escala y posición.
+  - Auditar datasets entrantes contra el contrato [[../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]].
+  - Asegurar que ningún pipeline de entrenamiento consuma archivos aislados en `dataset/quarantine/` (como `letra_a_derecha_2.json`).
 
 ### 4. `python-testing-patterns`
 - **Ubicación:** `~/.gemini/config/skills/python-testing-patterns/SKILL.md`
-- **Objetivo:** Creación de suites de pruebas unitarias (`pytest`) para el preprocesamiento de tensores y verificación de dimensiones de entrada `[1, 15, 178]`.
+- **Objetivo:** Creación y mantenimiento de suites de pruebas automáticas (`pytest tests/test_feature_spec.py`).
 
 ---
 
-## 📐 Especificación del Vector de Características (178D)
+## 📐 Reglas Invariables del Vector de Características (178D v1.2.1)
 
 Todo agente que manipule el modelo o los extractores de visión debe respetar la topología invariable:
 
@@ -64,8 +65,13 @@ Todo agente que manipule el modelo o los extractores de visión debe respetar la
 [0 .. 51]   : Upper Pose (13 puntos × 4 coordenadas: x, y, z, visibilidad)
 [52 .. 114] : Mano Izquierda (21 landmarks × 3 coordenadas: x, y, z)
 [115 .. 177]: Mano Derecha (21 landmarks × 3 coordenadas: x, y, z)
-Total       : 178 características flotantes por fotograma (15 frames = 2670 valores)
+Total       : 178 características flotantes por fotograma (15 frames = 2,670 valores)
 ```
 
-> [!CRITICAL] Regla de Normalización
-> Todos los puntos espaciales deben trasladarse restando el punto medio entre los hombros (landmarks 11 y 12 de Pose) y escalarse según la distancia inter-humeral ($D_{shoulders}$) antes de alimentarse a la sesión de ONNX Runtime.
+> [!CRITICAL] Regla de Normalización Canónica (FEATURE_SPEC v1.2.1)
+> 1. **Origen ($C$):** Punto medio 3D entre los hombros (`(pose[11] + pose[12]) / 2`).
+> 2. **Escala ($D$):** Distancia euclidiana 3D inter-humeral $\text{dist3D}(P_{11}, P_{12})$. Requiere $D \ge 0.08$.
+> 3. **Upper Pose:** $(x-C_x)/D, \; (y-C_y)/D, \; (z-C_z)/D, \; \text{clamp}(vis, 0, 1)$.
+> 4. **Manos:** En $XY$, relativas al centro de hombros. En el eje $Z$, **relativas a la propia muñeca de la mano** escalada por $D$: $(z - z_{wrist})/D$.
+> 5. **Manos Ausentes:** Estrictamente **63 ceros exactos (`0.0f`)** (`OK_HAND_MISSING`).
+> 6. **Tolerancia Numérica:** Toda implementación debe verificar la suite TC-01 a TC-05C con tolerancia $|\Delta| \le 10^{-6}$.
