@@ -336,10 +336,28 @@ def assign_hands_to_anatomical_slots(
 # 4. Función canónica: extract_frame_features (1 frame individual)
 # ---------------------------------------------------------------------------
 
+def validate_frame_hand_labels(raw_frame: dict) -> tuple[bool, Optional[str]]:
+    """
+    Valida que todas las manos detectadas en el frame tengan etiqueta válida ('Left' o 'Right').
+    Falla con ERR_HAND_MISSING_LABEL si alguna mano detectada carece de categoryName o tiene 'Unknown'.
+    """
+    detected_hands, detected_labels = _get_detected_hands_and_labels(raw_frame)
+    if not detected_hands:
+        return True, None
+
+    for i, lbl in enumerate(detected_labels):
+        if lbl is None or str(lbl).strip() == "" or str(lbl).lower() == "unknown":
+            return False, f"ERR_HAND_MISSING_LABEL: mano #{i} carece de etiqueta categoryName válida"
+        if str(lbl) not in ("Left", "Right"):
+            return False, f"ERR_HAND_INVALID_LABEL: mano #{i} tiene etiqueta no canónica ('{lbl}')"
+
+    return True, None
+
+
 def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool, Optional[str]]:
     """
     Extrae y normaliza un frame individual a 178 características float32
-    siguiendo estrictamente docs/dataset-generator/FEATURE_SPEC.md v1.2.2.
+    siguiendo estrictamente docs/dataset-generator/FEATURE_SPEC.md v1.3.0.
     """
     pose = raw_frame.get("pose")
     if pose is None or len(pose) < 23:

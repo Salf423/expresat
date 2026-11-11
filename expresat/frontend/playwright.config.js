@@ -28,7 +28,7 @@ export default defineConfig({
     },
     {
       name: 'firefox',
-      testMatch: /determinism\.spec\.js/,
+      testMatch: /(determinism|performance_benchmark)\.spec\.js/,
       use: {
         ...devices['Desktop Firefox'],
         baseURL: 'http://127.0.0.1:5173',

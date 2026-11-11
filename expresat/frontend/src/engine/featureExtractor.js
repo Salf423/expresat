@@ -251,6 +251,38 @@ export function assignHandsToAnatomicalSlots(
 /**
  * Extrae y normaliza un frame individual a 178 características Float32Array.
  */
+/**
+ * Valida que todas las manos detectadas en el frame tengan etiqueta válida ('Left' o 'Right').
+ * Falla con ERR_HAND_MISSING_LABEL si alguna mano detectada carece de categoryName o tiene 'Unknown'.
+ */
+export function validateFrameHandLabels(rawFrame) {
+  const { hands: detectedHands, labels: detectedLabels } = getDetectedHandsAndLabels(rawFrame);
+  if (!detectedHands || detectedHands.length === 0) {
+    return { valid: true, error: null };
+  }
+
+  for (let i = 0; i < detectedLabels.length; i++) {
+    const lbl = detectedLabels[i];
+    if (!lbl || String(lbl).trim() === '' || String(lbl).toLowerCase() === 'unknown') {
+      return {
+        valid: false,
+        error: `ERR_HAND_MISSING_LABEL: mano #${i} carece de etiqueta categoryName válida`,
+      };
+    }
+    if (lbl !== 'Left' && lbl !== 'Right') {
+      return {
+        valid: false,
+        error: `ERR_HAND_INVALID_LABEL: mano #${i} tiene etiqueta no canónica ('${lbl}')`,
+      };
+    }
+  }
+
+  return { valid: true, error: null };
+}
+
+/**
+ * Extrae y normaliza un frame individual a 178 características Float32Array.
+ */
 export function extractFrameFeatures(rawFrame) {
   const pose = rawFrame?.pose;
   if (!Array.isArray(pose) || pose.length < 23) {

@@ -16,6 +16,7 @@ import {
   extractWindow,
   mirrorRawFrame,
   mirrorFeatures178,
+  validateFrameHandLabels,
 } from '../featureExtractor.js';
 
 function assertLinfClose(actual, expected, atol = 1e-6, msg = '') {
@@ -180,6 +181,44 @@ describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.3.0', () => {
       const winCopy = JSON.parse(JSON.stringify(winInput));
       extractWindow(winInput, { durationMs: 1000.0 });
       expect(winInput).toEqual(winCopy);
+    });
+
+    it('Rechazo de manos sin etiqueta categoryName o con Unknown (Punto 3)', () => {
+      const baseRaw = JSON.parse(JSON.stringify(fixtures.frame_cases.TC_01_canonical_frame.input));
+
+      // Caso 1: Mano detectada pero sin handedness
+      const rawNoLabel = JSON.parse(JSON.stringify(baseRaw));
+      rawNoLabel.handedness = [];
+      rawNoLabel.hands = [Array(21).fill({ x: 0.63, y: 0.5, z: 0.0 })];
+      const res1 = validateFrameHandLabels(rawNoLabel);
+      expect(res1.valid).toBe(false);
+      expect(res1.error).toContain('ERR_HAND_MISSING_LABEL');
+
+      // Caso 2: categoryName Unknown
+      const rawUnknown = JSON.parse(JSON.stringify(baseRaw));
+      rawUnknown.handedness = [[{ categoryName: 'Unknown', score: 0.5 }]];
+      rawUnknown.hands = [Array(21).fill({ x: 0.63, y: 0.5, z: 0.0 })];
+      const res2 = validateFrameHandLabels(rawUnknown);
+      expect(res2.valid).toBe(false);
+      expect(res2.error).toContain('ERR_HAND_MISSING_LABEL');
+
+      // Caso 3: Formato grabador con categoryName: 'Unknown'
+      const rawDevUnknown = JSON.parse(JSON.stringify(baseRaw));
+      rawDevUnknown.hands = [
+        { landmarks: Array(21).fill({ x: 0.63, y: 0.5, z: 0.0 }), categoryName: 'Unknown', score: 0.5 },
+      ];
+      const res3 = validateFrameHandLabels(rawDevUnknown);
+      expect(res3.valid).toBe(false);
+      expect(res3.error).toContain('ERR_HAND_MISSING_LABEL');
+
+      // Caso 4: Etiqueta válida ('Right') es aceptada
+      const rawValid = JSON.parse(JSON.stringify(baseRaw));
+      rawValid.hands = [
+        { landmarks: Array(21).fill({ x: 0.63, y: 0.5, z: 0.0 }), categoryName: 'Right', score: 0.95 },
+      ];
+      const res4 = validateFrameHandLabels(rawValid);
+      expect(res4.valid).toBe(true);
+      expect(res4.error).toBeNull();
     });
   });
 });

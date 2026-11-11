@@ -36,6 +36,7 @@ from models.feature_extractor import (
     mirror_features_178,
     compute_config_hash,
     get_fixtures_sha256,
+    validate_frame_hand_labels,
 )
 
 FIXTURES_PATH = Path(__file__).resolve().parent / "fixtures" / "feature_spec_cases.json"
@@ -210,6 +211,48 @@ class TestFeatureSpecCasesJson(unittest.TestCase):
 
         _ = extract_window(win_nominal, target_fps=15, duration_ms=1000.0)
         self.assertEqual(win_nominal, win_copy, "extract_window mutó la secuencia de entrada")
+
+    def test_hands_without_label_fails(self):
+        """Verifica que un frame con manos detectadas pero sin categoryName o 'Unknown' falle la compuerta de etiquetas (Punto 3)."""
+        base_raw = copy.deepcopy(self.fixtures["frame_cases"]["TC_01_canonical_frame"]["input"])
+
+        # Caso 1: Mano presente pero handedness vacío / sin categoryName
+        raw_no_label = copy.deepcopy(base_raw)
+        raw_no_label["handedness"] = []
+        raw_no_label["hands"] = [
+            [{"x": 0.63, "y": 0.50, "z": 0.0}] * 21
+        ]
+        valid, error = validate_frame_hand_labels(raw_no_label)
+        self.assertFalse(valid)
+        self.assertIn("ERR_HAND_MISSING_LABEL", error)
+
+        # Caso 2: categoryName explícitamente "Unknown"
+        raw_unknown = copy.deepcopy(base_raw)
+        raw_unknown["handedness"] = [[{"categoryName": "Unknown", "score": 0.5}]]
+        raw_unknown["hands"] = [
+            [{"x": 0.63, "y": 0.50, "z": 0.0}] * 21
+        ]
+        valid, error = validate_frame_hand_labels(raw_unknown)
+        self.assertFalse(valid)
+        self.assertIn("ERR_HAND_MISSING_LABEL", error)
+
+        # Caso 3: Formato del grabador con categoryName: 'Unknown'
+        raw_dev_unknown = copy.deepcopy(base_raw)
+        raw_dev_unknown["hands"] = [
+            {"landmarks": [{"x": 0.63, "y": 0.50, "z": 0.0}] * 21, "categoryName": "Unknown", "score": 0.5}
+        ]
+        valid, error = validate_frame_hand_labels(raw_dev_unknown)
+        self.assertFalse(valid)
+        self.assertIn("ERR_HAND_MISSING_LABEL", error)
+
+        # Caso 4: Mano con etiqueta válida ('Right') pasa con éxito
+        raw_valid = copy.deepcopy(base_raw)
+        raw_valid["hands"] = [
+            {"landmarks": [{"x": 0.63, "y": 0.50, "z": 0.0}] * 21, "categoryName": "Right", "score": 0.95}
+        ]
+        valid, error = validate_frame_hand_labels(raw_valid)
+        self.assertTrue(valid)
+        self.assertIsNone(error)
 
 
 if __name__ == "__main__":

@@ -730,6 +730,13 @@ export class SignEngine {
     let rawHandedness = [];
     let rawPose = null;
 
+    // [CONTRATO DE ENTRADA Y TRANSFORMACIÓN DE DETECTOR - Punto 5]
+    // 1. Elemento de entrada: detectForVideo() recibe DIRECTAMENTE el elemento HTMLVideoElement (`video`).
+    // 2. Sin transformaciones: El video se entrega en su orientación nativa de sensor (NO espejado).
+    // 3. Convención de lateralidad: En cámara frontal (selfie), la mano derecha física del usuario
+    //    aparece en el lado izquierdo del encuadre nativo, por lo que MediaPipe le asigna categoryName: 'Left'.
+    // 4. Modo espejo: El flip horizontal se aplica EXCLUSIVAMENTE en el canvas de renderizado
+    //    (renderCanvasFrame vía `ctx.scale(-1, 1)`) para confort visual del usuario.
     if (this._handLandmarker) {
       const handRes = this._handLandmarker.detectForVideo(video, timestampMs, {
         imageProcessingOptions: { rotationDegrees: 0 },
