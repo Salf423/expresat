@@ -15,6 +15,7 @@ static const std::vector<std::string> SIGN_LABELS = {
 
 struct InferenceResult {
   std::string label;      // Predicted sign label
+  std::string error;      // Error code if valid is false
   float confidence{0.0f}; // Main prediction confidence [0.0, 1.0]
   std::vector<std::pair<std::string, float>> top5; // Top-5 class probabilities
   float fps_inference{0.0f};

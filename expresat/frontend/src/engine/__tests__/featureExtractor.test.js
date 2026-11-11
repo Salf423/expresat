@@ -41,10 +41,10 @@ function assertLinfClose(actual, expected, atol = 1e-6, msg = '') {
   }
 }
 
-describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.2.2', () => {
+describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.3.0', () => {
   it('constantes de versión coinciden con el fixture compartido', () => {
     expect(FEATURE_SPEC_VERSION).toBe(fixtures.feature_spec_version);
-    expect(FEATURE_SPEC_VERSION).toBe('1.2.2');
+    expect(FEATURE_SPEC_VERSION).toBe('1.3.0');
     expect(TOTAL_FEATURES).toBe(178);
     expect(SEQUENCE_LENGTH).toBe(15);
   });

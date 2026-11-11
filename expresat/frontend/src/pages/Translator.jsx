@@ -19,6 +19,7 @@ import { useSignEngine } from '../ui/index.js';
 import { WS_STATES } from '../transport/index.js';
 import { COLOR_LEGEND_ITEMS } from '../services/landmarkTracker.js';
 import { CONFIG } from '../config.js';
+import { DevRecorder } from '../components/DevRecorder.jsx';
 
 const WS_STATE_LABELS = Object.freeze({
   [WS_STATES.IDLE]: 'Modo Local',
@@ -62,11 +63,13 @@ const Translator = () => {
     landmarksCount,
     telemetry,
     reconnectTransport,
+    engineRef,
   } = useSignEngine({
     videoRef,
     canvasRef,
     trackingConfig,
     enableRemoteTransport: true,
+    enablePose: Boolean(import.meta.env.DEV),
   });
 
   // Atajos de teclado: Ctrl+Shift+D (Debug) y Ctrl+Shift+T (Tracker)
@@ -351,6 +354,8 @@ const Translator = () => {
               </button>
             </div>
           </div>
+
+          <DevRecorder engineRef={engineRef} videoRef={videoRef} />
 
           <div className="video-container" style={{ position: 'relative' }}>
             <video

@@ -34,6 +34,8 @@ from models.feature_extractor import (
     extract_window,
     mirror_raw_frame,
     mirror_features_178,
+    compute_config_hash,
+    get_fixtures_sha256,
 )
 
 FIXTURES_PATH = Path(__file__).resolve().parent / "fixtures" / "feature_spec_cases.json"
@@ -63,7 +65,15 @@ class TestFeatureSpecCasesJson(unittest.TestCase):
 
     def test_version_matches_fixtures(self):
         self.assertEqual(FEATURE_SPEC_VERSION, self.fixtures["feature_spec_version"])
-        self.assertEqual(FEATURE_SPEC_VERSION, "1.2.2")
+        self.assertEqual(FEATURE_SPEC_VERSION, "1.3.0")
+
+    def test_config_hash_incorporates_fixtures_sha256(self):
+        fixtures_hash = get_fixtures_sha256()
+        self.assertEqual(len(fixtures_hash), 64)
+        c_hash = compute_config_hash(fixtures_hash)
+        self.assertEqual(len(c_hash), 64)
+        # Asegurar determinismo
+        self.assertEqual(c_hash, compute_config_hash(fixtures_hash))
 
     def test_frame_cases_from_json(self):
         """Verifica todos los casos de frame del JSON compartido elemento a elemento."""

@@ -19,7 +19,7 @@
  *   6. Normalizar hombros y muñeca Z -> Tensor (1, 15, 178) float32
  */
 
-export const FEATURE_SPEC_VERSION = '1.2.2';
+export const FEATURE_SPEC_VERSION = '1.3.0';
 export const TOTAL_FEATURES = 178;
 export const SEQUENCE_LENGTH = 15;
 
@@ -35,8 +35,9 @@ export const HAND_AMBIGUITY_THRESH = 0.15;
 export const POSE_WRIST_MIN_VIS = 0.50;
 export const MAX_GAP_MS = 100.0;
 
-export const WEIGHT_LABEL_PENALTY = 0.30;
-export const WEIGHT_TEMPORAL_CONTINUITY = 0.20;
+// Pesos para asignación de manos en unidades de D (FEATURE_SPEC v1.3.0)
+export const WEIGHT_LABEL_PENALTY = 0.25;
+export const WEIGHT_TEMPORAL_CONTINUITY = 0.50;
 
 const POSE_BILATERAL_PAIRS = Object.freeze([
   [11, 12],
@@ -77,7 +78,10 @@ function getDetectedHandsAndLabels(rawFrame) {
     const handednessRaw = Array.isArray(rawFrame.handedness) ? rawFrame.handedness : [];
     for (let i = 0; i < rawFrame.hands.length; i++) {
       const h = rawFrame.hands[i];
-      if (Array.isArray(h) && h.length > 0) {
+      if (h && typeof h === 'object' && Array.isArray(h.landmarks)) {
+        hands.push(h.landmarks);
+        labels.push(h.categoryName || h.label || null);
+      } else if (Array.isArray(h) && h.length > 0) {
         hands.push(h);
         const lbl = i < handednessRaw.length ? getCategoryLabel(handednessRaw[i]) : null;
         labels.push(lbl);
@@ -357,12 +361,12 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     return { tensor: null, valid: false, error: 'ERR_POSE_MISSING' };
   }
 
-  validFrames.sort((a, b) => Number(a.timestamp_ms ?? 0) - Number(b.timestamp_ms ?? 0));
+  validFrames.sort((a, b) => Number(a.t_ms ?? a.timestamp_ms ?? 0) - Number(b.t_ms ?? b.timestamp_ms ?? 0));
 
   // Validación de brechas (gap <= 100 ms)
   for (let i = 0; i < validFrames.length - 1; i++) {
-    const tCurr = Number(validFrames[i].timestamp_ms ?? 0);
-    const tNext = Number(validFrames[i + 1].timestamp_ms ?? 0);
+    const tCurr = Number(validFrames[i].t_ms ?? validFrames[i].timestamp_ms ?? 0);
+    const tNext = Number(validFrames[i + 1].t_ms ?? validFrames[i + 1].timestamp_ms ?? 0);
     const gap = (tNext - tCurr) - dtNominal;
     if (gap > MAX_GAP_MS) {
       return { tensor: null, valid: false, error: 'ERR_INVALID_FRAME_GAP_TOO_LARGE' };
@@ -402,7 +406,7 @@ export function extractWindow(framesWithTimestamps, options = {}) {
       pose: JSON.parse(JSON.stringify(pose)),
       leftHand: assignedLeftHand ? JSON.parse(JSON.stringify(assignedLeftHand)) : null,
       rightHand: assignedRightHand ? JSON.parse(JSON.stringify(assignedRightHand)) : null,
-      timestamp_ms: Number(fr.timestamp_ms ?? 0),
+      timestamp_ms: Number(fr.t_ms ?? fr.timestamp_ms ?? 0),
     });
   }
 
@@ -718,4 +722,23 @@ export function mirrorFeatures178(features) {
   out.set(leftHand, 115);
 
   return new Float32Array(out);
+}
+
+/**
+ * Calcula el hash de configuración canónico (equivalente a Python compute_config_hash).
+ * @param {string} fixturesSha256 Digest SHA256 de feature_spec_cases.json
+ * @returns {string} Objeto serializado en JSON canónico para validación de contrato
+ */
+export function getCanonicalConfigObject(fixturesSha256) {
+  return {
+    duration_ms: 1000.0,
+    feature_spec_version: FEATURE_SPEC_VERSION,
+    fixtures_sha256: fixturesSha256,
+    sequence_length: SEQUENCE_LENGTH,
+    shoulders_d_min: SHOULDERS_D_MIN,
+    target_fps: 15,
+    total_features: TOTAL_FEATURES,
+    weight_label_penalty: WEIGHT_LABEL_PENALTY,
+    weight_temporal_continuity: WEIGHT_TEMPORAL_CONTINUITY,
+  };
 }

@@ -1,0 +1,15 @@
+{
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) Gecko/20100101 Firefox/159.0",
+  "numFrames": 30,
+  "framesDetectedHand": 30,
+  "framesDetectedPose": 30,
+  "totalPointsEvaluated": 630,
+  "maxLandmarkNoise": 0,
+  "meanLandmarkNoise": 0,
+  "stdLandmarkNoise": 0,
+  "labelMismatches": 0,
+  "totalPosePointsEvaluated": 990,
+  "maxPoseNoise": 0,
+  "meanPoseNoise": 0,
+  "browser": "firefox"
+}

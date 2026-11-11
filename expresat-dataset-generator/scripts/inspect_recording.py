@@ -54,7 +54,111 @@ def load_recording(file_path: Path) -> list[dict]:
     raise ValueError(f"Formato no reconocido en {file_path}")
 
 
-def inspect_recording(frames: list[dict], verbose: bool = False):
+def parse_segments(segments_str: str) -> list[tuple[float, float, str]]:
+    """
+    Parsea una cadena de segmentos en el formato:
+      "0-3000:reposo,3000-7000:solo_derecha,7000-11000:solo_izquierda,11000-15000:ambas,15000-18000:cruce"
+    """
+    segments = []
+    tokens = [s.strip() for s in segments_str.split(",") if s.strip()]
+    for token in tokens:
+        if ":" not in token:
+            raise ValueError(f"Segmento inválido '{token}'. Formato esperado: inicio-fin:estado")
+        time_part, state = token.split(":", 1)
+        state = state.strip().lower()
+        if "-" not in time_part:
+            raise ValueError(f"Rango de tiempo inválido '{time_part}'. Formato: inicio-fin")
+        t_start_s, t_end_s = time_part.split("-", 1)
+        t_start = float(t_start_s.strip())
+        t_end = float(t_end_s.strip())
+        segments.append((t_start, t_end, state))
+    return segments
+
+
+def audit_segments(frames: list[dict], segments: list[tuple[float, float, str]]):
+    print("\n--------------------------------------------------------------------------------")
+    print(" 5. AUDITORÍA TEMPORAL POR SEGMENTOS (--segments)")
+    print("--------------------------------------------------------------------------------")
+    print(" Estados válidos:")
+    print("   * reposo:         Sin manos activas (ambas ausentes)")
+    print("   * solo_derecha:   Solo mano derecha del firmante activa (MP 'Left' -> slot right)")
+    print("   * solo_izquierda: Solo mano izquierda del firmante activa (MP 'Right' -> slot left)")
+    print("   * ambas:          Ambas manos activas en sus slots anatómicos")
+    print("   * cruce:          Ambas manos detectadas con ambigüedad o cruce (|costA - costB| < 0.15*D)")
+    print("--------------------------------------------------------------------------------")
+
+    header = f"{'Segmento (ms)':<20} | {'Esperado':<16} | {'Frames':<8} | {'Cumplimiento':<14} | {'Estado':<10}"
+    print(header)
+    print("-" * len(header))
+
+    total_audited = 0
+    total_passed = 0
+
+    for t_start, t_end, expected_state in segments:
+        seg_frames = []
+        for idx, fr in enumerate(frames):
+            ts = float(fr.get("t_ms", fr.get("timestamp_ms", idx * 33.333)))
+            if t_start <= ts < t_end:
+                seg_frames.append((idx, ts, fr))
+
+        if not seg_frames:
+            print(f"{f'{t_start:.0f}-{t_end:.0f}':<20} | {expected_state:<16} | {'0':<8} | {'N/A':<14} | {'VACÍO':<10}")
+            continue
+
+        passed = 0
+        violations = []
+
+        for f_idx, ts, fr in seg_frames:
+            pose = fr.get("pose")
+            if not pose or len(pose) < 13:
+                violations.append((f_idx, ts, "sin pose"))
+                continue
+
+            p11 = pose[11]
+            p12 = pose[12]
+            dx = float(p11.get("x", 0.0)) - float(p12.get("x", 0.0))
+            dy = float(p11.get("y", 0.0)) - float(p12.get("y", 0.0))
+            dz = float(p11.get("z", 0.0)) - float(p12.get("z", 0.0))
+            d_val = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+            assigned_l, assigned_r, is_ambig = assign_hands_to_anatomical_slots(fr, pose, d_val)
+
+            # Clasificación de estado
+            if assigned_l is None and assigned_r is None:
+                actual_state = "reposo"
+            elif assigned_l is None and assigned_r is not None:
+                actual_state = "solo_derecha"
+            elif assigned_l is not None and assigned_r is None:
+                actual_state = "solo_izquierda"
+            elif assigned_l is not None and assigned_r is not None:
+                actual_state = "cruce" if is_ambig else "ambas"
+            else:
+                actual_state = "desconocido"
+
+            if actual_state == expected_state:
+                passed += 1
+            else:
+                if len(violations) < 3:
+                    violations.append((f_idx, ts, actual_state))
+
+        compliance_pct = (passed / len(seg_frames)) * 100.0
+        total_audited += len(seg_frames)
+        total_passed += passed
+
+        status_tag = "✅ OK" if compliance_pct >= 90.0 else ("⚠️ REVISAR" if compliance_pct >= 70.0 else "❌ FALLO")
+        seg_range = f"{t_start:.0f}-{t_end:.0f}"
+        print(f"{seg_range:<20} | {expected_state:<16} | {len(seg_frames):<8} | {f'{passed}/{len(seg_frames)} ({compliance_pct:.1f}%)':<14} | {status_tag:<10}")
+
+        if violations:
+            viols_str = ", ".join([f"frame {vi[0]} (t={vi[1]:.0f}ms: obtuvo '{vi[2]}')" for vi in violations])
+            print(f"    └─ Discrepancias: {viols_str}")
+
+    overall_pct = (total_passed / total_audited * 100.0) if total_audited > 0 else 0.0
+    print("-" * len(header))
+    print(f"Cumplimiento global de segmentos: {total_passed}/{total_audited} ({overall_pct:.1f}%)\n")
+
+
+def inspect_recording(frames: list[dict], verbose: bool = False, segments: Optional[list] = None):
     print("================================================================================")
     print(f"   EXPRESAT — REPORTE DE INSPECCIÓN DE GRABACIÓN REAL (FEATURE_SPEC v{FEATURE_SPEC_VERSION})")
     print("================================================================================")
@@ -65,8 +169,8 @@ def inspect_recording(frames: list[dict], verbose: bool = False):
         return
 
     # Duración estimada
-    t_start = float(frames[0].get("timestamp_ms", 0.0))
-    t_end = float(frames[-1].get("timestamp_ms", 0.0))
+    t_start = float(frames[0].get("t_ms", frames[0].get("timestamp_ms", 0.0)))
+    t_end = float(frames[-1].get("t_ms", frames[-1].get("timestamp_ms", 0.0)))
     duration_s = (t_end - t_start) / 1000.0
     print(f"Rango temporal:        t_0 = {t_start:.1f} ms -> t_final = {t_end:.1f} ms ({duration_s:.2f} s)")
 
@@ -91,7 +195,7 @@ def inspect_recording(frames: list[dict], verbose: bool = False):
     step = 1 if len(frames) <= 30 or verbose else max(1, len(frames) // 25)
 
     for idx, fr in enumerate(frames):
-        ts = float(fr.get("timestamp_ms", idx * 33.333))
+        ts = float(fr.get("t_ms", fr.get("timestamp_ms", idx * 33.333)))
         feats, valid, error = extract_frame_features(fr)
 
         if not valid:
@@ -177,13 +281,23 @@ def inspect_recording(frames: list[dict], verbose: bool = False):
     else:
         print(f"❌ ExtractWindow rechazó la toma: {w_error}")
 
+    # 5. Auditoría de Segmentos Temporales (si fue solicitada)
+    if segments:
+        audit_segments(frames, segments)
+
     print("================================================================================\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Inspección de grabaciones crudas de ExpresaT v1.2.2")
-    parser.add_argument("--file", type=str, required=True, help="Ruta al archivo .json de la grabación")
+    parser = argparse.ArgumentParser(description="Inspección de grabaciones crudas de ExpresaT v1.3.0")
+    parser.add_argument("--file", type=str, required=True, help="Ruta al archivo .json o .raw.json de la grabación")
     parser.add_argument("--verbose", action="store_true", help="Imprimir todos los frames sin submuestreo")
+    parser.add_argument(
+        "--segments",
+        type=str,
+        default=None,
+        help="Cadena de segmentos temporales esperados: '0-3000:reposo,3000-7000:solo_derecha,7000-11000:solo_izquierda,11000-15000:ambas,15000-18000:cruce'",
+    )
     args = parser.parse_args()
 
     file_path = Path(args.file)
@@ -191,8 +305,16 @@ def main():
         print(f"Error: No se encontró el archivo {file_path}")
         sys.exit(1)
 
+    parsed_segs = None
+    if args.segments:
+        try:
+            parsed_segs = parse_segments(args.segments)
+        except Exception as e:
+            print(f"Error parseando --segments: {e}")
+            sys.exit(1)
+
     frames = load_recording(file_path)
-    inspect_recording(frames, verbose=args.verbose)
+    inspect_recording(frames, verbose=args.verbose, segments=parsed_segs)
 
 
 if __name__ == "__main__":

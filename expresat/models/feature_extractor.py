@@ -1,7 +1,7 @@
 """
-feature_extractor.py — ExpresaT: Extractores Canónicos de Vectores 178D v1.2.2
+feature_extractor.py — ExpresaT: Extractores Canónicos de Vectores 178D v1.3.0
 
-Implementa estrictamente la especificación docs/dataset-generator/FEATURE_SPEC.md v1.2.2.
+Implementa estrictamente la especificación docs/dataset-generator/FEATURE_SPEC.md v1.3.0.
 Topología por frame:
   - [0..51] Upper Pose (13 landmarks × 4 coords: x, y, z, visibility)
   - [52..114] Mano Izquierda (21 landmarks × 3 coords: x, y, z)
@@ -20,17 +20,20 @@ Secuencia estricta de ExtractWindow (Sección 5):
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import math
 import statistics
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# 1. Constantes canónicas v1.2.2
+# 1. Constantes canónicas v1.3.0
 # ---------------------------------------------------------------------------
 
-FEATURE_SPEC_VERSION: str = "1.2.2"
+FEATURE_SPEC_VERSION: str = "1.3.0"
 TOTAL_FEATURES: int = 178
 SEQUENCE_LENGTH: int = 15
 
@@ -71,13 +74,50 @@ HAND_AMBIGUITY_THRESH: float = 0.15
 POSE_WRIST_MIN_VIS: float = 0.50
 MAX_GAP_MS: float = 100.0
 
-# Pesos para asignación de manos
-WEIGHT_LABEL_PENALTY: float = 0.30
-WEIGHT_TEMPORAL_CONTINUITY: float = 0.20
+# Pesos para asignación de manos en unidades de D (FEATURE_SPEC v1.3.0)
+WEIGHT_LABEL_PENALTY: float = 0.25
+WEIGHT_TEMPORAL_CONTINUITY: float = 0.50
 
 
 # ---------------------------------------------------------------------------
-# 2. Utilidades internas
+# 2. Hash criptográfico de configuración (config_hash)
+# ---------------------------------------------------------------------------
+
+def get_fixtures_sha256(fixtures_path: Optional[Path] = None) -> str:
+    """Calcula el digest SHA256 de tests/fixtures/feature_spec_cases.json."""
+    if fixtures_path is None:
+        fixtures_path = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "feature_spec_cases.json"
+    if not fixtures_path.exists():
+        return "fixtures_not_found"
+    with open(fixtures_path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def compute_config_hash(fixtures_sha256: Optional[str] = None) -> str:
+    """
+    Calcula el config_hash canónico para sellar artefactos y verificar modelos.
+    Incluye SHA256 íntegro de los fixtures de prueba y parámetros de normalización.
+    """
+    if fixtures_sha256 is None:
+        fixtures_sha256 = get_fixtures_sha256()
+
+    canonical_dict = {
+        "duration_ms": 1000.0,
+        "feature_spec_version": FEATURE_SPEC_VERSION,
+        "fixtures_sha256": fixtures_sha256,
+        "sequence_length": SEQUENCE_LENGTH,
+        "shoulders_d_min": SHOULDERS_D_MIN,
+        "target_fps": 15,
+        "total_features": TOTAL_FEATURES,
+        "weight_label_penalty": WEIGHT_LABEL_PENALTY,
+        "weight_temporal_continuity": WEIGHT_TEMPORAL_CONTINUITY,
+    }
+    raw_bytes = json.dumps(canonical_dict, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(raw_bytes).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# 3. Utilidades internas
 # ---------------------------------------------------------------------------
 
 def _get_category_label(h_item: Any) -> Optional[str]:
@@ -98,7 +138,8 @@ def _get_category_label(h_item: Any) -> Optional[str]:
 def _get_detected_hands_and_labels(raw_frame: dict) -> tuple[list[list[dict]], list[Optional[str]]]:
     """
     Normaliza el frame de entrada para extraer una lista de manos detectadas
-    y sus etiquetas categoryName correspondientes.
+    y sus etiquetas categoryName correspondientes. Soporta formato de array y
+    formato de objetos del grabador de desarrollo ({"landmarks": [...], "categoryName": ...}).
     """
     hands: list[list[dict]] = []
     labels: list[Optional[str]] = []
@@ -107,7 +148,11 @@ def _get_detected_hands_and_labels(raw_frame: dict) -> tuple[list[list[dict]], l
         hands_raw = raw_frame["hands"]
         handedness_raw = raw_frame.get("handedness", [])
         for i, h in enumerate(hands_raw):
-            if h and len(h) > 0:
+            if isinstance(h, dict) and "landmarks" in h and isinstance(h["landmarks"], list):
+                hands.append(h["landmarks"])
+                lbl = h.get("categoryName") or h.get("label")
+                labels.append(lbl)
+            elif isinstance(h, list) and len(h) > 0:
                 hands.append(h)
                 lbl = None
                 if i < len(handedness_raw):
@@ -405,12 +450,12 @@ def extract_window(
     if not valid_raw_frames:
         return None, False, "ERR_POSE_MISSING"
 
-    valid_raw_frames.sort(key=lambda f: float(f.get("timestamp_ms", 0.0)))
+    valid_raw_frames.sort(key=lambda f: float(f.get("t_ms", f.get("timestamp_ms", 0.0))))
 
     # Validación de brechas temporales (gap <= 100 ms)
     for i in range(len(valid_raw_frames) - 1):
-        t_curr = float(valid_raw_frames[i].get("timestamp_ms", 0.0))
-        t_next = float(valid_raw_frames[i + 1].get("timestamp_ms", 0.0))
+        t_curr = float(valid_raw_frames[i].get("t_ms", valid_raw_frames[i].get("timestamp_ms", 0.0)))
+        t_next = float(valid_raw_frames[i + 1].get("t_ms", valid_raw_frames[i + 1].get("timestamp_ms", 0.0)))
         gap = (t_next - t_curr) - dt_nominal
         if gap > MAX_GAP_MS:
             return None, False, "ERR_INVALID_FRAME_GAP_TOO_LARGE"
@@ -442,7 +487,7 @@ def extract_window(
             "pose": copy.deepcopy(pose),
             "left_hand": copy.deepcopy(assigned_l),
             "right_hand": copy.deepcopy(assigned_r),
-            "timestamp_ms": float(fr.get("timestamp_ms", 0.0)),
+            "timestamp_ms": float(fr.get("t_ms", fr.get("timestamp_ms", 0.0))),
         })
 
     t_start = frames_with_assigned_blocks[0]["timestamp_ms"]

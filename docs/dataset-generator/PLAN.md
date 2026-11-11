@@ -1,7 +1,7 @@
 # Plan de Rediseño — Dataset Generator v2 (PLAN.md)
 
 - **Documento:** Plan arquitectónico y hoja de ruta para la reestructuración de `expresat-dataset-generator/`.
-- **Versión:** `2.2.2` (Consolidado con correcciones de especificación v1.2.2 y fixtures compartidos)
+- **Versión:** `2.3.0` (Consolidado con FEATURE_SPEC v1.3.0, grabador dev 18s y arnés Gate 1B)
 - **Fecha:** 2026-11-10
 - **Rama:** `dataset-v2`
 - **Arquitecto y Orquestador:** Antigravity
@@ -69,7 +69,7 @@
 │   Escritor en Shards Binarios Float32:                                 │
 │   dataset_vN/shards/train_shard_000.npy                                │
 │   dataset_vN/shards/val_shard_000.npy                                  │
-│   dataset_vN/manifest.json (SHA256, feature_spec_version: 1.2.2)       │
+│   dataset_vN/manifest.json (config_hash, feature_spec_version: 1.3.0)  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,7 +80,7 @@
 1. **Invariante de Tensor:** Forma estricta `(1, 15, 178)` en `float32`.
 2. **Duración de Tomas:** Unificada en **$2.5\text{ s}$ ($2500\text{ ms}$)**.
 3. **Señas Estáticas:** El usuario debe mantener la pose estable durante $\ge 1200\text{ ms}$.
-4. **Catálogo Oficial:** Todas las señas se definen en `catalog/signs_catalog.json` con fuente verificable (URL pública accesible) o se declaran explícitamente como `PENDIENTE_FUENTE`.
-5. **Fixtures Compartidos:** `tests/fixtures/feature_spec_cases.json` es la fuente única de verdad para pruebas de Python y JavaScript, con validación $L_\infty \le 10^{-6}$.
-6. **Estado de C++:** Declarado como **NO CONFORME CON FEATURE_SPEC v1.2.2**. El pipeline nativo C++ queda bloqueado para modelos v1.2+.
+4. **Catálogo Oficial:** Todas las señas se definen en `catalog/signs_catalog.json` con fuente verificable o se declaran explícitamente como `PENDIENTE_FUENTE` (0 con URL verificada, 15 pendientes, 1 reposo postural neutro).
+5. **Fixtures Compartidos:** `tests/fixtures/feature_spec_cases.json` es la fuente única de verdad para pruebas de Python y JavaScript, con validación $L_\infty \le 10^{-6}$. Su hash SHA256 se incluye en `config_hash`.
+6. **Estado de C++:** Declarado como **NO CONFORME CON FEATURE_SPEC v1.3.0**. El pipeline nativo C++ rechaza activamente cualquier ejecución retornando código de error explícito.
 7. **Memoria y Streaming:** En CLI offline, los shards `.npy` se generan por streaming, garantizando RSS plano e independiente del número de tomas.

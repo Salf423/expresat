@@ -82,6 +82,21 @@ void InferenceThread::load_onnx_model(const std::string& path) {
 }
 
 void InferenceThread::run(const std::atomic<bool>& running) {
+    // RECHAZO CRÍTICO: Si la implementación nativa está declarada como no conforme,
+    // rechaza activamente la ejecución con retorno de error explícito y publicación en result_bus.
+    if (std::string(CPP_FEATURE_SPEC_CONFORMANCE) != "CONFORME") {
+        std::cerr << "[InferenceThread] RECHAZO: Implementación C++ no conforme con FEATURE_SPEC ("
+                  << CPP_FEATURE_SPEC_CONFORMANCE << "). Abortando ejecución.\n";
+        auto reject_res = std::make_shared<InferenceResult>();
+        reject_res->valid = false;
+        reject_res->error = "ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0";
+        reject_res->label = "ERR_NOT_CONFORMANT";
+        reject_res->timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        result_bus_.publish(std::move(reject_res));
+        return;
+    }
+
     cv::Mat frame;
 
     while (running.load(std::memory_order_relaxed)) {
@@ -106,6 +121,17 @@ void InferenceThread::run(const std::atomic<bool>& running) {
         // 4. Preprocess -> tensor [1, 15, 178]
         const auto t_preprocess_start = std::chrono::steady_clock::now();
         auto input_tensor = preprocess_sequence();
+        if (input_tensor.empty()) {
+            auto reject_res = std::make_shared<InferenceResult>();
+            reject_res->valid = false;
+            reject_res->error = "ERR_SHOULDERS_TOO_SMALL";
+            reject_res->label = "ERR_SHOULDERS_TOO_SMALL";
+            reject_res->frame_id = global_frame_id_;
+            reject_res->timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            result_bus_.publish(std::move(reject_res));
+            continue;
+        }
         const float preprocess_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - t_preprocess_start).count();
 
@@ -195,7 +221,8 @@ InferenceThread::preprocess_sequence() const {
                 frame.left_hand, frame.right_hand
             );
             if (!valid) {
-                std::fill(frame_ptr, frame_ptr + NUM_FEATURES, 0.0f);
+                // Rechazo activo de la secuencia si los hombros son inválidos o D < 1e-4
+                return {};
             }
         }
     }
@@ -256,7 +283,8 @@ bool InferenceThread::normalize_to_shoulders(
     const float dz = ls.z - rs.z;
     const float scale = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-    if (scale < SHOULDERS_D_MIN) {
+    // Rechazo estricto si hombros son demasiado pequeños o D < 1e-4
+    if (scale < SHOULDERS_D_MIN || scale < 1e-4f) {
         return false;
     }
 

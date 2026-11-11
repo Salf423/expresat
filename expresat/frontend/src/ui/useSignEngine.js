@@ -24,6 +24,7 @@ export function useSignEngine({
   trackingConfig = { enabled: true },
   classifierInstance = null,
   enableRemoteTransport = true,
+  enablePose = false,
 } = {}) {
   const [fps, setFps] = useState({ cameraFps: 0, inferenceFps: 0 });
   const [engineStatus, setEngineStatus] = useState({
@@ -177,7 +178,7 @@ export function useSignEngine({
 
     const engine = new SignEngine({
       targetFps: CONFIG.targetFps,
-      enablePose: CONFIG.enablePose,
+      enablePose: Boolean(enablePose || CONFIG.enablePose),
       modelComplexity: CONFIG.modelComplexity,
       backend: CONFIG.mediapipeBackend,
     });
@@ -292,7 +293,7 @@ export function useSignEngine({
       tracker.reset();
       engineRef.current = null;
     };
-  }, [videoRef, canvasRef, classifierInstance]);
+  }, [videoRef, canvasRef, classifierInstance, enablePose]);
 
   const reconnectTransport = useCallback(() => {
     if (wsClientRef.current) {
@@ -321,6 +322,7 @@ export function useSignEngine({
     telemetry,
     reconnectTransport,
     clearGesture,
+    engineRef,
   };
 }
 

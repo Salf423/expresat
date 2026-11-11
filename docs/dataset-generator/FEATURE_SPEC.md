@@ -1,9 +1,9 @@
 # Especificación Canónica del Vector de 178 Características — ExpresaT
 
-- **Versión de la especificación (`feature_spec_version`):** `1.2.2`
+- **Versión de la especificación (`feature_spec_version`):** `1.3.0`
 - **Estado:** Contrato técnico estricto para modelos reentrenados y generador v2.
 - **Ámbito:** Unificación matemática de extracción, filtrado, normalización y asignación anatómica en Python (`backend/`, `models/`) y JavaScript (`frontend/`).
-- **Estado de C++ (`expresat-native/`):** **NO CONFORME CON FEATURE_SPEC v1.2.2**. El pipeline nativo C++ no implementa `ExtractWindow` y carece de binarios/cabeceras de ONNX Runtime en `third_party/onnxruntime`. Queda marcado como obsoleto y bloqueado por comprobación de versión hasta que se desarrolle una implementación completa y probada.
+- **Estado de C++ (`expresat-native/`):** **NO CONFORME CON FEATURE_SPEC v1.3.0**. El pipeline nativo C++ no implementa `ExtractWindow`. Por política de seguridad y fidelidad, `InferenceThread` y `normalize_to_shoulders` **rechazan activamente** cualquier intento de procesamiento retornando códigos de error explícitos (`ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0` y `ERR_SHOULDERS_TOO_SMALL`), en lugar de caer en silent zero-filling o truncamientos silenciosos.
 - **Invariante del modelo:** Tensor tridimensional de entrada `(1, 15, 178)` en `float32`.
 
 ---
@@ -20,8 +20,8 @@ La inspección de git y del código fuente confirma que `expresat-dataset-genera
 
 ### 1.2 Declaración de Contrato Nuevo y Aislamiento
 1. **Puesta en Cuarentena:** El archivo `letra_a_derecha_2.json` queda aislado en `dataset/quarantine/` y **no debe utilizarse para entrenar nuevos modelos**.
-2. **Contrato Nuevo `1.2.2`:** La especificación v1.2.2 rige como contrato obligatorio.
-3. **Verificación de Versión en Inferencia:** `InferenceEngine` (`inference_engine.py`) y el pipeline de entrenamiento (`train_and_export.py`) comprueban compatibilidad de versión por `major.minor` (`1.2` compatible con `1.2.2`, incompatible con `1.3` o `2.0`). Adicionalmente, guardan y verifican el hash SHA256 de la configuración (`config_hash`) en `model_metadata.json` y `manifest.json`. Si no coincide, abortan con `IncompatibleFeatureSpecError`.
+2. **Contrato Nuevo `1.3.0`:** La especificación v1.3.0 rige como contrato obligatorio.
+3. **Verificación de Versión en Inferencia:** `InferenceEngine` (`inference_engine.py`) y el pipeline de entrenamiento (`train_and_export.py`) comprueban compatibilidad de versión por `major.minor` (`1.3` compatible con `1.3.0`). Adicionalmente, guardan y verifican el hash criptográfico SHA256 (`config_hash`), el cual incluye la configuración dimensional y el hash SHA256 íntegro de `tests/fixtures/feature_spec_cases.json`. Si no coincide, abortan con `IncompatibleFeatureSpecError`.
 
 ---
 
@@ -139,11 +139,14 @@ Si $\text{vis}(P_{15}) < 0.50$ o $\text{vis}(P_{16}) < 0.50$, la pose no tiene s
 $$\text{costo}_A = d_{\text{left}}(H_0) + d_{\text{right}}(H_1) + \text{PenalizaciónEtiqueta}(H_0 \to \text{izq}, H_1 \to \text{der}) + \text{PenalizaciónTemporal}(H_0, H_1)$$
 $$\text{costo}_B = d_{\text{left}}(H_1) + d_{\text{right}}(H_0) + \text{PenalizaciónEtiqueta}(H_1 \to \text{izq}, H_0 \to \text{der}) + \text{PenalizaciónTemporal}(H_1, H_0)$$
 
-Donde:
+Donde todas las magnitudes están expresadas en unidades de $D$:
 - MediaPipe en frame no espejado entrega:
-  - `'Right'` $\to$ mano izquierda del firmante (penalización $+0.3 \cdot D$ si se asigna a mano derecha).
-  - `'Left'` $\to$ mano derecha del firmante (penalización $+0.3 \cdot D$ si se asigna a mano izquierda).
-- Término temporal: penaliza la distancia cuadrática a la posición de la mano en el frame previo ($+0.2 \cdot \text{dist2D}(H, H_{\text{prev}})$).
+  - `'Right'` $\to$ mano izquierda del firmante (penalización $+0.25 \cdot D$ si se asigna a mano derecha).
+  - `'Left'` $\to$ mano derecha del firmante (penalización $+0.25 \cdot D$ si se asigna a mano izquierda).
+- Término de continuidad temporal: penaliza la distancia euclidiana a la muñeca de la mano asignada en el frame previo ($+0.5 \cdot \text{dist2D}(H, H_{\text{prev}})$ en unidades de $D$).
+
+$$\text{costo}_A = d_{\text{left}}(H_0) + d_{\text{right}}(H_1) + \text{PenalizaciónEtiqueta}(0.25 \cdot D) + 0.5 \cdot \text{dist2D}(H, H_{\text{prev}})$$
+$$\text{costo}_B = d_{\text{left}}(H_1) + d_{\text{right}}(H_0) + \text{PenalizaciónEtiqueta}(0.25 \cdot D) + 0.5 \cdot \text{dist2D}(H, H_{\text{prev}})$$
 
 #### Registro de Ambigüedad:
 Si $|\text{costo}_A - \text{costo}_B| < 0.15 \cdot D$ (manos cruzadas o en el centro del pecho), se incrementa el contador `ambiguous_handedness_count` en el manifiesto de la toma, registrando ambos casos (1 mano y 2 manos).
@@ -183,15 +186,68 @@ Todas las tomas del dataset tienen una duración temporal unificada:
 | `ERR_HAND_DISCONNECTED` | $\min(d_{\text{left}}, d_{\text{right}}) > 1.75 \cdot D \land \text{vis}(P_{\text{wrist}}) \ge 0.50$ | Descartar mano espuria. |
 | `ERR_INVALID_FRAME_GAP_TOO_LARGE` | Brecha sin tracking $> 100 \text{ ms}$ | Rechazar toma completa. |
 | `ERR_INVALID_ASPECT_RATIO` | $|(W/H) - (4/3)| > 0.05$ | Rechazar captura de cámara. |
+| `ERR_CPP_NOT_CONFORMANT` | Invocación de inferencia nativa C++ en v1.3.0 | Rechazar ejecución con return de error explícito. |
 
 ---
 
-## 10. Fixture Único Compartido y Tolerancia Elemento a Elemento ($L_\infty$)
+## 10. Fixture Único Compartido, Tolerancia Elemento a Elemento ($L_\infty$) y `config_hash`
 
 Las pruebas de conformidad en todos los lenguajes (Python y JavaScript) deben consumir **obligatoriamente el archivo canónico único**:
 `tests/fixtures/feature_spec_cases.json`
 
-### Regla de Aceptación Numérica:
+### 10.1 Regla de Aceptación Numérica ($L_\infty$):
 Para todo vector o tensor generado, la comparación con la salida esperada se evalúa **elemento a elemento** bajo la norma del supremo:
 $$\|v_{\text{obtenido}} - v_{\text{esperado}}\|_\infty = \max_{i} |v_{\text{obtenido}, i} - v_{\text{esperado}, i}| \le 10^{-6}$$
 Está prohibido evaluar únicamente la diferencia de normas escalares.
+
+### 10.2 Cálculo Canónico de `config_hash`:
+El hash de configuración criptográfica se calcula como el digest SHA256 del JSON canónico ordenado que contiene:
+1. `feature_spec_version`: `"1.3.0"`
+2. Parámetros dimensionales y temporales (`total_features: 178`, `sequence_length: 15`, `target_fps: 15`, `duration_ms: 1000.0`, `shoulders_d_min: 0.08`).
+3. Pesos de asignación (`weight_label_penalty: 0.25`, `weight_temporal_continuity: 0.50`).
+4. **`fixtures_sha256`:** El hash SHA256 íntegro de `tests/fixtures/feature_spec_cases.json`.
+
+Cualquier cambio en las salidas esperadas o en la formulación matemática modifica `fixtures_sha256`, altera el `config_hash` y obliga a incrementar la versión `minor` (ej. de 1.2 a 1.3).
+
+---
+
+## 11. Esquema Canónico de Tomas Crudas (`.raw.json`) y Auditoría por Segmentos
+
+### 11.1 Esquema de Toma Cruda Generada por el Grabador de Desarrollo:
+```json
+{
+  "version": "1.3.0",
+  "type": "expresat_dev_recording_raw",
+  "recorded_at": "2026-11-10T20:50:00.000Z",
+  "duration_ms": 18000,
+  "total_frames": 540,
+  "videoWidth": 640,
+  "videoHeight": 480,
+  "frames": [
+    {
+      "t_ms": 33.3,
+      "videoWidth": 640,
+      "videoHeight": 480,
+      "hands": [
+        {
+          "landmarks": [{ "x": 0.45, "y": 0.60, "z": -0.02 }],
+          "categoryName": "Left",
+          "score": 0.98
+        }
+      ],
+      "pose": [
+        { "x": 0.51, "y": 0.35, "z": 0.10, "visibility": 0.99 }
+      ]
+    }
+  ]
+}
+```
+
+### 11.2 Segmentos Temporales con `--segments` en `inspect_recording.py`:
+Permite verificar automáticamente una toma real de calibración dividida por ventanas temporales:
+- `reposo`: Sin manos detectadas o manos inactivas.
+- `solo_derecha`: Mano derecha física del firmante activa (MediaPipe `Left` -> slot right [115..177] activo, slot left inactivo).
+- `solo_izquierda`: Mano izquierda física del firmante activa (MediaPipe `Right` -> slot left [52..114] activo, slot right inactivo).
+- `ambas`: Ambas manos activas en sus respectivos slots anatómicos sin ambigüedad.
+- `cruce`: Ambas manos cruzadas en el centro del pecho (`is_ambiguous == True`).
+
