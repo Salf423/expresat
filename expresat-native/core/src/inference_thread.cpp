@@ -74,6 +74,7 @@ void InferenceThread::load_onnx_model(const std::string& path) {
     }
 
     std::cout << "[Inference] ONNX model loaded: " << path << "\n";
+    std::cout << "[Inference]   Estado de conformidad: " << CPP_FEATURE_SPEC_CONFORMANCE << "\n";
     std::cout << "[Inference]   Input:  " << ort_->input_name << " [1, "
               << SEQUENCE_LENGTH << ", " << NUM_FEATURES << "]\n";
     std::cout << "[Inference]   Output: " << ort_->output_name << " [1, "

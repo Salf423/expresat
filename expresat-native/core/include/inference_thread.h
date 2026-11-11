@@ -17,6 +17,9 @@ class SessionOptions;
 
 namespace expresat {
 
+// Estado de conformidad formal con FEATURE_SPEC v1.2.2
+constexpr const char* CPP_FEATURE_SPEC_CONFORMANCE = "NO_CONFORME_FEATURE_SPEC_1_2_2";
+
 // Dedicated inference pipeline: consumes frames, extracts landmarks, runs ONNX
 // GRU model, publishes results.
 class InferenceThread {
