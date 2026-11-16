@@ -6,6 +6,7 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
   test('Mide el ruido de MediaPipe Tasks Vision CPU entre dos corridas deterministas con timestamps fijos', async ({
     page,
   }, testInfo) => {
+    test.setTimeout(90000);
     const browserName = testInfo.project.name || 'chromium';
 
     // Escuchar mensajes de consola

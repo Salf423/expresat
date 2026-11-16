@@ -2,6 +2,9 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
+  testMatch: /(translator|dev_instrumentation)\.spec\.js/,
+  workers: 1,
+  fullyParallel: false,
   timeout: 35000,
   webServer: {
     command: 'node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173 --strictPort',
@@ -23,25 +26,6 @@ export default defineConfig({
             '--use-fake-device-for-media-stream',
             '--use-fake-ui-for-media-stream',
           ],
-        },
-      },
-    },
-    {
-      name: 'firefox',
-      testMatch: /(determinism|performance_benchmark)\.spec\.js/,
-      use: {
-        ...devices['Desktop Firefox'],
-        baseURL: 'http://127.0.0.1:5173',
-        headless: true,
-        launchOptions: {
-          firefoxUserPrefs: {
-            'webgl.disabled': false,
-            'webgl.force-enabled': true,
-            'webgl.enable-webgl2': true,
-            'gfx.webrender.software': true,
-            'media.navigator.streams.fake': true,
-            'media.navigator.permission.disabled': true,
-          },
         },
       },
     },

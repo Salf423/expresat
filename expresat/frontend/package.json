@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint src",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --workers=1",
+    "test:benchmark": "playwright test --config=playwright.benchmark.config.js --workers=1",
     "preview": "vite preview"
   },
   "dependencies": {

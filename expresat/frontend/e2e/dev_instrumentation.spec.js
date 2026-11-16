@@ -1,13 +1,39 @@
 import { test, expect } from '@playwright/test';
 
+function attachOfflineErrorListeners(page) {
+  const consoleErrors = [];
+  const pageErrors = [];
+  const failedRequests = [];
+  page.on('requestfailed', (req) => {
+    const url = req.url();
+    if (!url.startsWith('http://127.0.0.1:8000') && !url.startsWith('ws://127.0.0.1:8000')) {
+      failedRequests.push(`${req.method()} ${url} -> ${req.failure()?.errorText || 'failed'}`);
+    }
+  });
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      const text = msg.text();
+      if (
+        !text.includes('INFO: Created TensorFlow Lite XNNPACK') &&
+        !text.includes('127.0.0.1:8000') &&
+        !text.includes('ERR_CONNECTION_REFUSED') &&
+        !text.includes('WebSocket connection to')
+      ) {
+        consoleErrors.push(text);
+      }
+    }
+  });
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  return { consoleErrors, pageErrors, failedRequests };
+}
+
 test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y experimento exact15', () => {
   test('expone indicador de cámara real separado, marcas performance.mark y comparación Reposo vs Grabando', async ({
     page,
   }) => {
     // Headless Chromium sin GPU física compila shaders SwiftShader (~12s frío + ~1.4s/frame)
-    test.setTimeout(90000);
-    const pageErrors = [];
-    page.on('pageerror', (err) => pageErrors.push(err.message));
+    test.setTimeout(120000);
+    const { consoleErrors, pageErrors, failedRequests } = attachOfflineErrorListeners(page);
 
     await page.goto('/translator');
 
@@ -55,14 +81,15 @@ test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y 
       report.phases.grabando.stages.totalFrameMs.p50
     );
 
+    expect(failedRequests).toEqual([]);
     expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
   });
 
   test('experimento ?camExp=exact15 solicita width/height exact y frameRate min 15 sin fallback silencioso', async ({
     page,
   }) => {
-    const pageErrors = [];
-    page.on('pageerror', (err) => pageErrors.push(err.message));
+    const { consoleErrors, pageErrors, failedRequests } = attachOfflineErrorListeners(page);
 
     await page.goto('/translator?camExp=exact15');
 
@@ -75,6 +102,8 @@ test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y 
       expect(snap?.cameraNegotiation?.usedFallback).toBe(false);
     }).toPass({ timeout: 15000 });
 
+    expect(failedRequests).toEqual([]);
     expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
   });
 });

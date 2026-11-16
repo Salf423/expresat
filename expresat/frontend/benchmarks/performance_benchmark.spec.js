@@ -43,20 +43,23 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
         ctx.drawImage(img, handX, handY, 260, 300);
       }
 
-      // Utilidad percentil
+      // Utilidad percentil (mean, p50, p95, p99, max)
       function calcStats(arr) {
-        if (!arr || arr.length === 0) return { mean: 0, median: 0, p95: 0, max: 0 };
+        if (!arr || arr.length === 0) return { mean: 0, p50: 0, p95: 0, p99: 0, max: 0 };
         const sorted = [...arr].sort((a, b) => a - b);
         const sum = sorted.reduce((acc, v) => acc + v, 0);
         const mean = sum / sorted.length;
-        const median = sorted[Math.floor(sorted.length / 2)];
+        const p50 = sorted[Math.floor(sorted.length * 0.5)];
         const p95Idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
         const p95 = sorted[p95Idx];
+        const p99Idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99));
+        const p99 = sorted[p99Idx];
         const max = sorted[sorted.length - 1];
         return {
           mean: Number(mean.toFixed(2)),
-          median: Number(median.toFixed(2)),
+          p50: Number(p50.toFixed(2)),
           p95: Number(p95.toFixed(2)),
+          p99: Number(p99.toFixed(2)),
           max: Number(max.toFixed(2)),
         };
       }
@@ -129,11 +132,11 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
       const displayCtx = displayCanvas.getContext('2d');
 
       const CONFIGURATIONS = [
-        { name: 'CPU — Manos + Pose (1:1 cadencia)', delegate: 'CPU', enablePose: true, poseCadence: 1 },
         { name: 'GPU — Manos + Pose (1:1 cadencia)', delegate: 'GPU', enablePose: true, poseCadence: 1 },
+        { name: 'GPU — Manos + Pose cada 2 frames (1:2)', delegate: 'GPU', enablePose: true, poseCadence: 2 },
+        { name: 'GPU — Manos + Pose cada 3 frames (1:3)', delegate: 'GPU', enablePose: true, poseCadence: 3 },
+        { name: 'CPU — Manos + Pose (1:1 cadencia)', delegate: 'CPU', enablePose: true, poseCadence: 1 },
         { name: 'CPU — Solo Manos (sin pose)', delegate: 'CPU', enablePose: false, poseCadence: 1 },
-        { name: 'CPU — Manos + Pose cada 2 frames (1:2)', delegate: 'CPU', enablePose: true, poseCadence: 2 },
-        { name: 'CPU — Manos + Pose cada 3 frames (1:3)', delegate: 'CPU', enablePose: true, poseCadence: 3 },
       ];
 
       const report = {};
@@ -315,5 +318,170 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
     console.log('===============================================================\n');
 
     expect(Object.keys(benchmarkResults).length).toBeGreaterThan(0);
+  });
+
+  test('Mide la divergencia L_inf entre delegado CPU y GPU (manos y pose) y diagnostica el entorno WASM', async ({
+    page,
+  }) => {
+    test.setTimeout(180000);
+    await page.goto('/translator');
+    const wasmBadge = page.getByTestId('wasm-status-badge');
+    await expect(wasmBadge).toHaveText('WASM Activo', { timeout: 25000 });
+
+    const divergenceResults = await page.evaluate(async () => {
+      const { FilesetResolver, HandLandmarker, PoseLandmarker } = window.__TasksVision__;
+      const vision = await FilesetResolver.forVisionTasks('/wasm');
+
+      // Diagnóstico de entorno WASM y navegador
+      const envDiag = {
+        crossOriginIsolated: Boolean(window.crossOriginIsolated),
+        hardwareConcurrency: navigator.hardwareConcurrency || 1,
+        wasmSimdSupported:
+          typeof WebAssembly.validate === 'function' &&
+          WebAssembly.validate(
+            new Uint8Array([
+              0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8,
+              0, 125, 0, 0, 0, 0, 11,
+            ])
+          ),
+        userAgent: navigator.userAgent,
+      };
+
+      // Cargar estímulo
+      const img = new Image();
+      img.src = '/test_hand.png';
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(0, 0, 640, 480);
+      ctx.drawImage(img, 190, 100, 260, 300);
+
+      // 1. HandLandmarker CPU vs GPU
+      let handCpu = null;
+      let handGpu = null;
+      let handDivergence = null;
+      try {
+        handCpu = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: '/models/hand_landmarker.task', delegate: 'CPU' },
+          runningMode: 'VIDEO',
+          numHands: 2,
+        });
+        handGpu = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: '/models/hand_landmarker.task', delegate: 'GPU' },
+          runningMode: 'VIDEO',
+          numHands: 2,
+        });
+
+        const resCpu = handCpu.detectForVideo(canvas, 100);
+        const resGpu = handGpu.detectForVideo(canvas, 100);
+
+        const lmsCpu = resCpu?.landmarks?.[0] || [];
+        const lmsGpu = resGpu?.landmarks?.[0] || [];
+
+        let maxHandDiff = 0.0;
+        if (lmsCpu.length > 0 && lmsGpu.length > 0 && lmsCpu.length === lmsGpu.length) {
+          for (let i = 0; i < lmsCpu.length; i++) {
+            const dx = Math.abs(lmsCpu[i].x - lmsGpu[i].x);
+            const dy = Math.abs(lmsCpu[i].y - lmsGpu[i].y);
+            const dz = Math.abs((lmsCpu[i].z || 0) - (lmsGpu[i].z || 0));
+            maxHandDiff = Math.max(maxHandDiff, dx, dy, dz);
+          }
+        }
+        handDivergence = {
+          hands_detected_cpu: resCpu?.landmarks?.length || 0,
+          hands_detected_gpu: resGpu?.landmarks?.length || 0,
+          linf_hand_landmarks: Number(maxHandDiff.toFixed(6)),
+        };
+      } catch (err) {
+        handDivergence = { error: String(err?.message || err) };
+      } finally {
+        if (handCpu) handCpu.close();
+        if (handGpu) handGpu.close();
+      }
+
+      // 2. PoseLandmarker CPU vs GPU
+      let poseCpu = null;
+      let poseGpu = null;
+      let poseDivergence = null;
+      try {
+        poseCpu = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: '/models/pose_landmarker_lite.task', delegate: 'CPU' },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.1,
+          minPosePresenceConfidence: 0.1,
+          minTrackingConfidence: 0.1,
+        });
+        poseGpu = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: '/models/pose_landmarker_lite.task', delegate: 'GPU' },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.1,
+          minPosePresenceConfidence: 0.1,
+          minTrackingConfidence: 0.1,
+        });
+
+        // Cargar imagen con persona real para pose
+        const imgPerson = new Image();
+        imgPerson.src = '/test_person.png';
+        await imgPerson.decode();
+        const canvasPerson = document.createElement('canvas');
+        canvasPerson.width = 640;
+        canvasPerson.height = 480;
+        const ctxPerson = canvasPerson.getContext('2d');
+        ctxPerson.drawImage(imgPerson, 0, 0, 640, 480);
+
+        const pResCpu = poseCpu.detectForVideo(canvasPerson, 100);
+        const pResGpu = poseGpu.detectForVideo(canvasPerson, 100);
+
+        const pLmsCpu = pResCpu?.landmarks?.[0] || [];
+        const pLmsGpu = pResGpu?.landmarks?.[0] || [];
+
+        let maxPoseDiff = 0.0;
+        if (pLmsCpu.length > 0 && pLmsGpu.length > 0 && pLmsCpu.length === pLmsGpu.length) {
+          for (let i = 0; i < pLmsCpu.length; i++) {
+            const dx = Math.abs(pLmsCpu[i].x - pLmsGpu[i].x);
+            const dy = Math.abs(pLmsCpu[i].y - pLmsGpu[i].y);
+            const dz = Math.abs((pLmsCpu[i].z || 0) - (pLmsGpu[i].z || 0));
+            maxPoseDiff = Math.max(maxPoseDiff, dx, dy, dz);
+          }
+        }
+        poseDivergence = {
+          poses_detected_cpu: pResCpu?.landmarks?.length || 0,
+          poses_detected_gpu: pResGpu?.landmarks?.length || 0,
+          linf_pose_landmarks: Number(maxPoseDiff.toFixed(6)),
+        };
+      } catch (err) {
+        poseDivergence = { error: String(err?.message || err) };
+      } finally {
+        if (poseCpu) poseCpu.close();
+        if (poseGpu) poseGpu.close();
+      }
+
+      return {
+        environment: envDiag,
+        hand_divergence: handDivergence,
+        pose_divergence: poseDivergence,
+      };
+    });
+
+    const outPath = path.resolve(
+      process.cwd(),
+      '../../docs/dataset-generator/DELEGATE_DIVERGENCE.json'
+    );
+    fs.writeFileSync(outPath, JSON.stringify(divergenceResults, null, 2), 'utf-8');
+
+    console.log('\n===============================================================');
+    console.log('   DIVERGENCIA L_inf DELEGADO CPU vs GPU & DIAGNÓSTICO WASM');
+    console.log('===============================================================');
+    console.log('Ambiente:', JSON.stringify(divergenceResults.environment, null, 2));
+    console.log('Manos CPU vs GPU:', JSON.stringify(divergenceResults.hand_divergence, null, 2));
+    console.log('Pose CPU vs GPU:', JSON.stringify(divergenceResults.pose_divergence, null, 2));
+    console.log('===============================================================\n');
+
+    expect(divergenceResults.environment).toBeDefined();
   });
 });

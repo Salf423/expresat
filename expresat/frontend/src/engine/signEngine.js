@@ -113,6 +113,36 @@ function protectMainThreadModuleFactory() {
 }
 
 /**
+ * Desactiva el logger interno ODML de @mediapipe/tasks-vision (POST odml.pa.googleapis.com/v1/log)
+ * para evitar salidas a red y errores net::ERR_INTERNET_DISCONNECTED en entorno offline.
+ */
+function disableMediaPipeOdmlTelemetry(instance) {
+  try {
+    const odmlClient = instance?.m?.l;
+    if (!odmlClient || typeof odmlClient !== 'object') return;
+    if (odmlClient.g !== undefined) {
+      clearInterval(odmlClient.g);
+      odmlClient.g = undefined;
+    }
+    odmlClient.error = new Error('ODML telemetry disabled offline');
+    if (Array.isArray(odmlClient.h)) {
+      odmlClient.h.length = 0;
+    }
+    odmlClient.flush = (onSuccess) => {
+      if (typeof onSuccess === 'function') onSuccess();
+    };
+    odmlClient.close = () => {
+      if (odmlClient.g !== undefined) {
+        clearInterval(odmlClient.g);
+        odmlClient.g = undefined;
+      }
+    };
+  } catch {
+    // No crítico si una versión futura cambia estructura interna
+  }
+}
+
+/**
  * Instancia una tarea de MediaPipe probando primero `delegate: 'CPU'` (óptimo y libre de bloqueos WebGL
  * en Linux/Firefox con iGPU Ryzen 3 7320U) y haciendo fallback a `'GPU'`, y probando ruta local antes de URL remota.
  */
@@ -130,6 +160,7 @@ async function createTaskWithFallback(TaskClass, vision, modelPaths, taskOptions
             delegate,
           },
         });
+        disableMediaPipeOdmlTelemetry(instance);
         return { instance, delegate, modelPath };
       } catch (err) {
         lastError = err;
