@@ -65,7 +65,18 @@ test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y 
     await page.getByTestId('dev-refresh-report-btn').click();
 
     const report = await page.evaluate(() => window.__EXPRESAT_DEV_TELEMETRY__?.getReport());
+    const reportFilename = await page.evaluate(() =>
+      window.__EXPRESAT_DEV_TELEMETRY__?.getReportFilename()
+    );
     expect(report).toBeTruthy();
+    expect(report.git_commit_short).toMatch(/^[a-f0-9]{7,}$/);
+    expect(typeof report.user_agent).toBe('string');
+    expect(report.user_agent.length).toBeGreaterThan(0);
+    expect(report.timestamp_iso).toBeTruthy();
+    expect(['GPU', 'CPU']).toContain(report.delegate);
+    expect(report.track_settings).toBeTruthy();
+    expect(report.track_settings.width).toBeGreaterThan(0);
+    expect(reportFilename).toMatch(/^telemetry_\d{8}_\d{6}_[a-f0-9]{7,}\.json$/);
     expect(report.cameraNegotiation.experimentMode).toBe('default');
     expect(report.cameraNegotiation.settings).toBeTruthy();
     expect(report.cameraNegotiation.videoWidth).toBeGreaterThan(0);

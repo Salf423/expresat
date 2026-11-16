@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Activity, Camera, Copy, Download, RefreshCw, RotateCcw, Sliders } from 'lucide-react';
-import { formatReportMarkdown } from '../engine/index.js';
+import { formatReportMarkdown, buildTelemetryFilename } from '../engine/index.js';
 
 function StageRow({ label, reposoStats, grabandoStats }) {
   const fmt = (s) => {
@@ -84,7 +84,7 @@ export const DevInstrumentationPanel = React.memo(function DevInstrumentationPan
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `informe_instrumentacion_dev_${Date.now()}.json`;
+      link.download = buildTelemetryFilename(report);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

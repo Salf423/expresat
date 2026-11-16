@@ -5,6 +5,8 @@ export {
   BoundedRing,
   computePercentiles,
   formatReportMarkdown,
+  getDevGitCommitShort,
+  buildTelemetryFilename,
   onDevProfilerRender,
   getActiveDevCollector,
 } from './devTelemetry.js';

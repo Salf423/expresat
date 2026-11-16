@@ -20,6 +20,7 @@ import { LandmarkEMAFilter } from '../services/landmarkFilter.js';
 import {
   DevTelemetryCollector,
   formatReportMarkdown,
+  buildTelemetryFilename,
   setActiveDevCollector,
   getActiveDevCollector,
 } from './devTelemetry.js';
@@ -407,6 +408,7 @@ export class SignEngine {
         window.__EXPRESAT_DEV_TELEMETRY__ = {
           getSnapshot: () => this.getDevSnapshot(),
           getReport: () => this.getDevReport(),
+          getReportFilename: () => buildTelemetryFilename(this.getDevReport()),
           formatMarkdown: () => formatReportMarkdown(this.getDevReport()),
           reset: () => this.resetDevTelemetry(),
         };

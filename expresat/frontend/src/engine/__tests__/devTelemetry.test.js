@@ -6,6 +6,8 @@ import {
   BoundedRing,
   computePercentiles,
   formatReportMarkdown,
+  buildTelemetryFilename,
+  getDevGitCommitShort,
 } from '../index.js';
 
 describe('engine/devTelemetry — Percentiles, fases Reposo vs Grabando y detección de duplicados', () => {
@@ -305,5 +307,52 @@ describe('engine/SignEngine — Negociación getSettings() y experimento exact15
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('exporta metadatos inmutables (git_commit_short, user_agent, timestamp_iso, track_settings, delegate) y nombre telemetry_<YYYYMMDD_HHMMSS>_<githash>.json', () => {
+    const col = new DevTelemetryCollector({ enabled: true });
+    col.setRuntimeConfig({
+      targetFps: 20,
+      frameIntervalMs: 50,
+      delegate: 'CPU',
+      enablePose: true,
+      poseCadence: 1,
+    });
+    col.setCameraNegotiation({
+      settings: { width: 640, height: 480, frameRate: 15, facingMode: 'user' },
+      videoWidth: 640,
+      videoHeight: 480,
+    });
+
+    const report = col.buildComparisonReport();
+    expect(report.timestamp_iso).toBeTruthy();
+    expect(report.generatedAt).toBe(report.timestamp_iso);
+    expect(typeof report.git_commit_short).toBe('string');
+    expect(report.git_commit_short.length).toBeGreaterThan(0);
+    expect(typeof report.user_agent).toBe('string');
+    expect(report.user_agent.length).toBeGreaterThan(0);
+    expect(report.delegate).toBe('CPU');
+    expect(report.track_settings).toEqual({
+      width: 640,
+      height: 480,
+      frameRate: 15,
+      facingMode: 'user',
+      videoWidth: 640,
+      videoHeight: 480,
+    });
+
+    const md = formatReportMarkdown(report);
+    expect(md).toContain('Git commit:');
+    expect(md).toContain('User-Agent:');
+    expect(md).toContain('Delegado:');
+    expect(md).toContain('track_settings');
+
+    const fixedDate = new Date(2026, 10, 16, 17, 45, 9);
+    const filename = buildTelemetryFilename({ git_commit_short: '49f38e1' }, fixedDate);
+    expect(filename).toBe('telemetry_20261116_174509_49f38e1.json');
+
+    expect(getDevGitCommitShort(' ab/12#34 ')).toBe('ab1234');
+    expect(getDevGitCommitShort('')).toBe('nogit');
+    expect(buildTelemetryFilename(report)).toMatch(/^telemetry_\d{8}_\d{6}_[a-zA-Z0-9_-]+\.json$/);
   });
 });

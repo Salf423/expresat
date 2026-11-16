@@ -14,6 +14,35 @@ export const IS_DEV = Boolean(import.meta.env?.DEV);
 
 const MAX_PERF_ENTRIES_BEFORE_TRIM = 400;
 
+export function getDevGitCommitShort(override = null) {
+  const raw =
+    override ??
+    (import.meta.env?.DEV ? import.meta.env?.VITE_DEV_GIT_COMMIT : null) ??
+    '';
+  const cleaned = String(raw)
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '');
+  return cleaned || 'nogit';
+}
+
+export function buildTelemetryFilename(report = null, date = null) {
+  let d = date instanceof Date && !Number.isNaN(date.getTime()) ? date : null;
+  if (!d && report?.timestamp_iso) {
+    const parsed = new Date(report.timestamp_iso);
+    if (!Number.isNaN(parsed.getTime())) {
+      d = parsed;
+    }
+  }
+  if (!d) {
+    d = new Date();
+  }
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const yyyymmdd = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
+  const hhmmss = `${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+  const gitHash = getDevGitCommitShort(report?.git_commit_short);
+  return `telemetry_${yyyymmdd}_${hhmmss}_${gitHash}.json`;
+}
+
 export function computePercentiles(values) {
   if (!Array.isArray(values) || values.length === 0) {
     return { count: 0, mean: 0, min: 0, p50: 0, p95: 0, p99: 0, max: 0 };
@@ -651,12 +680,31 @@ export class DevTelemetryCollector {
       grabando_max: grab.stages[key].max,
     });
 
+    const timestampIso = new Date().toISOString();
+    const gitCommitShort = getDevGitCommitShort();
+    const userAgent =
+      typeof navigator !== 'undefined' && navigator.userAgent ? navigator.userAgent : 'unknown';
+    const camNeg = snap.cameraNegotiation || null;
+    const trackSettings = camNeg?.settings
+      ? {
+          ...camNeg.settings,
+          ...(typeof camNeg.videoWidth === 'number' ? { videoWidth: camNeg.videoWidth } : {}),
+          ...(typeof camNeg.videoHeight === 'number' ? { videoHeight: camNeg.videoHeight } : {}),
+        }
+      : null;
+    const delegate = snap.runtimeConfig?.delegate || null;
+
     return {
       reportType: 'expresat_dev_instrumentation_comparison',
-      generatedAt: new Date().toISOString(),
+      generatedAt: timestampIso,
+      timestamp_iso: timestampIso,
+      git_commit_short: gitCommitShort,
+      user_agent: userAgent,
+      delegate,
+      track_settings: trackSettings,
       rvfcSupported: snap.rvfcSupported,
       runtimeConfig: snap.runtimeConfig,
-      cameraNegotiation: snap.cameraNegotiation,
+      cameraNegotiation: camNeg,
       liveLastSecond: snap.live,
       phases: snap.phases,
       comparison_reposo_vs_grabando: {
@@ -705,10 +753,12 @@ export function formatReportMarkdown(report) {
 
   return [
     `# Informe de Instrumentación Dev — Reposo vs Grabando`,
-    `- **Generado:** ${report.generatedAt}`,
+    `- **Generado (ISO):** ${report.timestamp_iso ?? report.generatedAt ?? '—'}`,
+    `- **Git commit:** \`${report.git_commit_short ?? 'nogit'}\` | **Delegado:** \`${report.delegate ?? cfg.delegate ?? '—'}\``,
+    `- **User-Agent:** ${report.user_agent ?? '—'}`,
     `- **Configuración:** targetFps=${cfg.targetFps ?? '—'} (frameInterval=${cfg.frameIntervalMs ?? '—'} ms), delegate=${cfg.delegate ?? '—'}, enablePose=${cfg.enablePose ?? '—'}, poseCadence=${cfg.poseCadence ?? '—'}, crossOriginIsolated=${cfg.crossOriginIsolated ?? '—'}`,
     `- **Experimento cámara:** \`${cam.experimentMode ?? 'default'}\` (fallback=${cam.usedFallback ?? false}${cam.error ? `, error=${cam.error.name}: ${cam.error.constraint || cam.error.message}` : ''})`,
-    `- **getUserMedia getSettings():** ${settings.width ?? '—'}x${settings.height ?? '—'} @ ${settings.frameRate ?? '—'} fps (aspectRatio=${settings.aspectRatio ?? '—'}, label="${cam.trackLabel ?? '—'}")`,
+    `- **track_settings (getSettings):** ${settings.width ?? '—'}x${settings.height ?? '—'} @ ${settings.frameRate ?? '—'} fps (aspectRatio=${settings.aspectRatio ?? '—'}, label="${cam.trackLabel ?? '—'}")`,
     `- **videoElement:** ${cam.videoWidth ?? '—'}x${cam.videoHeight ?? '—'} | rVFC soportado: ${report.rvfcSupported}`,
     ``,
     `## Conteos: Cámara Única vs Inferencias`,
