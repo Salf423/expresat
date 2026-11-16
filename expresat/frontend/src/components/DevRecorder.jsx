@@ -1,5 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Circle, Square, Download, Activity, Video, AlertTriangle, CheckCircle2, Volume2 } from 'lucide-react';
+import { Circle, Square, Activity, AlertTriangle, Volume2 } from 'lucide-react';
+import { getActiveDevCollector } from '../engine/index.js';
+import {
+  PROMPT_TIMELINE,
+  createPromptTransitionEntry,
+  extractTrackSettings,
+  buildDevRecordingPayload,
+} from './devRecorderUtils.js';
 
 /**
  * DevRecorder.jsx — Grabador Mínimo Exclusivo de Desarrollo (import.meta.env.DEV)
@@ -8,57 +15,9 @@ import { Circle, Square, Download, Activity, Video, AlertTriangle, CheckCircle2,
  *   - Compuerta de Calidad: Medición de FPS en vivo y rechazo si avg_fps < 15 (ERR_CAPTURE_FPS_TOO_LOW).
  *   - Etiquetas estrictas: categoryName ('Left'|'Right') y score guardados en cada mano y en frame.handedness.
  *   - Indicaciones en pantalla: cuenta regresiva, aviso sonoro (Web Audio API) y texto grande.
- *   - Línea de tiempo: prompt_timeline persistida en .raw.json con ventana de gracia para auditoría.
+ *   - Línea de tiempo: prompt_timeline persistida en .raw.json con transiciones reales y ventana de gracia.
  *   - Captura PNG: Snapshot a los 5.0 s del frame exacto que ve el detector (cámara nativa sin espejo).
  */
-
-export const PROMPT_TIMELINE = Object.freeze([
-  {
-    start_ms: 0,
-    end_ms: 3000,
-    label: 'reposo',
-    instruction: 'REPOSO — BRAZOS ABAJO',
-    subText: 'Mantén los brazos abajo y relajados fuera del encuadre.',
-    toneFreq: 440,
-    toneDuration: 0.15,
-  },
-  {
-    start_ms: 3000,
-    end_ms: 7000,
-    label: 'solo_derecha',
-    instruction: 'LEVANTA SOLO LA MANO DERECHA',
-    subText: 'Frente a tu pecho. MediaPipe la etiquetará como "Left".',
-    toneFreq: 660,
-    toneDuration: 0.22,
-  },
-  {
-    start_ms: 7000,
-    end_ms: 11000,
-    label: 'solo_izquierda',
-    instruction: 'LEVANTA SOLO LA MANO IZQUIERDA',
-    subText: 'Baja la derecha y levanta la izquierda ("Right" en MediaPipe).',
-    toneFreq: 660,
-    toneDuration: 0.22,
-  },
-  {
-    start_ms: 11000,
-    end_ms: 15000,
-    label: 'ambas',
-    instruction: 'LEVANTA AMBAS MANOS',
-    subText: 'Ambas manos visibles a la altura del pecho sin cruzarse.',
-    toneFreq: 880,
-    toneDuration: 0.25,
-  },
-  {
-    start_ms: 15000,
-    end_ms: 18000,
-    label: 'cruce',
-    instruction: 'CRUZA AMBAS MANOS EN EL PECHO',
-    subText: 'Cruza las manos en el espacio: mano derecha a la izquierda, izquierda a la derecha.',
-    toneFreq: 990,
-    toneDuration: 0.35,
-  },
-]);
 
 /**
  * Síntesis de beeps de aviso mediante Web Audio API (Punto 4).
@@ -101,6 +60,8 @@ export function DevRecorder({ engineRef, videoRef }) {
   const recentTimestampsRef = useRef([]);
   const capturedPngDataUrlRef = useRef(null);
   const lastPromptIdxRef = useRef(-1);
+  const trackSettingsRef = useRef(null);
+  const executedTransitionsRef = useRef([]);
 
   const RECORDING_DURATION_MS = 18000;
   const MIN_FPS_THRESHOLD = 15.0;
@@ -113,6 +74,9 @@ export function DevRecorder({ engineRef, videoRef }) {
     if (unsubRef.current) {
       unsubRef.current();
       unsubRef.current = null;
+    }
+    if (import.meta.env.DEV) {
+      engineRef?.current?.setDevPhase?.('reposo');
     }
 
     const recordedFrames = framesBufferRef.current;
@@ -127,41 +91,29 @@ export function DevRecorder({ engineRef, videoRef }) {
       return;
     }
 
-    const videoEl = videoRef?.current;
-    const vWidth = videoEl?.videoWidth || 640;
-    const vHeight = videoEl?.videoHeight || 480;
+    const payload = buildDevRecordingPayload({
+      recordedFrames,
+      finalDurationMs,
+      minFpsThreshold: MIN_FPS_THRESHOLD,
+      videoEl: videoRef?.current,
+      engine: engineRef?.current,
+      fallbackTrackSettings: trackSettingsRef.current,
+      executedTransitions: executedTransitionsRef.current,
+    });
 
-    // Medir tasa media real (Punto 2)
-    const avgFps = finalDurationMs > 0
-      ? Number(((recordedFrames.length / finalDurationMs) * 1000).toFixed(1))
-      : 0;
+    const { avg_fps: avgFps, valid: isValid, error: errCode, interval_metrics: metrics } = payload;
 
-    const isValid = avgFps >= MIN_FPS_THRESHOLD;
-    const errCode = isValid ? null : 'ERR_CAPTURE_FPS_TOO_LOW';
-
-    if (!isValid) {
+    if (errCode === 'ERR_CAPTURE_FPS_TOO_LOW') {
       setRejectionError(
         `ERR_CAPTURE_FPS_TOO_LOW: ${avgFps} FPS obtenidos < ${MIN_FPS_THRESHOLD} FPS requeridos`
+      );
+    } else if (errCode === 'ERR_CAPTURE_GAP_TOO_LARGE') {
+      setRejectionError(
+        `ERR_CAPTURE_GAP_TOO_LARGE: Intervalo máximo entre frames de ${metrics.max_ms} ms supera el límite de 100 ms (${metrics.gaps_over_100ms} intervalos > 100 ms; p50: ${metrics.p50_ms} ms, p95: ${metrics.p95_ms} ms)`
       );
     } else {
       setRejectionError(null);
     }
-
-    const payload = {
-      version: '1.3.0',
-      type: 'expresat_dev_recording_raw',
-      recorded_at: new Date().toISOString(),
-      duration_ms: finalDurationMs,
-      total_frames: recordedFrames.length,
-      avg_fps: avgFps,
-      min_fps_required: MIN_FPS_THRESHOLD,
-      valid: isValid,
-      error: errCode,
-      prompt_timeline: PROMPT_TIMELINE,
-      videoWidth: vWidth,
-      videoHeight: vHeight,
-      frames: recordedFrames,
-    };
 
     // Descarga automática del .raw.json
     try {
@@ -194,14 +146,14 @@ export function DevRecorder({ engineRef, videoRef }) {
         );
       } else {
         setStatusMsg(
-          `❌ Toma RECHAZADA: ${filename} (${recordedFrames.length} frames a ${avgFps} FPS < 15 FPS mínimo). Archivo marcado con ERR_CAPTURE_FPS_TOO_LOW.`
+          `❌ Toma RECHAZADA: ${filename} (${recordedFrames.length} frames a ${avgFps} FPS; p95 Δt ${metrics.p95_ms} ms). Archivo marcado con ${errCode}.`
         );
       }
     } catch (err) {
       console.error('[DevRecorder] Error generando descarga:', err);
       setStatusMsg('Error al descargar archivo JSON.');
     }
-  }, [videoRef]);
+  }, [videoRef, engineRef]);
 
   const startRecording = useCallback(() => {
     const engine = engineRef?.current;
@@ -210,10 +162,18 @@ export function DevRecorder({ engineRef, videoRef }) {
       return;
     }
 
+    if (import.meta.env.DEV) {
+      engine.setDevPhase?.('grabando');
+    }
     framesBufferRef.current = [];
     recentTimestampsRef.current = [];
     capturedPngDataUrlRef.current = null;
-    lastPromptIdxRef.current = -1;
+    lastPromptIdxRef.current = 0;
+    trackSettingsRef.current = extractTrackSettings({
+      videoEl: videoRef?.current,
+      engine,
+    });
+    executedTransitionsRef.current = [createPromptTransitionEntry(PROMPT_TIMELINE[0], 0, 0)];
     startTimeRef.current = performance.now();
 
     setElapsedSec(0);
@@ -244,10 +204,17 @@ export function DevRecorder({ engineRef, videoRef }) {
       const safeIdx = promptIdx !== -1 ? promptIdx : PROMPT_TIMELINE.length - 1;
       setActivePromptIdx(safeIdx);
 
-      // Si cambió de fase, emitir aviso sonoro (Punto 4)
+      // Si cambió de fase, cerrar transición previa, registrar timestamp real y emitir aviso sonoro (Punto 4)
       if (safeIdx !== lastPromptIdxRef.current) {
         lastPromptIdxRef.current = safeIdx;
+        const prevEntry = executedTransitionsRef.current[executedTransitionsRef.current.length - 1];
+        if (prevEntry && prevEntry.actual_end_ms === null) {
+          prevEntry.actual_end_ms = Number(elapsedMs.toFixed(2));
+        }
         const currentPrompt = PROMPT_TIMELINE[safeIdx];
+        executedTransitionsRef.current.push(
+          createPromptTransitionEntry(currentPrompt, safeIdx, elapsedMs)
+        );
         playTone(currentPrompt.toneFreq, currentPrompt.toneDuration);
       }
 
@@ -262,8 +229,10 @@ export function DevRecorder({ engineRef, videoRef }) {
     }, 50);
 
     // Suscribir listener de frames crudos
+    const devTel = import.meta.env.DEV ? engine._devTelemetry : null;
     unsubRef.current = engine.onFrame((framePayload) => {
       if (!framePayload || !startTimeRef.current) return;
+      devTel?.mark('expresat:recorder_onframe:start');
 
       const now = performance.now();
       const tMs = Number((now - startTimeRef.current).toFixed(2));
@@ -333,6 +302,15 @@ export function DevRecorder({ engineRef, videoRef }) {
       if (raw.pose && raw.pose.length > 0) {
         setPoseDetectedCount((c) => c + 1);
       }
+
+      const recMs = devTel?.endAndMeasure(
+        'expresat:stage:recorder_onframe',
+        'expresat:recorder_onframe:start',
+        'expresat:recorder_onframe:end'
+      );
+      if (recMs !== null && recMs !== undefined) {
+        devTel?.recordStageDuration('recorder_onframe', recMs);
+      }
     });
   }, [engineRef, videoRef, stopAndDownload]);
 
@@ -341,6 +319,9 @@ export function DevRecorder({ engineRef, videoRef }) {
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       if (unsubRef.current) unsubRef.current();
+      if (import.meta.env.DEV) {
+        getActiveDevCollector()?.setPhase('reposo');
+      }
     };
   }, []);
 
@@ -397,6 +378,41 @@ export function DevRecorder({ engineRef, videoRef }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          {/* Selector de Delegado CPU / GPU (Punto 1) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Delegado:</span>
+            <select
+              value={
+                (typeof window !== 'undefined' &&
+                  new URLSearchParams(window.location.search).get('delegate')?.toUpperCase()) ||
+                engineRef?.current?._activeBackendInfo?.delegate ||
+                'GPU'
+              }
+              onChange={(e) => {
+                const next = e.target.value;
+                if (typeof window !== 'undefined') {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('delegate', next);
+                  window.location.href = url.toString();
+                }
+              }}
+              style={{
+                background: '#1e293b',
+                color: '#38bdf8',
+                border: '1px solid #0284c7',
+                borderRadius: '4px',
+                padding: '0.2rem 0.45rem',
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+              }}
+              data-testid="delegate-selector"
+              aria-label="Selector de delegado MediaPipe"
+            >
+              <option value="GPU">GPU</option>
+              <option value="CPU">CPU</option>
+            </select>
+          </div>
+
           {/* Badge de FPS en Vivo (Punto 2) */}
           {isRecording && (
             <div
