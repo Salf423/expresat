@@ -260,10 +260,8 @@ export class SignEngine {
 
     this._emaFilter = new LandmarkEMAFilter(0.5);
 
-    this._devTelemetry =
-      options.devTelemetry ??
-      (import.meta.env.DEV ? new DevTelemetryCollector({ enabled: true }) : null);
-    if (this._devTelemetry) {
+    if (import.meta.env.DEV) {
+      this._devTelemetry = options.devTelemetry ?? new DevTelemetryCollector({ enabled: true });
       this._devTelemetry.setRuntimeConfig({
         targetFps: this.targetFps,
         frameIntervalMs: Number(this.frameIntervalMs.toFixed(2)),
@@ -334,6 +332,7 @@ export class SignEngine {
   }
 
   onDevSnapshot(callback) {
+    if (!import.meta.env.DEV) return () => {};
     if (typeof callback === 'function') {
       this._devSnapshotListeners.add(callback);
     }
@@ -341,15 +340,17 @@ export class SignEngine {
   }
 
   getDevSnapshot() {
+    if (!import.meta.env.DEV) return null;
     return this._devTelemetry ? this._devTelemetry.getSnapshot() : null;
   }
 
   getDevReport() {
+    if (!import.meta.env.DEV) return null;
     return this._devTelemetry ? this._devTelemetry.buildComparisonReport() : null;
   }
 
   setDevPhase(phase) {
-    if (!this._devTelemetry) return;
+    if (!import.meta.env.DEV || !this._devTelemetry) return;
     const prevPhase = this._devTelemetry.phase;
     this._devTelemetry.setPhase(phase);
     // Refrescar UI del panel dev automáticamente al terminar una grabación ('grabando' -> 'reposo')
@@ -366,6 +367,7 @@ export class SignEngine {
   }
 
   resetDevTelemetry() {
+    if (!import.meta.env.DEV) return;
     this._devTelemetry?.reset();
     if (this._devTelemetry) {
       const snap = this._devTelemetry.getSnapshot();
@@ -463,7 +465,7 @@ export class SignEngine {
       return false;
     }
 
-    if (this._devTelemetry) {
+    if (import.meta.env.DEV && this._devTelemetry) {
       const syncVideoDims = () => {
         if (!this._devTelemetry || this._videoElement !== videoElement) return;
         this._devTelemetry.setCameraNegotiation({
@@ -500,7 +502,7 @@ export class SignEngine {
     }
 
     this._wasmReady = true;
-    if (this._devTelemetry) {
+    if (import.meta.env.DEV && this._devTelemetry) {
       this._devTelemetry.setRuntimeConfig({
         targetFps: this.targetFps,
         frameIntervalMs: Number(this.frameIntervalMs.toFixed(2)),
@@ -642,7 +644,7 @@ export class SignEngine {
     this._lastVideoTime = -1;
     this._currentFps = { cameraFps: 0, inferenceFps: 0 };
 
-    if (this._devTelemetry && getActiveDevCollector() === this._devTelemetry) {
+    if (import.meta.env.DEV && this._devTelemetry && getActiveDevCollector() === this._devTelemetry) {
       setActiveDevCollector(null);
     }
 
@@ -652,7 +654,7 @@ export class SignEngine {
   }
 
   _recordTrackNegotiation(stream) {
-    if (!this._devTelemetry || !stream) return;
+    if (!import.meta.env.DEV || !this._devTelemetry || !stream) return;
     const track = stream.getVideoTracks?.()?.[0] || stream.getTracks?.()?.[0] || null;
     let settings = null;
     let capabilities = null;
@@ -741,14 +743,16 @@ export class SignEngine {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
-      this._devTelemetry?.setCameraNegotiation({
-        experimentMode: 'default',
-        requestedConstraints: primaryConstraints,
-        usedFallback: false,
-        fallbackReason: null,
-        error: null,
-      });
-      this._recordTrackNegotiation(stream);
+      if (import.meta.env.DEV) {
+        this._devTelemetry?.setCameraNegotiation({
+          experimentMode: 'default',
+          requestedConstraints: primaryConstraints,
+          usedFallback: false,
+          fallbackReason: null,
+          error: null,
+        });
+        this._recordTrackNegotiation(stream);
+      }
       return stream;
     } catch (primaryErr) {
       // Si las restricciones ideales fallan en cámaras virtuales (ej. Playwright fake device),
@@ -761,15 +765,17 @@ export class SignEngine {
       }
       const fallbackConstraints = { video: true, audio: false };
       const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
-      this._devTelemetry?.setCameraNegotiation({
-        experimentMode: 'default',
-        requestedConstraints: primaryConstraints,
-        usedFallback: true,
-        fallbackReason: `${primaryErr?.name || 'Error'}: ${primaryErr?.message || primaryErr}`,
-        fallbackConstraints,
-        error: null,
-      });
-      this._recordTrackNegotiation(stream);
+      if (import.meta.env.DEV) {
+        this._devTelemetry?.setCameraNegotiation({
+          experimentMode: 'default',
+          requestedConstraints: primaryConstraints,
+          usedFallback: true,
+          fallbackReason: `${primaryErr?.name || 'Error'}: ${primaryErr?.message || primaryErr}`,
+          fallbackConstraints,
+          error: null,
+        });
+        this._recordTrackNegotiation(stream);
+      }
       return stream;
     }
   }
@@ -966,7 +972,7 @@ export class SignEngine {
   }
 
   _startPassiveCameraObserver(currentRunId) {
-    if (!this._devTelemetry || !this._videoElement) return;
+    if (!import.meta.env.DEV || !this._devTelemetry || !this._videoElement) return;
     const video = this._videoElement;
     if (typeof video.requestVideoFrameCallback !== 'function') {
       this._devTelemetry.setRvfcSupported(false);
@@ -1017,7 +1023,7 @@ export class SignEngine {
         }
       }
 
-      if (this._devTelemetry) {
+      if (import.meta.env.DEV && this._devTelemetry) {
         let playbackQuality = null;
         try {
           playbackQuality =
@@ -1066,7 +1072,9 @@ export class SignEngine {
         this._lastVideoTime = video.currentTime;
         this._cameraFrameCount++;
       }
-      this._devTelemetry?.recordRafTick(nowMs, videoTimeAdvanced);
+      if (import.meta.env.DEV) {
+        this._devTelemetry?.recordRafTick(nowMs, videoTimeAdvanced);
+      }
 
       // Respetar el intervalo objetivo de inferencia (15 a 30 FPS) y evitar solapamiento
       if (!this._busy && nowMs - this._lastInferenceStartMs >= this.frameIntervalMs) {
@@ -1087,7 +1095,9 @@ export class SignEngine {
 
   async _runInferenceStep(video, nowMs) {
     const startPerf = performance.now();
-    this._devTelemetry?.beginInferenceStep(video?.currentTime ?? -1, startPerf);
+    if (import.meta.env.DEV) {
+      this._devTelemetry?.beginInferenceStep(video?.currentTime ?? -1, startPerf);
+    }
     let stepCompleted = false;
 
     try {
@@ -1179,7 +1189,9 @@ export class SignEngine {
         latencyMs,
       });
     } finally {
-      this._devTelemetry?.endInferenceStep(performance.now(), stepCompleted);
+      if (import.meta.env.DEV) {
+        this._devTelemetry?.endInferenceStep(performance.now(), stepCompleted);
+      }
     }
   }
 

@@ -405,9 +405,7 @@ const Translator = () => {
                 onRefreshSnapshot={refreshDevSnapshot}
               />
             </>
-          ) : (
-            <DevRecorder engineRef={engineRef} videoRef={videoRef} />
-          )}
+          ) : null}
 
           <div className="video-container" style={{ position: 'relative' }}>
             <video
