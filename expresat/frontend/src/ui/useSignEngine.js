@@ -211,7 +211,8 @@ export function useSignEngine({
 
     const unsubDevSnapshot = import.meta.env.DEV
       ? engine.onDevSnapshot((snap) => {
-          if (isMounted) {
+          // Durante grabando no disparar setState 1 Hz para no contaminar <Profiler> ni tickWaitMs
+          if (isMounted && snap && snap.phase !== 'grabando') {
             setDevSnapshot(snap);
           }
         })
@@ -385,6 +386,12 @@ export function useSignEngine({
     });
   }, []);
 
+  const refreshDevSnapshot = useCallback(() => {
+    if (import.meta.env.DEV && engineRef.current) {
+      setDevSnapshot(engineRef.current.getDevSnapshot());
+    }
+  }, []);
+
   return {
     fps,
     engineStatus,
@@ -394,6 +401,7 @@ export function useSignEngine({
     landmarksCount,
     telemetry,
     devSnapshot,
+    refreshDevSnapshot,
     reconnectTransport,
     clearGesture,
     engineRef,

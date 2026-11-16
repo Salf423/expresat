@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Activity, Camera, Copy, Download, RotateCcw, Sliders } from 'lucide-react';
+import { Activity, Camera, Copy, Download, RefreshCw, RotateCcw, Sliders } from 'lucide-react';
 import { formatReportMarkdown } from '../engine/index.js';
 
 function StageRow({ label, reposoStats, grabandoStats }) {
@@ -34,28 +34,35 @@ function StageRow({ label, reposoStats, grabandoStats }) {
   );
 }
 
-export function DevInstrumentationPanel({ engineRef, fps, devSnapshot }) {
+export const DevInstrumentationPanel = React.memo(function DevInstrumentationPanel({
+  engineRef,
+  devSnapshot,
+  onRefreshSnapshot,
+}) {
   const [expanded, setExpanded] = useState(true);
   const [copyStatus, setCopyStatus] = useState('');
+  const [manualSnapshot, setManualSnapshot] = useState(null);
 
   if (!import.meta.env.DEV) {
     return null;
   }
 
+  const effectiveSnapshot = onRefreshSnapshot ? devSnapshot : manualSnapshot || devSnapshot;
+
   const currentCamExp =
     (typeof window !== 'undefined' &&
       new URLSearchParams(window.location.search).get('camExp')) ||
-    devSnapshot?.runtimeConfig?.cameraExperiment ||
+    effectiveSnapshot?.runtimeConfig?.cameraExperiment ||
     'default';
 
-  const live = devSnapshot?.live || {};
-  const cfg = devSnapshot?.runtimeConfig || {};
-  const cam = devSnapshot?.cameraNegotiation || {};
+  const live = effectiveSnapshot?.live || {};
+  const cfg = effectiveSnapshot?.runtimeConfig || {};
+  const cam = effectiveSnapshot?.cameraNegotiation || {};
   const settings = cam.settings || {};
   const capabilities = cam.capabilities || {};
-  const rep = devSnapshot?.phases?.reposo;
-  const grab = devSnapshot?.phases?.grabando;
-  const activePhase = devSnapshot?.phase || 'reposo';
+  const rep = effectiveSnapshot?.phases?.reposo;
+  const grab = effectiveSnapshot?.phases?.grabando;
+  const activePhase = effectiveSnapshot?.phase || 'reposo';
   const activeCounts = (activePhase === 'grabando' ? grab?.counts : rep?.counts) || {};
 
   const handleCamExpChange = (nextExp) => {
@@ -102,6 +109,20 @@ export function DevInstrumentationPanel({ engineRef, fps, devSnapshot }) {
 
   const handleReset = () => {
     engineRef?.current?.resetDevTelemetry?.();
+    if (!onRefreshSnapshot) {
+      setManualSnapshot(engineRef?.current?.getDevSnapshot?.() || null);
+    }
+  };
+
+  const handleRefreshReport = () => {
+    if (typeof onRefreshSnapshot === 'function') {
+      onRefreshSnapshot();
+      return;
+    }
+    const snap = engineRef?.current?.getDevSnapshot?.();
+    if (snap) {
+      setManualSnapshot(snap);
+    }
   };
 
   return (
@@ -168,6 +189,29 @@ export function DevInstrumentationPanel({ engineRef, fps, devSnapshot }) {
               <option value="exact15">Experimento: W/H exact + frameRate min 15</option>
             </select>
           </label>
+
+          <button
+            type="button"
+            onClick={handleRefreshReport}
+            data-testid="dev-refresh-report-btn"
+            title="Refrescar snapshot manual en pantalla (sin polling durante grabación)"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.25rem',
+              background: '#0f172a',
+              color: '#38bdf8',
+              border: '1px solid #0284c7',
+              borderRadius: '4px',
+              padding: '0.2rem 0.5rem',
+              cursor: 'pointer',
+              fontSize: '0.73rem',
+              fontWeight: 600,
+            }}
+          >
+            <RefreshCw size={12} />
+            <span>Refrescar / Volcar Reporte</span>
+          </button>
 
           <button
             type="button"
@@ -265,7 +309,7 @@ export function DevInstrumentationPanel({ engineRef, fps, devSnapshot }) {
                 <span>Cámara Real (rVFC)</span>
               </div>
               <div style={{ fontFamily: 'monospace', fontSize: '0.92rem', marginTop: '0.15rem' }}>
-                <strong>{devSnapshot?.rvfcSupported === false ? 'N/A' : `${live.realCameraFps ?? 0} FPS`}</strong>
+                <strong>{effectiveSnapshot?.rvfcSupported === false ? 'N/A' : `${live.realCameraFps ?? 0} FPS`}</strong>
                 <span style={{ color: '#94a3b8', fontSize: '0.72rem', marginLeft: '0.4rem' }}>
                   (cb/s: {live.rvfcCallbacksPerSec ?? 0})
                 </span>
@@ -278,7 +322,7 @@ export function DevInstrumentationPanel({ engineRef, fps, devSnapshot }) {
             <div style={{ background: 'rgba(30, 41, 59, 0.7)', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #334155' }}>
               <div style={{ color: '#cbd5e1', fontWeight: 700 }}>Cámara vista por loop _tick</div>
               <div style={{ fontFamily: 'monospace', fontSize: '0.92rem', marginTop: '0.15rem' }}>
-                <strong>{fps?.cameraFps ?? live.loopCameraFps ?? 0} FPS</strong>
+                <strong>{live.loopCameraFps ?? 0} FPS</strong>
               </div>
               <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>
                 Vistos _tick: {activeCounts.loopObservedCameraFrames ?? 0} | Playback/s:{' '}
@@ -292,7 +336,7 @@ export function DevInstrumentationPanel({ engineRef, fps, devSnapshot }) {
                 <span>Inferencia (Únic vs Dup)</span>
               </div>
               <div style={{ fontFamily: 'monospace', fontSize: '0.92rem', marginTop: '0.15rem' }}>
-                <strong>{fps?.inferenceFps ?? live.inferenceFps ?? 0} FPS</strong>
+                <strong>{live.inferenceFps ?? 0} FPS</strong>
                 <span style={{ color: '#86efac', fontSize: '0.72rem', marginLeft: '0.35rem' }}>
                   únic: {live.uniqueInferredFps ?? 0}
                 </span>
@@ -427,6 +471,6 @@ export function DevInstrumentationPanel({ engineRef, fps, devSnapshot }) {
       )}
     </div>
   );
-}
+});
 
 export default DevInstrumentationPanel;

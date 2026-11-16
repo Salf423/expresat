@@ -260,4 +260,50 @@ describe('engine/SignEngine — Negociación getSettings() y experimento exact15
     expect(snapAfterErr.phases.reposo.counts.totalInferences).toBe(3);
     expect(snapAfterErr.phases.reposo.counts.inferenceErrors).toBe(1);
   });
+
+  it('cero interferencia durante grabando: flushSecondMetrics no invoca getSnapshot y SignEngine solo refresca al detener', () => {
+    vi.useFakeTimers();
+    try {
+      const col = new DevTelemetryCollector({ enabled: true });
+      const getSnapSpy = vi.spyOn(col, 'getSnapshot');
+      const engine = new SignEngine({ devTelemetry: col, smoothLandmarks: false });
+      const snapshotsRecibidos = [];
+      engine.onDevSnapshot((snap) => snapshotsRecibidos.push(snap));
+
+      engine._running = true;
+      engine._startFpsTicker();
+
+      // En reposo, el ticker 1 Hz sí refresca UI
+      vi.advanceTimersByTime(1000);
+      expect(getSnapSpy).toHaveBeenCalledTimes(1);
+      expect(snapshotsRecibidos).toHaveLength(1);
+      expect(snapshotsRecibidos[0].phase).toBe('reposo');
+
+      // En grabando, solo acumula en O(1) sin calcular snapshot/percentiles ni disparar listeners UI
+      engine.setDevPhase('grabando');
+      col.beginInferenceStep(100, 10);
+      col.recordStageDuration('hand', 12);
+      col.endInferenceStep(115);
+
+      vi.advanceTimersByTime(3000);
+      expect(getSnapSpy).toHaveBeenCalledTimes(1);
+      expect(snapshotsRecibidos).toHaveLength(1);
+
+      const liveDuringRec = col.flushSecondMetrics();
+      expect(liveDuringRec.skippedHeavySnapshot).toBe(true);
+      expect(liveDuringRec.phases).toBeNull();
+      expect(getSnapSpy).toHaveBeenCalledTimes(1);
+
+      // Al volver a reposo (fin de grabación), refresca el snapshot completo con lo acumulado en grabando
+      engine.setDevPhase('reposo');
+      expect(getSnapSpy).toHaveBeenCalledTimes(2);
+      expect(snapshotsRecibidos).toHaveLength(2);
+      expect(snapshotsRecibidos[1].phase).toBe('reposo');
+      expect(snapshotsRecibidos[1].phases.grabando.counts.totalInferences).toBe(1);
+
+      engine.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

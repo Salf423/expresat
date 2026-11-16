@@ -599,6 +599,20 @@ export class DevTelemetryCollector {
       skippedCameraFrames: 0,
     };
 
+    // Durante la grabación activa NO ejecutar getSnapshot()/summarizeBucket()/sort() cada 1s:
+    // solo acumular en memoria O(1) para cero interferencia con la captura.
+    if (this.phase === 'grabando') {
+      return {
+        phase: this.phase,
+        rvfcSupported: this._rvfcSupported,
+        runtimeConfig: this._runtimeConfig || null,
+        cameraNegotiation: this._cameraNegotiation || null,
+        live: { ...this._live },
+        phases: null,
+        skippedHeavySnapshot: true,
+      };
+    }
+
     return this.getSnapshot();
   }
 

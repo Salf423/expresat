@@ -65,6 +65,7 @@ const Translator = () => {
     landmarksCount,
     telemetry,
     devSnapshot,
+    refreshDevSnapshot,
     reconnectTransport,
     engineRef,
   } = useSignEngine({
@@ -400,8 +401,8 @@ const Translator = () => {
               </Profiler>
               <DevInstrumentationPanel
                 engineRef={engineRef}
-                fps={fps}
                 devSnapshot={devSnapshot}
+                onRefreshSnapshot={refreshDevSnapshot}
               />
             </>
           ) : (

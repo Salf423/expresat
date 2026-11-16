@@ -317,7 +317,20 @@ export class SignEngine {
   }
 
   setDevPhase(phase) {
-    this._devTelemetry?.setPhase(phase);
+    if (!this._devTelemetry) return;
+    const prevPhase = this._devTelemetry.phase;
+    this._devTelemetry.setPhase(phase);
+    // Refrescar UI del panel dev automáticamente al terminar una grabación ('grabando' -> 'reposo')
+    if (prevPhase === 'grabando' && this._devTelemetry.phase === 'reposo') {
+      const snap = this._devTelemetry.getSnapshot();
+      for (const listener of this._devSnapshotListeners) {
+        try {
+          listener(snap);
+        } catch (err) {
+          console.warn('[SignEngine] Error en listener onDevSnapshot:', err);
+        }
+      }
+    }
   }
 
   resetDevTelemetry() {
@@ -982,7 +995,8 @@ export class SignEngine {
           playbackQuality = null;
         }
         const devSnap = this._devTelemetry.flushSecondMetrics(playbackQuality);
-        if (devSnap) {
+        // No notificar re-renders 1 Hz a React mientras está grabando
+        if (devSnap && this._devTelemetry.phase !== 'grabando') {
           for (const listener of this._devSnapshotListeners) {
             try {
               listener(devSnap);

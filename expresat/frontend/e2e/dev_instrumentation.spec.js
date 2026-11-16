@@ -4,6 +4,8 @@ test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y 
   test('expone indicador de cámara real separado, marcas performance.mark y comparación Reposo vs Grabando', async ({
     page,
   }) => {
+    // Headless Chromium sin GPU física compila shaders SwiftShader (~12s frío + ~1.4s/frame)
+    test.setTimeout(90000);
     const pageErrors = [];
     page.on('pageerror', (err) => pageErrors.push(err.message));
 
@@ -23,6 +25,9 @@ test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y 
       expect(snap.phases.reposo.counts.totalInferences).toBeGreaterThan(0);
     }).toPass({ timeout: 10000 });
 
+    // Botón manual de refresco presente y funcional incluso antes/después de grabar
+    await expect(page.getByTestId('dev-refresh-report-btn')).toBeVisible();
+
     // Iniciar grabación ~1.2s y detener para poblar fase grabando
     await page.getByTestId('dev-record-start-btn').click();
     await expect(async () => {
@@ -31,6 +36,7 @@ test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y 
       expect(snap.phases.grabando.counts.totalInferences).toBeGreaterThan(0);
     }).toPass({ timeout: 10000 });
     await page.getByTestId('dev-record-stop-btn').click();
+    await page.getByTestId('dev-refresh-report-btn').click();
 
     const report = await page.evaluate(() => window.__EXPRESAT_DEV_TELEMETRY__?.getReport());
     expect(report).toBeTruthy();
