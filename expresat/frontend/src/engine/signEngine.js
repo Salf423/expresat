@@ -17,6 +17,12 @@ import {
 } from '@mediapipe/tasks-vision';
 import { CONFIG } from '../config.js';
 import { LandmarkEMAFilter } from '../services/landmarkFilter.js';
+import {
+  DevTelemetryCollector,
+  formatReportMarkdown,
+  setActiveDevCollector,
+  getActiveDevCollector,
+} from './devTelemetry.js';
 
 if (typeof window !== 'undefined') {
   window.__TasksVision__ = { FilesetResolver, HandLandmarker, PoseLandmarker };
@@ -27,6 +33,7 @@ export const ENGINE_ERROR_CODES = Object.freeze({
   CAMERA_DENIED: 'CAMERA_DENIED',
   CAMERA_NOT_FOUND: 'CAMERA_NOT_FOUND',
   CAMERA_IN_USE: 'CAMERA_IN_USE',
+  CAMERA_OVERCONSTRAINED: 'CAMERA_OVERCONSTRAINED',
   WASM_LOAD_FAILED: 'WASM_LOAD_FAILED',
   MODEL_LOAD_FAILED: 'MODEL_LOAD_FAILED',
   ENGINE_RUNTIME_ERROR: 'ENGINE_RUNTIME_ERROR',
@@ -157,13 +164,43 @@ export class SignEngine {
     this.enablePose = options.enablePose ?? CONFIG.enablePose ?? false;
     this.modelComplexity = options.modelComplexity ?? CONFIG.modelComplexity ?? 0;
     this.backend = options.backend ?? CONFIG.mediapipeBackend ?? 'tasks';
-    this.preferredDelegate = options.delegate ?? 'CPU';
+    let queryDelegate = null;
+    if (typeof window !== 'undefined' && window.location?.search) {
+      try {
+        const q = new URLSearchParams(window.location.search).get('delegate');
+        if (q && (q.toUpperCase() === 'GPU' || q.toUpperCase() === 'CPU')) {
+          queryDelegate = q.toUpperCase();
+        }
+      } catch {
+        // Ignorar errores de URL en entornos no-browser
+      }
+    }
+    this.preferredDelegate = options.delegate ?? queryDelegate ?? 'GPU';
+    this.poseCadence = Math.max(1, Math.min(5, options.poseCadence ?? 1));
     this.smoothLandmarks = options.smoothLandmarks ?? true;
+
+    let queryCamExp = null;
+    if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.search) {
+      try {
+        const exp = new URLSearchParams(window.location.search).get('camExp');
+        if (exp === 'exact15' || exp === 'default') {
+          queryCamExp = exp;
+        }
+      } catch {
+        // Ignorar errores de URL en entornos no-browser
+      }
+    }
+    this.cameraExperiment =
+      (import.meta.env.DEV ? (options.cameraExperiment ?? queryCamExp) : null) || 'default';
+
+    this._frameStepIndex = 0;
+    this._lastDetectedPose = null;
 
     this._frameListeners = new Set();
     this._fpsListeners = new Set();
     this._errorListeners = new Set();
     this._statusListeners = new Set();
+    this._devSnapshotListeners = new Set();
 
     this._runId = 0;
     this._running = false;
@@ -177,6 +214,8 @@ export class SignEngine {
     this._legacyDetector = null;
 
     this._rafId = null;
+    this._rvfcId = null;
+    this._loadedMetadataHandler = null;
     this._fpsTimerId = null;
     this._busy = false;
     this._lastInferenceStartMs = 0;
@@ -188,6 +227,30 @@ export class SignEngine {
     this._currentFps = { cameraFps: 0, inferenceFps: 0 };
 
     this._emaFilter = new LandmarkEMAFilter(0.5);
+
+    this._devTelemetry =
+      options.devTelemetry ??
+      (import.meta.env.DEV ? new DevTelemetryCollector({ enabled: true }) : null);
+    if (this._devTelemetry) {
+      this._devTelemetry.setRuntimeConfig({
+        targetFps: this.targetFps,
+        frameIntervalMs: Number(this.frameIntervalMs.toFixed(2)),
+        width: this.width,
+        height: this.height,
+        enablePose: this.enablePose,
+        poseCadence: this.poseCadence,
+        modelComplexity: this.modelComplexity,
+        backend: this.backend,
+        preferredDelegate: this.preferredDelegate,
+        smoothLandmarks: this.smoothLandmarks,
+        cameraExperiment: this.cameraExperiment,
+        crossOriginIsolated:
+          typeof window !== 'undefined' ? Boolean(window.crossOriginIsolated) : false,
+        hardwareConcurrency:
+          typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 1 : null,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+      });
+    }
   }
 
   /**
@@ -238,6 +301,39 @@ export class SignEngine {
     return () => this._statusListeners.delete(callback);
   }
 
+  onDevSnapshot(callback) {
+    if (typeof callback === 'function') {
+      this._devSnapshotListeners.add(callback);
+    }
+    return () => this._devSnapshotListeners.delete(callback);
+  }
+
+  getDevSnapshot() {
+    return this._devTelemetry ? this._devTelemetry.getSnapshot() : null;
+  }
+
+  getDevReport() {
+    return this._devTelemetry ? this._devTelemetry.buildComparisonReport() : null;
+  }
+
+  setDevPhase(phase) {
+    this._devTelemetry?.setPhase(phase);
+  }
+
+  resetDevTelemetry() {
+    this._devTelemetry?.reset();
+    if (this._devTelemetry) {
+      const snap = this._devTelemetry.getSnapshot();
+      for (const listener of this._devSnapshotListeners) {
+        try {
+          listener(snap);
+        } catch (err) {
+          console.warn('[SignEngine] Error en listener onDevSnapshot:', err);
+        }
+      }
+    }
+  }
+
   /**
    * Inicia la cámara y el motor MediaPipe en el hilo principal.
    * Es idempotente y resistente al doble montaje de React StrictMode.
@@ -260,6 +356,18 @@ export class SignEngine {
     this._videoElement = videoElement;
     this._running = true;
     this._emitStatus({ state: 'starting', wasmReady: false, cameraReady: false });
+
+    if (import.meta.env.DEV && this._devTelemetry) {
+      setActiveDevCollector(this._devTelemetry);
+      if (typeof window !== 'undefined') {
+        window.__EXPRESAT_DEV_TELEMETRY__ = {
+          getSnapshot: () => this.getDevSnapshot(),
+          getReport: () => this.getDevReport(),
+          formatMarkdown: () => formatReportMarkdown(this.getDevReport()),
+          reset: () => this.resetDevTelemetry(),
+        };
+      }
+    }
 
     // 1. Iniciar cámara y cargar WASM/MediaPipe
     let stream = null;
@@ -309,6 +417,21 @@ export class SignEngine {
       return false;
     }
 
+    if (this._devTelemetry) {
+      const syncVideoDims = () => {
+        if (!this._devTelemetry || this._videoElement !== videoElement) return;
+        this._devTelemetry.setCameraNegotiation({
+          videoWidth: videoElement.videoWidth || 0,
+          videoHeight: videoElement.videoHeight || 0,
+        });
+      };
+      syncVideoDims();
+      if (!videoElement.videoWidth && typeof videoElement.addEventListener === 'function') {
+        this._loadedMetadataHandler = syncVideoDims;
+        videoElement.addEventListener('loadedmetadata', syncVideoDims, { once: true });
+      }
+    }
+
     this._emitStatus({ state: 'loading_wasm', wasmReady: false, cameraReady: true });
 
     // 2. Inicializar MediaPipe en el hilo principal
@@ -331,6 +454,27 @@ export class SignEngine {
     }
 
     this._wasmReady = true;
+    if (this._devTelemetry) {
+      this._devTelemetry.setRuntimeConfig({
+        targetFps: this.targetFps,
+        frameIntervalMs: Number(this.frameIntervalMs.toFixed(2)),
+        width: this.width,
+        height: this.height,
+        enablePose: this.enablePose,
+        poseEnabledActual: Boolean(this._poseLandmarker),
+        poseCadence: this.poseCadence,
+        modelComplexity: this.modelComplexity,
+        backend: this._activeBackendInfo?.type || this.backend,
+        delegate: this._activeBackendInfo?.delegate || this.preferredDelegate,
+        smoothLandmarks: this.smoothLandmarks,
+        cameraExperiment: this.cameraExperiment,
+        crossOriginIsolated:
+          typeof window !== 'undefined' ? Boolean(window.crossOriginIsolated) : false,
+        hardwareConcurrency:
+          typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 1 : null,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+      });
+    }
     this._emitStatus({
       state: 'running',
       wasmReady: true,
@@ -343,7 +487,8 @@ export class SignEngine {
       window.dispatchEvent(new CustomEvent('camera-active', { detail: true }));
     }
 
-    // 3. Arrancar contador de FPS reales (cada 1000 ms) y bucle de captura
+    // 3. Arrancar observador pasivo de cámara (solo dev), ticker FPS (1000 ms) y bucle de captura
+    this._startPassiveCameraObserver(currentRunId);
     this._startFpsTicker();
     this._scheduleNextTick(currentRunId);
     return true;
@@ -367,6 +512,28 @@ export class SignEngine {
       cancelAnimationFrame(this._rafId);
       this._rafId = null;
     }
+
+    if (
+      this._rvfcId !== null &&
+      this._videoElement &&
+      typeof this._videoElement.cancelVideoFrameCallback === 'function'
+    ) {
+      try {
+        this._videoElement.cancelVideoFrameCallback(this._rvfcId);
+      } catch {
+        // Ignorar errores de cancelVideoFrameCallback en teardown
+      }
+    }
+    this._rvfcId = null;
+
+    if (this._loadedMetadataHandler && this._videoElement?.removeEventListener) {
+      try {
+        this._videoElement.removeEventListener('loadedmetadata', this._loadedMetadataHandler);
+      } catch {
+        // ignore
+      }
+    }
+    this._loadedMetadataHandler = null;
 
     if (this._fpsTimerId !== null) {
       clearInterval(this._fpsTimerId);
@@ -422,13 +589,54 @@ export class SignEngine {
     }
 
     this._emaFilter.reset();
+    this._frameStepIndex = 0;
+    this._lastDetectedPose = null;
     this._cameraFrameCount = 0;
     this._inferenceFrameCount = 0;
+    this._lastVideoTime = -1;
     this._currentFps = { cameraFps: 0, inferenceFps: 0 };
+
+    if (this._devTelemetry && getActiveDevCollector() === this._devTelemetry) {
+      setActiveDevCollector(null);
+    }
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('camera-active', { detail: false }));
     }
+  }
+
+  _recordTrackNegotiation(stream) {
+    if (!this._devTelemetry || !stream) return;
+    const track = stream.getVideoTracks?.()?.[0] || stream.getTracks?.()?.[0] || null;
+    let settings = null;
+    let capabilities = null;
+    let constraintsApplied = null;
+    try {
+      settings = typeof track?.getSettings === 'function' ? { ...track.getSettings() } : null;
+    } catch {
+      settings = null;
+    }
+    try {
+      capabilities =
+        typeof track?.getCapabilities === 'function'
+          ? { ...track.getCapabilities() }
+          : { unsupported: true };
+    } catch {
+      capabilities = { unsupported: true };
+    }
+    try {
+      constraintsApplied =
+        typeof track?.getConstraints === 'function' ? { ...track.getConstraints() } : null;
+    } catch {
+      constraintsApplied = null;
+    }
+    this._devTelemetry.setCameraNegotiation({
+      trackLabel: track?.label || null,
+      trackReadyState: track?.readyState || null,
+      settings,
+      capabilities,
+      constraintsApplied,
+    });
   }
 
   async _acquireCameraStream() {
@@ -442,16 +650,60 @@ export class SignEngine {
       throw err;
     }
 
-    try {
-      return await navigator.mediaDevices.getUserMedia({
+    if (import.meta.env.DEV && this.cameraExperiment === 'exact15') {
+      const exactConstraints = {
         video: {
-          width: { ideal: this.width },
-          height: { ideal: this.height },
-          frameRate: { ideal: Math.min(30, Math.max(15, this.targetFps)) },
+          width: { exact: this.width },
+          height: { exact: this.height },
+          frameRate: { min: 15 },
           facingMode: 'user',
         },
         audio: false,
+      };
+      this._devTelemetry?.setCameraNegotiation({
+        experimentMode: 'exact15',
+        requestedConstraints: exactConstraints,
+        usedFallback: false,
+        fallbackReason: null,
+        error: null,
       });
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(exactConstraints);
+        this._recordTrackNegotiation(stream);
+        return stream;
+      } catch (expErr) {
+        this._devTelemetry?.setCameraNegotiation({
+          error: {
+            name: expErr?.name || 'Error',
+            constraint: expErr?.constraint || null,
+            message: expErr?.message || String(expErr),
+          },
+        });
+        throw expErr;
+      }
+    }
+
+    const primaryConstraints = {
+      video: {
+        width: { ideal: this.width },
+        height: { ideal: this.height },
+        frameRate: { ideal: Math.min(30, Math.max(15, this.targetFps)) },
+        facingMode: 'user',
+      },
+      audio: false,
+    };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
+      this._devTelemetry?.setCameraNegotiation({
+        experimentMode: 'default',
+        requestedConstraints: primaryConstraints,
+        usedFallback: false,
+        fallbackReason: null,
+        error: null,
+      });
+      this._recordTrackNegotiation(stream);
+      return stream;
     } catch (primaryErr) {
       // Si las restricciones ideales fallan en cámaras virtuales (ej. Playwright fake device),
       // reintentar con `{ video: true, audio: false }` salvo que haya sido permiso denegado.
@@ -461,7 +713,18 @@ export class SignEngine {
       ) {
         throw primaryErr;
       }
-      return await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const fallbackConstraints = { video: true, audio: false };
+      const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+      this._devTelemetry?.setCameraNegotiation({
+        experimentMode: 'default',
+        requestedConstraints: primaryConstraints,
+        usedFallback: true,
+        fallbackReason: `${primaryErr?.name || 'Error'}: ${primaryErr?.message || primaryErr}`,
+        fallbackConstraints,
+        error: null,
+      });
+      this._recordTrackNegotiation(stream);
+      return stream;
     }
   }
 
@@ -487,6 +750,14 @@ export class SignEngine {
       this._emitError(
         ENGINE_ERROR_CODES.CAMERA_NOT_FOUND,
         'No se detectó ninguna cámara conectada en este dispositivo.',
+        err
+      );
+      return;
+    }
+    if (name === 'OverconstrainedError') {
+      this._emitError(
+        ENGINE_ERROR_CODES.CAMERA_OVERCONSTRAINED,
+        `La cámara no cumplió las restricciones exactas (${err?.constraint || 'desconocida'}): ${err?.message || 'OverconstrainedError'}`,
         err
       );
       return;
@@ -648,6 +919,34 @@ export class SignEngine {
     }
   }
 
+  _startPassiveCameraObserver(currentRunId) {
+    if (!this._devTelemetry || !this._videoElement) return;
+    const video = this._videoElement;
+    if (typeof video.requestVideoFrameCallback !== 'function') {
+      this._devTelemetry.setRvfcSupported(false);
+      return;
+    }
+    this._devTelemetry.setRvfcSupported(true);
+
+    const onVideoFrame = (nowMs, metadata) => {
+      if (!this._running || currentRunId !== this._runId || this._videoElement !== video) {
+        return;
+      }
+      this._devTelemetry.recordRealCameraFrame(nowMs, metadata);
+      try {
+        this._rvfcId = video.requestVideoFrameCallback(onVideoFrame);
+      } catch {
+        this._rvfcId = null;
+      }
+    };
+
+    try {
+      this._rvfcId = video.requestVideoFrameCallback(onVideoFrame);
+    } catch {
+      this._devTelemetry.setRvfcSupported(false);
+    }
+  }
+
   _startFpsTicker() {
     if (this._fpsTimerId !== null) {
       clearInterval(this._fpsTimerId);
@@ -669,6 +968,28 @@ export class SignEngine {
           listener(this._currentFps);
         } catch (err) {
           console.warn('[SignEngine] Error en listener onFps:', err);
+        }
+      }
+
+      if (this._devTelemetry) {
+        let playbackQuality = null;
+        try {
+          playbackQuality =
+            typeof this._videoElement?.getVideoPlaybackQuality === 'function'
+              ? this._videoElement.getVideoPlaybackQuality()
+              : null;
+        } catch {
+          playbackQuality = null;
+        }
+        const devSnap = this._devTelemetry.flushSecondMetrics(playbackQuality);
+        if (devSnap) {
+          for (const listener of this._devSnapshotListeners) {
+            try {
+              listener(devSnap);
+            } catch (err) {
+              console.warn('[SignEngine] Error en listener onDevSnapshot:', err);
+            }
+          }
         }
       }
     }, 1000);
@@ -693,10 +1014,12 @@ export class SignEngine {
       (typeof document === 'undefined' || !document.hidden)
     ) {
       // Contar frame nuevo entregado por la cámara cuando avanza currentTime
-      if (video.currentTime !== this._lastVideoTime) {
+      const videoTimeAdvanced = video.currentTime !== this._lastVideoTime;
+      if (videoTimeAdvanced) {
         this._lastVideoTime = video.currentTime;
         this._cameraFrameCount++;
       }
+      this._devTelemetry?.recordRafTick(nowMs, videoTimeAdvanced);
 
       // Respetar el intervalo objetivo de inferencia (15 a 30 FPS) y evitar solapamiento
       if (!this._busy && nowMs - this._lastInferenceStartMs >= this.frameIntervalMs) {
@@ -717,67 +1040,100 @@ export class SignEngine {
 
   async _runInferenceStep(video, nowMs) {
     const startPerf = performance.now();
+    this._devTelemetry?.beginInferenceStep(video?.currentTime ?? -1, startPerf);
+    let stepCompleted = false;
 
-    // Asegurar timestamp estrictamente creciente para MediaPipe Tasks runningMode: 'VIDEO'
-    const timestampMs = Math.max(Math.floor(nowMs), this._lastMonotonicTimestampMs + 1);
-    this._lastMonotonicTimestampMs = timestampMs;
+    try {
+      // Asegurar timestamp estrictamente creciente para MediaPipe Tasks runningMode: 'VIDEO'
+      const timestampMs = Math.max(Math.floor(nowMs), this._lastMonotonicTimestampMs + 1);
+      this._lastMonotonicTimestampMs = timestampMs;
 
-    // Soporte de inyección para pruebas automatizadas (Playwright con cámara sintética)
-    // Una vez que el motor WASM real ya cargó y corrió `detectForVideo`, si MediaPipe no ve
-    // una mano humana en el patrón de barras de color de Chromium (`--use-fake-device-for-media-stream`),
-    // permite que el arnés E2E inyecte landmarks sintéticos verificando todo el pipeline real.
-    let rawHands = [];
-    let rawHandedness = [];
-    let rawPose = null;
+      // Soporte de inyección para pruebas automatizadas (Playwright con cámara sintética)
+      // Una vez que el motor WASM real ya cargó y corrió `detectForVideo`, si MediaPipe no ve
+      // una mano humana en el patrón de barras de color de Chromium (`--use-fake-device-for-media-stream`),
+      // permite que el arnés E2E inyecte landmarks sintéticos verificando todo el pipeline real.
+      let rawHands = [];
+      let rawHandedness = [];
+      let rawPose = null;
 
-    // [CONTRATO DE ENTRADA Y TRANSFORMACIÓN DE DETECTOR - Punto 5]
-    // 1. Elemento de entrada: detectForVideo() recibe DIRECTAMENTE el elemento HTMLVideoElement (`video`).
-    // 2. Sin transformaciones: El video se entrega en su orientación nativa de sensor (NO espejado).
-    // 3. Convención de lateralidad: En cámara frontal (selfie), la mano derecha física del usuario
-    //    aparece en el lado izquierdo del encuadre nativo, por lo que MediaPipe le asigna categoryName: 'Left'.
-    // 4. Modo espejo: El flip horizontal se aplica EXCLUSIVAMENTE en el canvas de renderizado
-    //    (renderCanvasFrame vía `ctx.scale(-1, 1)`) para confort visual del usuario.
-    if (this._handLandmarker) {
-      const handRes = this._handLandmarker.detectForVideo(video, timestampMs, {
-        imageProcessingOptions: { rotationDegrees: 0 },
+      // [CONTRATO DE ENTRADA Y TRANSFORMACIÓN DE DETECTOR - Punto 5]
+      // 1. Elemento de entrada: detectForVideo() recibe DIRECTAMENTE el elemento HTMLVideoElement (`video`).
+      // 2. Sin transformaciones: El video se entrega en su orientación nativa de sensor (NO espejado).
+      // 3. Convención de lateralidad: En cámara frontal (selfie), la mano derecha física del usuario
+      //    aparece en el lado izquierdo del encuadre nativo, por lo que MediaPipe le asigna categoryName: 'Left'.
+      // 4. Modo espejo: El flip horizontal se aplica EXCLUSIVAMENTE en el canvas de renderizado
+      //    (renderCanvasFrame vía `ctx.scale(-1, 1)`) para confort visual del usuario.
+      if (this._handLandmarker) {
+        if (import.meta.env.DEV) this._devTelemetry?.mark('expresat:hand:start');
+        const handRes = this._handLandmarker.detectForVideo(video, timestampMs, {
+          imageProcessingOptions: { rotationDegrees: 0 },
+        });
+        if (import.meta.env.DEV && this._devTelemetry) {
+          const handMs = this._devTelemetry.endAndMeasure(
+            'expresat:stage:hand',
+            'expresat:hand:start',
+            'expresat:hand:end'
+          );
+          if (handMs !== null && handMs !== undefined) {
+            this._devTelemetry.recordStageDuration('hand', handMs);
+          }
+        }
+        rawHands = handRes?.landmarks || [];
+        rawHandedness = handRes?.handedness || [];
+
+        this._frameStepIndex++;
+        if (this._poseLandmarker) {
+          if ((this._frameStepIndex - 1) % this.poseCadence === 0) {
+            if (import.meta.env.DEV) this._devTelemetry?.mark('expresat:pose:start');
+            const poseRes = this._poseLandmarker.detectForVideo(video, timestampMs);
+            if (import.meta.env.DEV && this._devTelemetry) {
+              const poseMs = this._devTelemetry.endAndMeasure(
+                'expresat:stage:pose',
+                'expresat:pose:start',
+                'expresat:pose:end'
+              );
+              if (poseMs !== null && poseMs !== undefined) {
+                this._devTelemetry.recordStageDuration('pose', poseMs);
+              }
+            }
+            this._lastDetectedPose = poseRes?.landmarks?.[0] || null;
+          }
+          rawPose = this._lastDetectedPose;
+        }
+      } else if (this._legacyDetector) {
+        await this._legacyDetector.send({ image: video });
+        return;
+      }
+
+      if (
+        rawHands.length === 0 &&
+        typeof window !== 'undefined' &&
+        window.__EXPRESAT_SYNTHETIC_FRAME__
+      ) {
+        const injected =
+          typeof window.__EXPRESAT_SYNTHETIC_FRAME__ === 'function'
+            ? window.__EXPRESAT_SYNTHETIC_FRAME__(timestampMs)
+            : window.__EXPRESAT_SYNTHETIC_FRAME__;
+        if (injected && Array.isArray(injected.hands)) {
+          rawHands = injected.hands;
+          rawHandedness = injected.handedness || [[{ categoryName: 'Left', score: 0.99 }]];
+          rawPose = injected.pose || rawPose;
+        }
+      }
+
+      this._inferenceFrameCount++;
+      stepCompleted = true;
+      const latencyMs = Number((performance.now() - startPerf).toFixed(2));
+      this._dispatchNormalizedResults({
+        pose: rawPose,
+        hands: rawHands,
+        handedness: rawHandedness,
+        timestamp: timestampMs,
+        latencyMs,
       });
-      rawHands = handRes?.landmarks || [];
-      rawHandedness = handRes?.handedness || [];
-
-      if (this._poseLandmarker) {
-        const poseRes = this._poseLandmarker.detectForVideo(video, timestampMs);
-        rawPose = poseRes?.landmarks?.[0] || null;
-      }
-    } else if (this._legacyDetector) {
-      await this._legacyDetector.send({ image: video });
-      return;
+    } finally {
+      this._devTelemetry?.endInferenceStep(performance.now(), stepCompleted);
     }
-
-    if (
-      rawHands.length === 0 &&
-      typeof window !== 'undefined' &&
-      window.__EXPRESAT_SYNTHETIC_FRAME__
-    ) {
-      const injected =
-        typeof window.__EXPRESAT_SYNTHETIC_FRAME__ === 'function'
-          ? window.__EXPRESAT_SYNTHETIC_FRAME__(timestampMs)
-          : window.__EXPRESAT_SYNTHETIC_FRAME__;
-      if (injected && Array.isArray(injected.hands)) {
-        rawHands = injected.hands;
-        rawHandedness = injected.handedness || [[{ categoryName: 'Left', score: 0.99 }]];
-        rawPose = injected.pose || rawPose;
-      }
-    }
-
-    this._inferenceFrameCount++;
-    const latencyMs = Number((performance.now() - startPerf).toFixed(2));
-    this._dispatchNormalizedResults({
-      pose: rawPose,
-      hands: rawHands,
-      handedness: rawHandedness,
-      timestamp: timestampMs,
-      latencyMs,
-    });
   }
 
   _onLegacyHandsResults(results) {
@@ -866,6 +1222,7 @@ export class SignEngine {
       },
       timestamp,
       latencyMs,
+      delegate: this._activeBackendInfo?.delegate || this.preferredDelegate,
     };
 
     for (const listener of this._frameListeners) {

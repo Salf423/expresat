@@ -53,6 +53,7 @@ export function useSignEngine({
 
   const [landmarksCount, setLandmarksCount] = useState(0);
   const [telemetry, setTelemetry] = useState(null);
+  const [devSnapshot, setDevSnapshot] = useState(null);
 
   const engineRef = useRef(null);
   const classifierRef = useRef(null);
@@ -187,12 +188,18 @@ export function useSignEngine({
     const unsubStatus = engine.onStatus((st) => {
       if (isMounted) {
         setEngineStatus(st);
+        if (import.meta.env.DEV && st?.state === 'running') {
+          setDevSnapshot(engine.getDevSnapshot());
+        }
       }
     });
 
     const unsubError = engine.onError((errObj) => {
       if (isMounted) {
         setEngineError(errObj);
+        if (import.meta.env.DEV) {
+          setDevSnapshot(engine.getDevSnapshot());
+        }
       }
     });
 
@@ -202,10 +209,21 @@ export function useSignEngine({
       }
     });
 
+    const unsubDevSnapshot = import.meta.env.DEV
+      ? engine.onDevSnapshot((snap) => {
+          if (isMounted) {
+            setDevSnapshot(snap);
+          }
+        })
+      : () => {};
+
+    const devTel = import.meta.env.DEV ? engine._devTelemetry : null;
+
     const unsubFrame = engine.onFrame((frameData) => {
       if (!isMounted) return;
       latestFrameRef.current = frameData;
 
+      if (import.meta.env.DEV) devTel?.mark('expresat:ui_dispatch:start');
       // Contar landmarks detectados (21 por cada mano + 33 si hay pose)
       const handPts = (frameData.hands || []).reduce(
         (acc, h) => acc + (Array.isArray(h) ? h.length : 0),
@@ -214,19 +232,52 @@ export function useSignEngine({
       const posePts = Array.isArray(frameData.pose) ? frameData.pose.length : 0;
       const totalPts = handPts + posePts;
       setLandmarksCount(totalPts);
+      if (import.meta.env.DEV && devTel) {
+        const countSetMs = devTel.endAndMeasure(
+          'expresat:stage:ui_dispatch:count',
+          'expresat:ui_dispatch:start',
+          'expresat:ui_dispatch:count_end'
+        );
+        if (countSetMs !== null && countSetMs !== undefined) {
+          devTel.recordStageDuration('ui_dispatch', countSetMs);
+        }
+      }
 
       // Actualizar LandmarkTracker si está habilitado
       if (trackingConfigRef.current?.enabled && canvasRef?.current) {
+        if (import.meta.env.DEV) devTel?.mark('expresat:tracker:start');
         const snap = tracker.update(
           frameData,
           canvasRef.current.width,
           canvasRef.current.height
         );
+        if (import.meta.env.DEV && devTel) {
+          const trackerMs = devTel.endAndMeasure(
+            'expresat:stage:tracker',
+            'expresat:tracker:start',
+            'expresat:tracker:end'
+          );
+          if (trackerMs !== null && trackerMs !== undefined) {
+            devTel.recordStageDuration('tracker', trackerMs);
+          }
+          devTel.mark('expresat:ui_telemetry:start');
+        }
         setTelemetry(snap);
+        if (import.meta.env.DEV && devTel) {
+          const telSetMs = devTel.endAndMeasure(
+            'expresat:stage:ui_dispatch:telemetry',
+            'expresat:ui_telemetry:start',
+            'expresat:ui_telemetry:end'
+          );
+          if (telSetMs !== null && telSetMs !== undefined) {
+            devTel.recordStageDuration('ui_dispatch', telSetMs);
+          }
+        }
       }
 
       // Renderizar frame y landmarks en el Canvas
       if (canvasRef?.current && videoRef?.current) {
+        if (import.meta.env.DEV) devTel?.mark('expresat:dibujo:start');
         renderCanvasFrame({
           canvas: canvasRef.current,
           video: videoRef.current,
@@ -234,9 +285,20 @@ export function useSignEngine({
           tracker,
           trackingConfig: trackingConfigRef.current,
         });
+        if (import.meta.env.DEV && devTel) {
+          const canvasMs = devTel.endAndMeasure(
+            'expresat:stage:dibujo',
+            'expresat:dibujo:start',
+            'expresat:dibujo:end'
+          );
+          if (canvasMs !== null && canvasMs !== undefined) {
+            devTel.recordStageDuration('canvas', canvasMs);
+          }
+        }
       }
 
       // Clasificación geométrica local en navegador (100% independiente del backend)
+      if (import.meta.env.DEV) devTel?.mark('expresat:ui_gesture:start');
       const localPrediction = classifier.predict(frameData);
       if (localPrediction.label) {
         setGesture({
@@ -256,6 +318,16 @@ export function useSignEngine({
           ...prev,
           details: localPrediction.details,
         }));
+      }
+      if (import.meta.env.DEV && devTel) {
+        const gestureUiMs = devTel.endAndMeasure(
+          'expresat:stage:ui_dispatch',
+          'expresat:ui_gesture:start',
+          'expresat:ui_gesture:end'
+        );
+        if (gestureUiMs !== null && gestureUiMs !== undefined) {
+          devTel.recordStageDuration('ui_dispatch', gestureUiMs);
+        }
       }
 
       // Acumular ventana de 15 frames y enviar opcionalmente por WebSocket si está OPEN
@@ -287,6 +359,7 @@ export function useSignEngine({
       unsubStatus();
       unsubError();
       unsubFps();
+      unsubDevSnapshot();
       unsubFrame();
       engine.stop();
       classifier.reset();
@@ -320,6 +393,7 @@ export function useSignEngine({
     wsSnapshot,
     landmarksCount,
     telemetry,
+    devSnapshot,
     reconnectTransport,
     clearGesture,
     engineRef,
