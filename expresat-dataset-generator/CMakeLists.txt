@@ -1,34 +1,34 @@
 cmake_minimum_required(VERSION 3.20)
 project(expresat_dataset_generator CXX)
 
-# ── C++17 ────────────────────────────────────────────────────────────────────
+# C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# ── Build type default ────────────────────────────────────────────────────────
+# Build type default
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# ── Options ───────────────────────────────────────────────────────────────────
+# Options
 option(USE_MEDIAPIPE "Link against MediaPipe C++ Tasks API" OFF)
 option(USE_STUB_EXTRACTOR "Use stub extractor (no MediaPipe, for GUI dev)" ON)
 
-# ── FetchContent setup ────────────────────────────────────────────────────────
+# FetchContent setup
 include(FetchContent)
 
-# ── Find OpenCV (try v5 first, then v4) ───────────────────────────────────────
+# Find OpenCV (try v5 first, then v4)
 find_package(OpenCV 5 QUIET COMPONENTS core imgproc videoio)
 if(NOT OpenCV_FOUND)
     find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc videoio)
 endif()
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 
-# ── Find OpenGL ───────────────────────────────────────────────────────────────
+# Find OpenGL
 find_package(OpenGL REQUIRED)
 
-# ── GLFW via system or FetchContent ───────────────────────────────────────────
+# GLFW via system or FetchContent
 find_package(glfw3 QUIET)
 if(NOT glfw3_FOUND)
     message(STATUS "GLFW not found via find_package — fetching via FetchContent")
@@ -43,7 +43,7 @@ if(NOT glfw3_FOUND)
     FetchContent_MakeAvailable(glfw)
 endif()
 
-# ── nlohmann/json ─────────────────────────────────────────────────────────────
+# nlohmann/json
 find_package(nlohmann_json QUIET)
 if(NOT nlohmann_json_FOUND)
     set(JSON_LOCAL_DIR ${CMAKE_SOURCE_DIR}/third_party/json)
@@ -62,7 +62,7 @@ if(NOT nlohmann_json_FOUND)
     endif()
 endif()
 
-# ── Dear ImGui (vendored) ─────────────────────────────────────────────────────
+# Dear ImGui (vendored)
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/third_party/imgui)
 set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui.cpp
@@ -79,7 +79,7 @@ target_include_directories(imgui PUBLIC
 )
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 
-# ── GLAD (vendored, optional) ─────────────────────────────────────────────────
+# GLAD (vendored, optional)
 set(GLAD_DIR ${CMAKE_SOURCE_DIR}/third_party/glad)
 if(EXISTS ${GLAD_DIR}/src/glad.c)
     add_library(glad STATIC ${GLAD_DIR}/src/glad.c)
@@ -91,7 +91,7 @@ else()
     message(STATUS "GLAD: not found, using system OpenGL loader")
 endif()
 
-# ── Application sources ───────────────────────────────────────────────────────
+# Application sources
 set(APP_SOURCES
     src/main.cpp
     src/camera_stream.cpp
@@ -117,7 +117,7 @@ target_link_libraries(expresat_dataset_generator PRIVATE
     nlohmann_json
 )
 
-# ── MediaPipe (optional) ──────────────────────────────────────────────────────
+# MediaPipe (optional)
 if(USE_MEDIAPIPE)
     target_compile_definitions(expresat_dataset_generator PRIVATE EXPRESAT_USE_MEDIAPIPE=1)
     target_include_directories(expresat_dataset_generator PRIVATE
@@ -134,7 +134,7 @@ else()
     target_compile_definitions(expresat_dataset_generator PRIVATE EXPRESAT_STUB_EXTRACTOR=0)
 endif()
 
-# ── Warnings ──────────────────────────────────────────────────────────────────
+# Warnings
 if(MSVC)
     target_compile_options(expresat_dataset_generator PRIVATE /W4)
 else()

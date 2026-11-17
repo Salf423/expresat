@@ -120,22 +120,22 @@ describe('recognition/ — Clasificación geométrica pura con landmarks sintét
     expect(classify([]).label).toBeNull();
     expect(classify([{ x: 0.5, y: 0.5, z: 0 }]).label).toBeNull();
 
-    // Puntos colapsados en el mismo lugar (palmScale = 0)
+    // Collapsed points at the same location (palmScale = 0)
     const collapsed = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
     expect(classify(collapsed).label).toBeNull();
 
-    // Puntos con NaN
+    // Points containing NaN
     const withNaN = SYNTHETIC_PRESETS.MANO_ABIERTA();
     withNaN[8] = { x: Number.NaN, y: 0.5, z: 0 };
     expect(classify(withNaN).label).toBeNull();
 
-    // Ruido aleatorio incoherente (nudillos dispersos de extremo a extremo)
+    // Incoherent random noise (knuckles scattered across the entire space)
     const randomNoise = Array.from({ length: 21 }, (_, idx) => ({
       x: (idx * 0.73) % 1.0,
       y: (idx * 0.41) % 1.0,
       z: (idx * 0.19) % 1.0,
     }));
-    // Asegurar un palmScale pequeño pero nudillos con saltos > 1.2 * palmScale
+    // Keep palmScale small while spacing knuckles by > 1.2 * palmScale
     randomNoise[0] = { x: 0.5, y: 0.5, z: 0 };
     randomNoise[9] = { x: 0.5, y: 0.45, z: 0 };
     randomNoise[5] = { x: 0.95, y: 0.95, z: 0 };
@@ -170,12 +170,12 @@ describe('recognition/ — Clasificación geométrica pura con landmarks sintét
     const third = voter.push({ label: SIGN_LABELS.UNO, confidence: 0.95 });
     expect(third.label).toBe(SIGN_LABELS.UNO);
 
-    // Un frame aislado de ruido o clasificación distinta no tumba el consenso
+    // A single noisy or mismatched frame does not break consensus
     const noisy = voter.push({ label: SIGN_LABELS.PUNO, confidence: 0.8 });
     expect(noisy.label).toBe(SIGN_LABELS.UNO);
 
-    // En GeometricClassifier (modo streaming frame a frame), 1 frame aislado desde reposo
-    // NO emite etiqueta hasta alcanzar minVotes (evita parpadeos)
+    // In GeometricClassifier frame-by-frame mode, a single frame from rest
+    // must not emit a label until reaching minVotes (prevents flicker)
     const streamClf = new GeometricClassifier({ smoothingWindow: 5, minVotes: 3 });
     const f1 = streamClf.predict(SYNTHETIC_PRESETS.DOS());
     expect(f1.label).toBeNull();

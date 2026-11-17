@@ -28,10 +28,10 @@ namespace expresat {
  *   mgr.shutdown();   // Releases all resources
  *
  * Layout:
- *   ┌─────────────────┬──────────────────────────────┐
- *   │  Control Panel  │         Video Viewport        │
- *   │  (left ~300px)  │  (right, camera + skeleton)  │
- *   └─────────────────┴──────────────────────────────┘
+ *   +-----------------+------------------------------+
+ *   |  Control Panel  |         Video Viewport       |
+ *   |  (left ~300px)  |  (right, camera + skeleton)  |
+ *   +-----------------+------------------------------+
  */
 class GuiManager {
 public:
@@ -47,39 +47,39 @@ public:
     void shutdown();
 
 private:
-    // ── Window & GL ────────────────────────────────────────────────────────
+    // Window & GL
     GLFWwindow* window_   = nullptr;
     unsigned int camTexId_ = 0;   // GL texture for live camera feed
 
-    // ── Subsystems ─────────────────────────────────────────────────────────
+    // Subsystems
     CameraStream        camera_;
     MediapipeExtractor  extractor_;
     DataAugmenter       augmenter_;
     DatasetWriter       writer_;
 
-    // ── GUI state ─────────────────────────────────────────────────────────
+    // GUI state
     BodyPartConfig     parts_;
     RecordingConfig    recCfg_;
     char               labelBuf_[64]  = "hola";
 
-    // ── App state machine ──────────────────────────────────────────────────
+    // App state machine
     AppState           state_         = AppState::Idle;
     int                countdownSec_  = 3;
     float              countdownTimer_= 0.f;
     std::string        statusMsg_     = "Listo.";
 
-    // ── Recording buffer ───────────────────────────────────────────────────
+    // Recording buffer
     std::vector<FeatureVector> recordBuffer_;   // captured frames
     Sequence                   baseSequence_;   // confirmed base (seqLen frames)
 
-    // ── Generation / progress ─────────────────────────────────────────────
+    // Generation / progress
     std::thread          workerThread_;
     std::atomic<float>   progress_{0.f};
     std::atomic<bool>    workerDone_{false};
     std::vector<Sequence> generatedSamples_;
     std::mutex            samplesMutex_;
 
-    // ── Training process execution ─────────────────────────────────────────
+    // Training process execution
     std::thread          trainThread_;
     std::atomic<bool>    isTraining_{false};
     std::atomic<bool>    trainDone_{false};
@@ -87,7 +87,7 @@ private:
     std::vector<std::string> trainLogs_;
     std::mutex           trainMutex_;
 
-    // ── Memory monitoring ──────────────────────────────────────────────────
+    // Memory monitoring
     struct MemStats {
         double procRssMB = 0.0;
         double sysUsedMB = 0.0;
@@ -98,18 +98,18 @@ private:
     float    memTimer_ = 0.f;
     void     updateMemoryStats();
 
-    // ── Latest landmarks (for skeleton overlay) ────────────────────────────
+    // Latest landmarks (for skeleton overlay)
     FrameLandmarks lastLandmarks_;
     std::mutex     landmarksMutex_;
 
-    // ── Per-frame update ──────────────────────────────────────────────────
+    // Per-frame update
     void onNewFrame(const cv::Mat& bgrFrame);
 
-    // ── ImGui panels ─────────────────────────────────────────────────────
+    // ImGui panels
     void renderControlPanel(float dt);
     void renderVideoPanel();
 
-    // ── State transitions ─────────────────────────────────────────────────
+    // State transitions
     void startCountdown();
     void startRecording();
     void stopRecording();
@@ -117,7 +117,7 @@ private:
     void saveDataset();
     void startTraining();
 
-    // ── Worker ────────────────────────────────────────────────────────────
+    // Worker
     void generationWorker(Sequence base, int count, RecordingConfig cfg);
     void trainingWorker();
 };

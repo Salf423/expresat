@@ -1,5 +1,5 @@
 /**
- * devRecorderUtils.js — Utilidades puras y contrato de metadatos para DevRecorder (.raw.json)
+ * Pure utilities and metadata payload builder for DevRecorder (.raw.json).
  */
 
 export const PROMPT_TIMELINE = Object.freeze([
@@ -128,7 +128,7 @@ export function resolveActiveDelegate({ engine, search = '' } = {}) {
       const q = new URLSearchParams(search).get('delegate')?.toUpperCase();
       if (q === 'GPU' || q === 'CPU') return q;
     } catch {
-      // Ignorar errores de URL
+      // Ignore malformed URL query params
     }
   }
   return 'GPU';

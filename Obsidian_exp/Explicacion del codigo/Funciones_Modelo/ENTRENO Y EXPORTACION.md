@@ -1,7 +1,7 @@
 ---
 title: "Explicación del Código: Pipeline de Entrenamiento y Exportación ONNX"
-description: "Desglose técnico de train_and_export.py: arquitectura PyTorch SignLanguageGRU, validación de datasets (cuarentena de datos legacy), exportación con opset 17, cuantización INT8 y sellado con config_hash."
-version: "2.2.1"
+description: "Desglose técnico de expresat/models/train_and_export.py: arquitectura PyTorch SignLanguageGRU, filtrado de datasets en cuarentena, exportación con opset 17, cuantización INT8 y sellado con config_hash."
+version: "2.3.0"
 category: "Código / IA & Entrenamiento"
 status: "Producción"
 target_agents: ["ml-engineer", "mlops-engineer"]
@@ -9,7 +9,7 @@ recommended_skills:
   - "[[../../Skills/MachineLearning_y_Vision|MachineLearning_y_Vision]] (`ml-engineer`, `mlops-engineer`)"
 related_docs:
   - "[[../../00_INDICE_MAESTRO]]"
-  - "[[../../Especificacion_Feature_Spec_v1_2_1]]"
+  - "[[../../Especificacion_Feature_Spec_v1_3_0]]"
   - "[[Training_and_Inference]]"
   - "[[INFERENCIA]]"
   - "[[../../Caracteristicas]]"
@@ -19,13 +19,13 @@ related_docs:
 
 > **Navegación:** [[../../00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Explicación del Código** > **Modelos** > **Entrenamiento y Exportación**
 
-El script `expresat/models/train_and_export.py` es el pipeline automatizado de entrenamiento supervisado y serialización de modelos de **ExpresaT**, regido por el contrato técnico de [[../../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]].
+El script `expresat/models/train_and_export.py` es el pipeline automatizado de entrenamiento supervisado y serialización de modelos de **ExpresaT**, regido estrictamente por el contrato de [[../../Especificacion_Feature_Spec_v1_3_0|FEATURE_SPEC v1.3.0]].
 
 ---
 
 ## 1. Definición de la Red Neuronal (`SignLanguageGRU`)
 
-La arquitectura implementa una celda recurrente GRU acoplada a un clasificador lineal:
+La arquitectura implementa una celda recurrente GRU acoplada a un cabezal clasificador lineal:
 
 ```python
 import torch
@@ -52,21 +52,27 @@ class SignLanguageGRU(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (batch_size, 15, 178)
+        # Tensor x de entrada: (batch_size, 15 frames, 178 features)
         output, h_n = self.gru(x)
         last_hidden = h_n[-1]
         logits = self.classifier(last_hidden)
         return logits
 ```
 
+### Justificación de Hiperparámetros:
+- **`input_size = 178`:** Invariante dimensional (52 Upper Pose + 63 Mano Izquierda + 63 Mano Derecha).
+- **`hidden_size = 64`:** Suficiente capacidad representacional para distinguir configuraciones de dedos y trayectorias espaciales en secuencias cortas sin sobreajuste (*overfitting*).
+- **`num_layers = 1`:** Mantiene la latencia de inferencia en CPU en ~2 ms y evita cuellos de botella en dispositivos móviles.
+- **`dropout = 0.3`:** Regularización estocástica que previene la memorización de trayectorias exactas.
+
 ---
 
 ## 2. Ingesta de Datos y Filtrado de Cuarentena
 
-El pipeline de carga de datos:
-1. **Exclusión de Cuarentena:** Ignora cualquier archivo ubicado dentro de `dataset/quarantine/` (como `letra_a_derecha_2.json`) para prevenir distorsiones por falta de normalización humeral.
-2. **Validación de Versión:** Exige que los datasets contengan la cabecera `feature_spec_version: "1.2.1"`.
-3. **Control de Dimensionalidad:** Verifica que cada secuencia tenga exactamente 15 frames y 178 floats por frame.
+El cargador de datos (`SignDataset`):
+1. **Exclusión de Cuarentena:** Ignora cualquier archivo ubicado en `dataset/quarantine/` (específicamente `letra_a_derecha_2.json`) para prevenir distorsiones geométricas por falta de división inter-humeral ($D$).
+2. **Validación de Versión:** Exige que los metadatos declaren compatibilidad con `FEATURE_SPEC_VERSION` (`1.3.0`).
+3. **Control Dimensional:** Comprueba que cada secuencia contenga exactamente 15 frames y 178 números flotantes.
 
 ---
 
@@ -80,7 +86,7 @@ from onnxruntime.quantization import quantize_dynamic, QuantType
 
 def export_and_quantize(model: nn.Module, float_path: str, int8_path: str, metadata: dict):
     model.eval()
-    dummy_input = torch.randn(1, 15, 178)
+    dummy_input = torch.randn(1, 15, 178, dtype=torch.float32)
 
     # 1. Exportación ONNX Float32 (opset 17 estándar)
     torch.onnx.export(
@@ -101,8 +107,15 @@ def export_and_quantize(model: nn.Module, float_path: str, int8_path: str, metad
         weight_type=QuantType.QInt8
     )
 
-    # 3. Cálculo de config_hash y serialización de metadatos
-    metadata["feature_spec_version"] = "1.2.1"
+    # 3. Sellado con config_hash (incorporando digest de fixtures canónicos)
+    metadata["feature_spec_version"] = "1.3.0"
+    
+    # Lectura del digest SHA-256 de fixtures
+    fixtures_path = "tests/fixtures/feature_spec_cases.json"
+    with open(fixtures_path, "rb") as f:
+        fixtures_hash = hashlib.sha256(f.read()).hexdigest()
+    metadata["fixtures_sha256"] = fixtures_hash
+
     config_bytes = json.dumps(metadata, sort_keys=True).encode("utf-8")
     metadata["config_hash"] = hashlib.sha256(config_bytes).hexdigest()
 
@@ -112,8 +125,10 @@ def export_and_quantize(model: nn.Module, float_path: str, int8_path: str, metad
 
 ---
 
-## 🤖 Asignación de Agentes y Skills Recomendadas
+## 🤖 Guía de Operación para Agentes ML
 
-- **Para Ajustes de Hiperparámetros y Entrenamiento:** Invocar **`ml-engineer`** (ver [[../../Skills/MachineLearning_y_Vision]]).
-- **Para Compatibilidad de Exportación ONNX:** Invocar **`mlops-engineer`**.
-- **Para Especificación Canónica:** Consultar [[../../Especificacion_Feature_Spec_v1_2_1]].
+- Ejecutar entrenamiento completo:
+  ```bash
+  python expresat/models/train_and_export.py --epochs 50 --output ./exported_model
+  ```
+- Comprobar que `exported_model/model_metadata.json` contenga los campos `feature_spec_version: "1.3.0"` y `config_hash`.

@@ -53,7 +53,7 @@ p { color: var(--text-secondary); line-height: 1.6; }
     -webkit-text-fill-color: transparent;
 }
 
-/* Buttons con efecto Neón */
+/* Neon button styles */
 .btn-neon {
     background: transparent;
     color: var(--accent-cyan);
@@ -101,7 +101,7 @@ p { color: var(--text-secondary); line-height: 1.6; }
     border-top-color: #fff;
     animation: spin 1s ease-in-out infinite;
     margin-right: 8px;
-    display: none; /* Oculto por defecto */
+    display: none; /* Hidden by default */
 }
 .btn-loading .spinner { display: inline-block; }
 

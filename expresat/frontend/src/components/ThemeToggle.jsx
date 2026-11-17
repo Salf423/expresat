@@ -22,11 +22,11 @@ const ThemeToggle = () => {
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
         cursor: 'pointer',
-        transition: 'all var(--transition-fast)'
+        transition: 'background-color var(--transition-fast), border-color var(--transition-fast)'
       }}
     >
       {isDark ? (
-        <Sun size={19} color="#fbbf24" style={{ transition: 'transform 0.3s ease' }} />
+        <Sun size={19} color="var(--warning-color)" style={{ transition: 'transform 0.3s ease' }} />
       ) : (
         <Moon size={19} color="var(--accent-secondary)" style={{ transition: 'transform 0.3s ease' }} />
       )}

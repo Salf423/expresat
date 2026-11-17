@@ -17,12 +17,12 @@ const Navbar = () => {
     { name: 'Nosotros', path: '/about' },
   ];
 
-  // Cerrar menú móvil al navegar
+  // Close mobile drawer on route change
   useEffect(() => {
     setIsOpen(false);
   }, [location.pathname]);
 
-  // Prevenir scroll cuando el menú móvil está abierto
+  // Lock body scroll while the mobile drawer is open
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
@@ -77,8 +77,7 @@ const Navbar = () => {
             style={{
               height: '42px',
               width: 'auto',
-              objectFit: 'contain',
-              filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.15))'
+              objectFit: 'contain'
             }}
           />
         </Link>
@@ -143,8 +142,8 @@ const Navbar = () => {
                 width: '38px',
                 height: '38px',
                 borderRadius: '50%',
-                background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))',
-                color: '#fff',
+                background: 'var(--accent-primary)',
+                color: 'var(--text-on-accent)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',

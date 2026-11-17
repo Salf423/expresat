@@ -1,7 +1,7 @@
 ---
 title: "Explicación del Código: Pipeline de Entrenamiento e Inferencia"
-description: "Visión panorámica del subsistema de modelos: extractor canónico feature_extractor.py v1.2.1, SignLanguageGRU en PyTorch, exportación ONNX, cuantización INT8 e interfaz InferenceEngine."
-version: "2.2.1"
+description: "Visión panorámica del subsistema de modelos de ExpresaT: extractor canónico feature_extractor.py v1.3.0, red SignLanguageGRU en PyTorch, exportación ONNX opset 17, cuantización INT8 y clase InferenceEngine."
+version: "2.3.0"
 category: "Código / IA & Modelado"
 status: "Producción"
 target_agents: ["ml-engineer", "mlops-engineer", "data-scientist"]
@@ -10,7 +10,7 @@ recommended_skills:
   - "[[../../Skills/Backend_APIs_y_Sistemas|Backend_APIs_y_Sistemas]] (`python-performance-optimization`)"
 related_docs:
   - "[[../../00_INDICE_MAESTRO]]"
-  - "[[../../Especificacion_Feature_Spec_v1_2_1]]"
+  - "[[../../Especificacion_Feature_Spec_v1_3_0]]"
   - "[[ENTRENO Y EXPORTACION]]"
   - "[[INFERENCIA]]"
   - "[[../../Caracteristicas]]"
@@ -21,29 +21,29 @@ related_docs:
 
 > **Navegación:** [[../../00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Explicación del Código** > **Modelos** > **Training & Inference**
 
-El directorio `expresat/models/` y el directorio `tests/` gestionan el ciclo completo de modelado de inteligencia artificial de **ExpresaT**, desde la extracción geométrica canónica hasta el entrenamiento supervisado y la inferencia cuantizada con ONNX Runtime.
+El directorio `expresat/models/` y el directorio `tests/` gestionan el ciclo completo de inteligencia artificial de **ExpresaT**, desde la extracción canónica de 178 características bajo [[../../Especificacion_Feature_Spec_v1_3_0|FEATURE_SPEC v1.3.0]] hasta el entrenamiento supervisado y la inferencia cuantizada con ONNX Runtime en CPU.
 
 ---
 
 ## 1. Conceptos Clave
 
-- **Extractor Canónico (`feature_extractor.py`):** Implementación canónica en Python de [[../../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]]. Gestiona la normalización de hombros 3D, el desacoplamiento de $Z$ en manos relativo a muñeca, asignación conjunta de manos y filtro EMA de ventana.
-- **Verificación de Contrato y Config Hash:** Comprobación automática de `feature_spec_version = "1.2.1"` y validación de hash SHA-256 (`config_hash`) en `InferenceEngine` y en el exportador para evitar incompatibilidades numéricas en producción.
-- **Cuantización Dinámica INT8:** Reducción de tamaño del grafo a tan solo **4 KB + 193 KB de datos**, manteniendo inferencias ultrarrápidas de **2.02 ms** en CPU.
-- **Arquitectura Recurrente GRU:** La red `SignLanguageGRU` procesa tensores estandarizados de entrada `(1, 15, 178)` en `float32`.
+- **Extractor Canónico (`feature_extractor.py`):** Implementación de referencia en Python que implementa `extract_canonical_features(pose, left_hand, right_hand)` y `extract_window(frames)`. Aplica normalización por centroide 3D de hombros ($C$), escala euclidiana inter-humeral ($D \ge 0.08$), desacoplamiento del eje $Z$ en manos respecto a su propia muñeca y relleno de 63 ceros exactos en ausencia de mano.
+- **Verificación Criptográfica (`config_hash`):** Control estricto de integridad SHA-256 en `InferenceEngine` que valida tanto la configuración dimensional como el digest de `tests/fixtures/feature_spec_cases.json`.
+- **Cuantización Dinámica a INT8:** Reducción del modelo flotante de ~193 KB a tan solo **~4 KB de grafo**, acelerando la inferencia en CPU a **2.02 ms**.
+- **Red Neuronal `SignLanguageGRU`:** Modelo recurrente compacto (~12,000 parámetros) que procesa tensores de entrada `(1, 15, 178)` en `float32`.
 
 ---
 
 ## 2. Mapa de Archivos (`expresat/models` y `tests/`)
 
-1. **`feature_extractor.py`:** Extractor canónico v1.2.1:
-   - Funciones `extract_canonical_features(pose, left_hand, right_hand)` y `extract_window_features(frames, fps)`.
-   - Normalización 3D y asignación húngara por costo mínimo.
-2. **`tests/test_feature_spec.py`:** Suite de pruebas que verifica la conformidad con fixtures canónicas (TC-01 a TC-05C) con tolerancia $|\Delta| \le 10^{-6}$.
-3. **`train_and_export.py`:** Pipeline continuo: carga de datasets válidos (excluyendo los que están en `dataset/quarantine/`), entrenamiento de `SignLanguageGRU`, exportación a ONNX (Float32 e INT8) y generación de `model_metadata.json`.
-4. **`inference_engine.py`:** Wrapper en Python que carga el grafo ONNX cuantizado, valida el `config_hash` y expone el método `predict(frames)`.
-5. **`inference.py`:** Herramienta CLI para benchmarking de latencia y pruebas de humo en local.
-6. **`exported_model/`:** Directorio de artefactos compilados: `expresat_gru_int8.onnx`, `expresat_gru_float32.onnx` y `model_metadata.json`.
+| Archivo | Responsabilidad Técnica | Estado |
+|---|---|---|
+| **`feature_extractor.py`** | Extractor canónico v1.3.0: `extract_canonical_features`, `extract_window`, asignación conjunta de manos y filtro EMA por bloques. | **Producción** |
+| **`train_and_export.py`** | Pipeline automatizado de entrenamiento: PyTorch `SignLanguageGRU` → Exportación ONNX opset 17 → Cuantización INT8 dinámica → Sellado de metadatos. | **Producción** |
+| **`inference_engine.py`** | Motor de inferencia en CPU con ONNX Runtime, validación de compatibilidad `major.minor` y ejecución no bloqueante. | **Producción** |
+| **`tests/test_feature_spec.py`** | Suite de pruebas de paridad matemática contra `feature_spec_cases.json` con tolerancia $\|v_{\text{obtenido}} - v_{\text{esperado}}\|_\infty \le 10^{-6}$. | **Tests** |
+| **`exported_model/`** | Directorio de artefactos de producción: `expresat_gru_int8.onnx`, `expresat_gru_float32.onnx` y `model_metadata.json`. | **Artefactos** |
+| **`inference.py`** | Script CLI antiguo. | **[OBSOLETO] Reemplazado por `inference_engine.py`** |
 
 ---
 
@@ -51,13 +51,13 @@ El directorio `expresat/models/` y el directorio `tests/` gestionan el ciclo com
 
 ```mermaid
 flowchart LR
-    A["Dataset v2 / Raw Captures\n(Excluye quarantine/)"] --> B["Extractor Canónico\n(feature_extractor.py v1.2.1)"]
+    A["Dataset v2 / Raw Captures\n(Excluye quarantine/)"] --> B["Extractor Canónico\n(feature_extractor.py v1.3.0)"]
     B --> C["Entrenamiento PyTorch\n(SignLanguageGRU)"]
     C --> D["Checkpoint\n(expresat_gru.pt)"]
     D -->|"torch.onnx.export"| E["ONNX Float32\n(~193 KB)"]
     E -->|"quantize_dynamic"| F["ONNX INT8\n(~4 KB grafo)"]
-    F --> G["Verificación config_hash\n(model_metadata.json)"]
-    G --> H["Despliegue\n(FastAPI / C++ Nativo)"]
+    F --> G["Sellado con config_hash\n(model_metadata.json)"]
+    G --> H["Despliegue\n(FastAPI / main.py)"]
 
     style A fill:#6b2d1a,color:#fff
     style B fill:#1a3a6b,color:#fff
@@ -71,8 +71,17 @@ flowchart LR
 
 ---
 
-## 🤖 Asignación de Agentes y Skills Recomendadas
+## 🤖 Guía de Operación para Agentes ML
 
-- **Para Extracción y Contratos de Datos:** Consultar [[../../Especificacion_Feature_Spec_v1_2_1]] e invocar **`data-engineering-data-pipeline`**.
-- **Para Entrenamiento y Optimización de Redes:** Invocar **`ml-engineer`** y **`mlops-engineer`** (ver [[../../Skills/MachineLearning_y_Vision]]).
-- **Para Pruebas Unitarias de Tensores:** Ejecutar `pytest tests/test_feature_spec.py -v`.
+- **Verificar Paridad Numérica:**
+  ```bash
+  pytest tests/test_feature_spec.py -v
+  ```
+- **Reentrenar y Exportar el Modelo:**
+  ```bash
+  python expresat/models/train_and_export.py --epochs 50 --output ./exported_model
+  ```
+- **Auditar el Estado del Motor de Inferencia:**
+  ```bash
+  python -c "from expresat.models.inference_engine import InferenceEngine; e = InferenceEngine('exported_model'); print(e.get_info())"
+  ```

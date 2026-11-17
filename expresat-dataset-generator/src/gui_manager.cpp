@@ -15,7 +15,6 @@
 
 namespace expresat {
 
-// ─── Constructor / Destructor ─────────────────────────────────────────────────
 GuiManager::GuiManager()
     : camera_()
     , extractor_()
@@ -27,9 +26,8 @@ GuiManager::~GuiManager() {
     shutdown();
 }
 
-// ─── init() ───────────────────────────────────────────────────────────────────
 bool GuiManager::init(int w, int h, const char* title) {
-    // ── GLFW ─────────────────────────────────────────────────────────────
+    // GLFW setup
     glfwSetErrorCallback([](int err, const char* desc) {
         std::cerr << "[GLFW] Error " << err << ": " << desc << "\n";
     });
@@ -55,7 +53,7 @@ bool GuiManager::init(int w, int h, const char* title) {
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1); // vsync
 
-    // ── ImGui ─────────────────────────────────────────────────────────────
+    // ImGui setup
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -65,7 +63,7 @@ bool GuiManager::init(int w, int h, const char* title) {
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    // ── GL texture for camera feed ────────────────────────────────────────
+    // GL texture for camera feed
     glGenTextures(1, &camTexId_);
     glBindTexture(GL_TEXTURE_2D, camTexId_);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -80,7 +78,7 @@ bool GuiManager::init(int w, int h, const char* title) {
     }
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    // ── Camera & extractor ────────────────────────────────────────────────
+    // Camera & extractor
     camera_.open();
     extractor_.open();
 
@@ -88,7 +86,6 @@ bool GuiManager::init(int w, int h, const char* title) {
     return true;
 }
 
-// ─── run() — main loop ───────────────────────────────────────────────────────
 void GuiManager::run() {
     using clock = std::chrono::steady_clock;
     auto prev   = clock::now();
@@ -100,20 +97,20 @@ void GuiManager::run() {
         float dt = std::chrono::duration<float>(now - prev).count();
         prev = now;
 
-        // ── Memory monitoring update ──────────────────────────────────────
+        // Memory monitoring update
         memTimer_ += dt;
         if (memTimer_ >= 0.5f) {
             memTimer_ = 0.f;
             updateMemoryStats();
         }
 
-        // ── Capture + process frame ───────────────────────────────────────
+        // Capture + process frame
         cv::Mat bgrFrame;
         if (camera_.getLatestFrame(bgrFrame) && !bgrFrame.empty()) {
             onNewFrame(bgrFrame);
         }
 
-        // ── Upload to GL texture (with skeleton overlay) ──────────────────
+        // Upload to GL texture (with skeleton overlay)
         if (!bgrFrame.empty()) {
             cv::Mat display;
             {
@@ -130,7 +127,7 @@ void GuiManager::run() {
             glBindTexture(GL_TEXTURE_2D, 0);
         }
 
-        // ── Begin ImGui frame ─────────────────────────────────────────────
+        // Begin ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -152,7 +149,7 @@ void GuiManager::run() {
 
         ImGui::End();
 
-        // ── Render ────────────────────────────────────────────────────────
+        // Render
         ImGui::Render();
         glViewport(0, 0, dispW, dispH);
         glClearColor(0.1f, 0.1f, 0.1f, 1.f);
@@ -160,7 +157,7 @@ void GuiManager::run() {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window_);
 
-        // ── Check worker done ─────────────────────────────────────────────
+        // Check worker done
         if (workerDone_.load()) {
             workerDone_.store(false);
             if (workerThread_.joinable()) workerThread_.join();
@@ -170,7 +167,7 @@ void GuiManager::run() {
             }
         }
 
-        // ── Check training done ───────────────────────────────────────────
+        // Check training done
         if (trainDone_.load()) {
             trainDone_.store(false);
             if (trainThread_.joinable()) trainThread_.join();
@@ -179,7 +176,6 @@ void GuiManager::run() {
     }
 }
 
-// ─── shutdown() ───────────────────────────────────────────────────────────────
 void GuiManager::shutdown() {
     if (workerThread_.joinable()) workerThread_.join();
     if (trainThread_.joinable()) trainThread_.join();
@@ -197,7 +193,6 @@ void GuiManager::shutdown() {
     }
 }
 
-// ─── onNewFrame() — per-frame landmark extraction + recording ─────────────────
 void GuiManager::onNewFrame(const cv::Mat& bgrFrame) {
     FrameLandmarks lm = extractor_.process(bgrFrame);
 
@@ -217,7 +212,6 @@ void GuiManager::onNewFrame(const cv::Mat& bgrFrame) {
     }
 }
 
-// ─── renderControlPanel() ─────────────────────────────────────────────────────
 void GuiManager::renderControlPanel(float dt) {
     ImGui::BeginChild("##control", ImVec2(310, 0), true);
 
@@ -225,7 +219,7 @@ void GuiManager::renderControlPanel(float dt) {
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.f, 1.f), "ExpresaT Dataset Generator");
     ImGui::Separator();
 
-    // ── Body parts ────────────────────────────────────────────────────────
+    // Body parts
     ImGui::Text("Partes del Cuerpo:");
     ImGui::Checkbox("Upper Pose (52D)",  &parts_.upperPose);
     ImGui::Checkbox("Left Hand  (63D)",  &parts_.leftHand);
@@ -241,7 +235,7 @@ void GuiManager::renderControlPanel(float dt) {
 
     ImGui::Separator();
 
-    // ── Recording config ──────────────────────────────────────────────────
+    // Recording config
     ImGui::Text("Configuración:");
     if (ImGui::InputText("Etiqueta", labelBuf_, sizeof(labelBuf_)))
         recCfg_.label = labelBuf_;
@@ -252,7 +246,7 @@ void GuiManager::renderControlPanel(float dt) {
 
     ImGui::Separator();
 
-    // ── State machine: countdown timer ────────────────────────────────────
+    // Countdown timer
     if (state_ == AppState::CountingDown) {
         countdownTimer_ -= dt;
         if (countdownTimer_ <= 0.f) {
@@ -263,7 +257,7 @@ void GuiManager::renderControlPanel(float dt) {
         }
     }
 
-    // ── Buttons ───────────────────────────────────────────────────────────
+    // Buttons
     bool busy = (state_ == AppState::CountingDown
               || state_ == AppState::Recording
               || state_ == AppState::Processing);
@@ -290,7 +284,7 @@ void GuiManager::renderControlPanel(float dt) {
         ImGui::EndPopup();
     }
 
-    // ── Status ────────────────────────────────────────────────────────────
+    // Status
     ImGui::Separator();
     ImGui::Text("Estado:");
 
@@ -330,7 +324,7 @@ void GuiManager::renderControlPanel(float dt) {
     ImGui::Separator();
     ImGui::TextDisabled("Cam FPS: %.1f", camera_.measuredFPS());
 
-    // ── Memory Usage Monitor ──────────────────────────────────────────────
+    // Memory Usage Monitor
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.f, 1.f), "Uso de Memoria:");
     ImGui::Text("Proceso RSS : %.1f MB", memStats_.procRssMB);
@@ -348,7 +342,7 @@ void GuiManager::renderControlPanel(float dt) {
     ImGui::ProgressBar(ramRatio, ImVec2(-1, 14), memOverlay);
     ImGui::PopStyleColor();
 
-    // ── Training Script Trigger ───────────────────────────────────────────
+    // Training Script Trigger
     ImGui::Separator();
     ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Entrenamiento del Modelo:");
 
@@ -371,7 +365,6 @@ void GuiManager::renderControlPanel(float dt) {
     ImGui::EndChild();
 }
 
-// ─── renderVideoPanel() ───────────────────────────────────────────────────────
 void GuiManager::renderVideoPanel() {
     ImGui::BeginChild("##video_panel", ImVec2(0, 0), false);
 
@@ -420,7 +413,7 @@ void GuiManager::renderVideoPanel() {
         ImGui::TextColored(ImVec4(1, 0.2f, 0.2f, 1.f), "● REC");
     }
 
-    // ── Training Logs Panel (debajo de la cámara para máxima legibilidad) ──
+    // Training Logs Panel (below the camera viewport for readability)
     ImGui::Spacing();
     ImGui::Separator();
 
@@ -455,7 +448,7 @@ void GuiManager::renderVideoPanel() {
             for (const auto& logLine : trainLogs_) {
                 if (logLine.find("[ERROR]") != std::string::npos || logLine.find("Traceback") != std::string::npos || logLine.find("Error") != std::string::npos) {
                     ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", logLine.c_str());
-                } else if (logLine.find("[SUCCESS]") != std::string::npos || logLine.find("CUMPLE") != std::string::npos || logLine.find("✓") != std::string::npos) {
+                } else if (logLine.find("[SUCCESS]") != std::string::npos || logLine.find("CUMPLE") != std::string::npos || logLine.find("[OK]") != std::string::npos) {
                     ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.45f, 1.0f), "%s", logLine.c_str());
                 } else if (logLine.find("[INFO]") != std::string::npos || logLine.find("[EXEC]") != std::string::npos) {
                     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", logLine.c_str());
@@ -477,7 +470,7 @@ void GuiManager::renderVideoPanel() {
     ImGui::EndChild();
 }
 
-// ─── State transitions ────────────────────────────────────────────────────────
+// State transitions
 void GuiManager::startCountdown() {
     recordBuffer_.clear();
     countdownSec_   = 3;
@@ -529,10 +522,9 @@ void GuiManager::startGeneration() {
                                 std::move(base), count, cfg);
 }
 
-// ─── generationWorker() — runs in std::thread ────────────────────────────────
 void GuiManager::generationWorker(Sequence base, int count, RecordingConfig cfg) {
     try {
-        // En ExpresaT el vector canónico es siempre TOTAL_FEATURES (178D: 52 upper pose + 63 mano izq + 63 mano der)
+        // ExpresaT canonical vector is TOTAL_FEATURES (178D: 52 upper pose + 63 left hand + 63 right hand)
         int featDim = TOTAL_FEATURES;
 
         auto samples = augmenter_.generate(base, count, featDim);
@@ -559,7 +551,6 @@ void GuiManager::generationWorker(Sequence base, int count, RecordingConfig cfg)
     workerDone_.store(true);
 }
 
-// ─── updateMemoryStats() ──────────────────────────────────────────────────────
 void GuiManager::updateMemoryStats() {
     // 1. System Memory from /proc/meminfo
     std::ifstream meminfo("/proc/meminfo");
@@ -589,7 +580,6 @@ void GuiManager::updateMemoryStats() {
     }
 }
 
-// ─── startTraining() & trainingWorker() ──────────────────────────────────────
 void GuiManager::startTraining() {
     if (isTraining_.load()) return;
 
@@ -631,7 +621,7 @@ void GuiManager::trainingWorker() {
     std::string trainScript = "/home/adrian/Proyectos/expresat/expresat/models/train_and_export.py";
     std::string dataDir     = "/home/adrian/Proyectos/expresat/expresat-dataset-generator/dataset";
     std::string outputDir   = "/home/adrian/Proyectos/expresat/expresat/models/exported_model";
-    // -u para desactivar el buffer de stdout y recibir logs en tiempo real vía popen
+    // -u disables stdout buffering so real-time training logs stream over popen
     std::string cmd = pythonBin + " -u " + trainScript + " --epochs 30 --data-dir " + dataDir + " --output " + outputDir + " 2>&1";
 
     {

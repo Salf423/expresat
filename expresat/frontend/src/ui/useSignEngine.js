@@ -1,12 +1,12 @@
 /**
- * src/ui/useSignEngine.js — Hook React que integra SignEngine, Classifier (GeometricClassifier) y WSClient
+ * React hook integrating SignEngine, Classifier (GeometricClassifier), and WSClient.
  *
- * Garantías:
- * - El tracking y reconocimiento geométrico funcionan 100% en el navegador sin requerir backend ni login.
- * - Cleanup idempotente bajo React 19 StrictMode (sin streams de cámara abiertos ni AbortError).
- * - Contadores separados de FPS reales (`cameraFps` e `inferenceFps`).
- * - Estado explícito del transporte WebSocket (`idle | connecting | open | auth_error | failed`).
- * - Sin `setState` síncrono durante el cuerpo del render.
+ * Guarantees:
+ * - Tracking and geometric recognition run locally in the browser without backend or login.
+ * - Idempotent cleanup under React 19 StrictMode (no leaked camera streams or AbortError).
+ * - Separate real FPS counters (`cameraFps` and `inferenceFps`).
+ * - Explicit WebSocket transport state (`idle | connecting | open | auth_error | failed`).
+ * - No synchronous `setState` during render.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -68,7 +68,7 @@ export function useSignEngine({
     trackingConfigRef.current = trackingConfig;
   }, [trackingConfig]);
 
-  // 1. Inicializar Transporte WebSocket Opcional (desacoplado del motor de visión)
+  // 1. Initialize optional WebSocket transport (decoupled from vision engine)
   useEffect(() => {
     if (!enableRemoteTransport) {
       return undefined;
@@ -159,7 +159,7 @@ export function useSignEngine({
     };
   }, [enableRemoteTransport]);
 
-  // 2. Inicializar SignEngine (cámara + MediaPipe en hilo principal) y GeometricClassifier
+  // 2. Initialize SignEngine (camera + main-thread MediaPipe) and GeometricClassifier
   useEffect(() => {
     const videoEl = videoRef?.current;
     if (!videoEl) return undefined;
@@ -211,7 +211,7 @@ export function useSignEngine({
 
     const unsubDevSnapshot = import.meta.env.DEV
       ? engine.onDevSnapshot((snap) => {
-          // Durante grabando no disparar setState 1 Hz para no contaminar <Profiler> ni tickWaitMs
+          // Skip 1 Hz dev-snapshot setState during recording to avoid polluting React Profiler / tickWaitMs
           if (isMounted && snap && snap.phase !== 'grabando') {
             setDevSnapshot(snap);
           }
@@ -225,7 +225,7 @@ export function useSignEngine({
       latestFrameRef.current = frameData;
 
       if (import.meta.env.DEV) devTel?.mark('expresat:ui_dispatch:start');
-      // Contar landmarks detectados (21 por cada mano + 33 si hay pose)
+      // Count detected landmarks (21 per hand + 33 if pose is present)
       const handPts = (frameData.hands || []).reduce(
         (acc, h) => acc + (Array.isArray(h) ? h.length : 0),
         0
@@ -244,7 +244,7 @@ export function useSignEngine({
         }
       }
 
-      // Actualizar LandmarkTracker si está habilitado
+      // Update LandmarkTracker if enabled
       if (trackingConfigRef.current?.enabled && canvasRef?.current) {
         if (import.meta.env.DEV) devTel?.mark('expresat:tracker:start');
         const snap = tracker.update(
@@ -276,7 +276,7 @@ export function useSignEngine({
         }
       }
 
-      // Renderizar frame y landmarks en el Canvas
+      // Render video frame and landmarks onto the Canvas
       if (canvasRef?.current && videoRef?.current) {
         if (import.meta.env.DEV) devTel?.mark('expresat:dibujo:start');
         renderCanvasFrame({
@@ -298,7 +298,7 @@ export function useSignEngine({
         }
       }
 
-      // Clasificación geométrica local en navegador (100% independiente del backend)
+      // Local geometric classification in-browser (independent from backend)
       if (import.meta.env.DEV) devTel?.mark('expresat:ui_gesture:start');
       const localPrediction = classifier.predict(frameData);
       if (localPrediction.label) {
@@ -309,7 +309,7 @@ export function useSignEngine({
           details: localPrediction.details,
         });
       } else if (frameData.hands.length === 0) {
-        // Actualizar detalles de dedos cuando no hay mano sin borrar la última palabra traducida
+        // Refresh finger state details without clearing the last recognized label
         setGesture((prev) => ({
           ...prev,
           details: localPrediction.details,
@@ -331,7 +331,7 @@ export function useSignEngine({
         }
       }
 
-      // Acumular ventana de 15 frames y enviar opcionalmente por WebSocket si está OPEN
+      // Buffer 15 frames and optionally send over WebSocket when OPEN
       wsBatchBufferRef.current.push({
         pose: frameData.pose,
         leftHand: frameData.leftHand,

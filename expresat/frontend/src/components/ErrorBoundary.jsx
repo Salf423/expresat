@@ -1,21 +1,8 @@
 import React from 'react';
 
 /**
- * ErrorBoundary — Componente que captura errores en hijos y muestra
- * una UI de degradación amigable con botón de recarga accesible.
- *
- * Uso:
- *  <ErrorBoundary
- *    fallback={<p>Error al cargar el componente</p>}
- *    onRecovery={() => window.location.reload()}
- *  >
- *    <HeavyComponent />
- *  </ErrorBoundary>
- *
- * Invariantes preservadas:
- * - No rompe la jerarquía de padres
- * - Loggea el error sin afectar otros componentes
- * - Permite recuperación controlada mediante onRecovery
+ * Catches React rendering errors in child subtrees and renders a fallback UI
+ * with an optional recovery trigger.
  */
 
 class ErrorBoundary extends React.Component {
@@ -26,12 +13,10 @@ class ErrorBoundary extends React.Component {
     }
 
     static getDerivedStateFromError(_error) {
-        // Actualizar estado para renderizar la UI de fallback
         return { hasError: true };
     }
 
     componentDidCatch(error, info) {
-        // Loguear error en consola para debugging (no mostrar al usuario)
         console.error("ErrorBoundary captured error:", error, info);
         this.errorInfo = info;
     }
@@ -82,7 +67,7 @@ class ErrorBoundary extends React.Component {
     }
 }
 
-/** HOC alternativa para componentes funcionales */
+/** Functional component wrapper for ErrorBoundary. */
 function withErrorBoundary(WrappedComponent, fallback, onRecovery) {
     return function ErrorBoundaryWrapper(props) {
         return (

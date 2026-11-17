@@ -11,7 +11,7 @@ on:
     paths:
       - 'expresat-native/**'
 
-# Cancelar runs anteriores de la misma rama/PR para ahorrar minutos de CI
+# Cancel prior runs on the same branch/PR to save CI minutes
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -20,21 +20,19 @@ env:
   ONNXRUNTIME_VERSION: "1.19.2"
   CMAKE_BUILD_TYPE:    "Release"
 
-# =============================================================================
 # JOB 1: Linux x86_64
-# =============================================================================
 jobs:
   build-linux:
-    name: "🐧 Linux x86_64"
+    name: "Linux x86_64"
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout (con submódulos)
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # ── Caché de vcpkg (invalida si vcpkg.json cambia) ────────────────────
+      # vcpkg cache (invalidated when vcpkg.json changes)
       - name: Cache vcpkg
         id: cache-vcpkg
         uses: actions/cache@v4
@@ -46,8 +44,8 @@ jobs:
           restore-keys: |
             vcpkg-linux-
 
-      # ── Dependencias del sistema ───────────────────────────────────────────
-      - name: Instalar dependencias del sistema
+      # System dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
@@ -59,7 +57,7 @@ jobs:
             libxinerama-dev libxcursor-dev \
             libgles2-mesa-dev
 
-      # ── Bootstrap vcpkg ───────────────────────────────────────────────────
+      # Bootstrap vcpkg
       - name: Setup vcpkg
         if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         working-directory: expresat-native
@@ -67,7 +65,7 @@ jobs:
           git clone --depth=1 https://github.com/microsoft/vcpkg.git vcpkg
           ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-      # ── Descargar ONNX Runtime prebuilt ───────────────────────────────────
+      # Download prebuilt ONNX Runtime
       - name: Cache ONNX Runtime
         id: cache-ort-linux
         uses: actions/cache@v4
@@ -75,7 +73,7 @@ jobs:
           path: expresat-native/third_party/onnxruntime
           key: ort-linux-${{ env.ONNXRUNTIME_VERSION }}
 
-      - name: Descargar ONNX Runtime (Linux)
+      - name: Download ONNX Runtime (Linux)
         if: steps.cache-ort-linux.outputs.cache-hit != 'true'
         working-directory: expresat-native
         run: |
@@ -85,7 +83,7 @@ jobs:
           mv "onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}" third_party/onnxruntime
           rm "onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz"
 
-      # ── Caché de build de CMake ────────────────────────────────────────────
+      # CMake build cache
       - name: Cache CMake build
         uses: actions/cache@v4
         with:
@@ -93,7 +91,7 @@ jobs:
           key: cmake-linux-${{ env.CMAKE_BUILD_TYPE }}-${{ hashFiles('expresat-native/**/*.cpp', 'expresat-native/**/*.h', 'expresat-native/**/CMakeLists.txt') }}
           restore-keys: cmake-linux-${{ env.CMAKE_BUILD_TYPE }}-
 
-      # ── Configurar CMake ───────────────────────────────────────────────────
+      # Configure CMake
       - name: CMake Configure
         working-directory: expresat-native
         run: |
@@ -105,19 +103,19 @@ jobs:
             -DBUILD_ANDROID=OFF \
             -DONNXRUNTIME_ROOT="${{ github.workspace }}/expresat-native/third_party/onnxruntime"
 
-      # ── Compilar ───────────────────────────────────────────────────────────
+      # Compile
       - name: Build
         working-directory: expresat-native
         run: cmake --build build --parallel $(nproc) --config ${{ env.CMAKE_BUILD_TYPE }}
 
-      # ── Verificar binario ──────────────────────────────────────────────────
-      - name: Verificar binario
+      # Verify binary
+      - name: Verify binary
         run: |
           ls -lh expresat-native/build/bin/
           file expresat-native/build/bin/expresat_desktop
           ldd  expresat-native/build/bin/expresat_desktop || true
 
-      # ── Subir artefacto ───────────────────────────────────────────────────
+      # Upload artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -127,15 +125,13 @@ jobs:
             expresat-native/build/lib/libonnxruntime.so*
           retention-days: 30
 
-# =============================================================================
 # JOB 2: Windows x64
-# =============================================================================
   build-windows:
-    name: "🪟 Windows x64"
+    name: "Windows x64"
     runs-on: windows-latest
 
     steps:
-      - name: Checkout (con submódulos)
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -165,7 +161,7 @@ jobs:
           path: expresat-native/third_party/onnxruntime
           key: ort-windows-${{ env.ONNXRUNTIME_VERSION }}
 
-      - name: Descargar ONNX Runtime (Windows)
+      - name: Download ONNX Runtime (Windows)
         if: steps.cache-ort-win.outputs.cache-hit != 'true'
         working-directory: expresat-native
         shell: pwsh
@@ -193,7 +189,7 @@ jobs:
         working-directory: expresat-native
         run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }} --parallel
 
-      - name: Verificar ejecutable
+      - name: Verify executable
         shell: pwsh
         run: |
           Get-Item expresat-native\build\bin\Release\expresat_desktop.exe | Select-Object Name, Length
@@ -207,15 +203,13 @@ jobs:
             expresat-native/build/bin/Release/onnxruntime.dll
           retention-days: 30
 
-# =============================================================================
 # JOB 3: Android APK (arm64-v8a)
-# =============================================================================
   build-android:
-    name: "🤖 Android APK (arm64-v8a)"
+    name: "Android APK (arm64-v8a)"
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout (con submódulos)
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -226,11 +220,11 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # NDK r26c: última versión compatible con MediaPipe Tasks
+      # NDK r26c: latest release compatible with MediaPipe Tasks
       - name: Setup Android SDK + NDK r26c
         uses: android-actions/setup-android@v3
 
-      - name: Instalar NDK específico
+      - name: Install specific NDK and CMake
         run: |
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "ndk;26.3.11579264" \
@@ -252,7 +246,7 @@ jobs:
           path: expresat-native/android/app/libs
           key: ort-android-${{ env.ONNXRUNTIME_VERSION }}
 
-      - name: Descargar ONNX Runtime (Android AAR)
+      - name: Download ONNX Runtime (Android AAR)
         if: steps.cache-ort-android.outputs.cache-hit != 'true'
         working-directory: expresat-native/android
         run: |
@@ -261,38 +255,38 @@ jobs:
             "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-android-${ONNXRUNTIME_VERSION}.aar" \
             -O app/libs/onnxruntime-android.aar
 
-          # También descargar las cabeceras C++ del ORT para arm64
+          # Download C++ ORT headers package for arm64
           wget -q \
             "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-android-${ONNXRUNTIME_VERSION}.aar" \
             -O app/libs/onnxruntime.aar
 
-      # Copiar modelo ONNX a assets de la app
-      - name: Copiar modelo a assets
+      # Copy ONNX model to Android assets
+      - name: Copy model to assets
         run: |
           mkdir -p expresat-native/android/app/src/main/assets
-          # Copiar el modelo exportado desde el directorio de modelos Python
+          # Copy exported model from Python models directory
           if [ -f "expresat/models/exported_model/expresat_gru_float32.onnx" ]; then
             cp expresat/models/exported_model/expresat_gru_float32.onnx \
                expresat-native/android/app/src/main/assets/
-            echo "Modelo ONNX copiado a assets"
+            echo "ONNX model copied to assets"
           else
-            echo "ADVERTENCIA: Modelo no encontrado, el APK no incluirá el modelo"
+            echo "WARNING: Model not found; APK will not include the model"
           fi
 
-      # También copiar los datos externos del modelo si existen
-      - name: Copiar datos del modelo (.onnx.data)
+      # Copy external model data file if present
+      - name: Copy model external data (.onnx.data)
         run: |
           if [ -f "expresat/models/exported_model/expresat_gru_float32.onnx.data" ]; then
             cp expresat/models/exported_model/expresat_gru_float32.onnx.data \
                expresat-native/android/app/src/main/assets/
-            echo "Datos externos del modelo copiados"
+            echo "Model external data copied"
           fi
 
       - name: Build APK (Debug)
         working-directory: expresat-native/android
         run: |
           chmod +x gradlew 2>/dev/null || true
-          # Si no existe gradlew, generarlo
+          # Generate gradlew wrapper if absent
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 8.4
           fi
@@ -301,10 +295,10 @@ jobs:
             --no-daemon \
             --stacktrace
 
-      - name: Verificar APK
+      - name: Verify APK
         run: |
           APK_PATH=$(find expresat-native/android -name "*.apk" | head -1)
-          echo "APK generado: $APK_PATH"
+          echo "Generated APK: $APK_PATH"
           ls -lh "$APK_PATH"
 
       - name: Upload APK
@@ -314,25 +308,23 @@ jobs:
           path: expresat-native/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-# =============================================================================
-# JOB 4: Resumen de artefactos (solo en push a main)
-# =============================================================================
+# JOB 4: Artifact summary (push to main only)
   release-summary:
-    name: "📦 Resumen de Build"
+    name: "Build Summary"
     needs: [build-linux, build-windows, build-android]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - name: Resumen de artefactos generados
+      - name: Build artifacts summary
         run: |
-          echo "## ✅ Expresat Native — Build Exitoso" >> $GITHUB_STEP_SUMMARY
+          echo "## [SUCCESS] Expresat Native - Build Succeeded" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Plataforma | Artefacto | Estado |" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Artifact | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| 🐧 Linux x86_64 | \`expresat_desktop\` (ELF) | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🪟 Windows x64  | \`expresat_desktop.exe\` | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🤖 Android arm64 | \`app-debug.apk\` | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 | \`expresat_desktop\` (ELF) | [OK] |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x64  | \`expresat_desktop.exe\` | [OK] |" >> $GITHUB_STEP_SUMMARY
+          echo "| Android arm64 | \`app-debug.apk\` | [OK] |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**ONNX Runtime:** v${{ env.ONNXRUNTIME_VERSION }}" >> $GITHUB_STEP_SUMMARY

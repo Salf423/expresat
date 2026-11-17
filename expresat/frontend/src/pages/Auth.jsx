@@ -255,9 +255,11 @@ const Auth = () => {
                     <div
                       style={{
                         height: '100%',
-                        width: strengthConfig.width,
+                        width: '100%',
                         background: strengthConfig.color,
-                        transition: 'all 0.3s ease'
+                        transform: `scaleX(${parseFloat(strengthConfig.width) / 100})`,
+                        transformOrigin: 'left',
+                        transition: 'transform 0.3s ease, background-color 0.3s ease'
                       }}
                     />
                   </div>

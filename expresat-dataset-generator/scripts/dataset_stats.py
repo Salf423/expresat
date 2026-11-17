@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-dataset_stats.py - Análisis estadístico agregado y balance de clases en datasets ExpresaT.
-Genera reportes de distribución de muestras, ratios de desbalance y resumen de clases
-sin necesidad de volcar datos masivos al contexto del agente.
+dataset_stats.py - Aggregate class distribution and balance analysis for ExpresaT datasets.
+Generates sample count summaries and imbalance ratios without dumping raw sample payloads.
 """
 
 import argparse
@@ -87,7 +86,7 @@ def compute_dataset_stats(dataset_dir: Path, as_json: bool = False):
         print(f"  Total clases   : {report['total_classes']}")
         print(f"  Total muestras : {report['total_samples']}")
         print(f"  Promedio/clase : {report['avg_samples']}")
-        bal_warn = "⚠️ DESBALANCEADO" if not report['is_balanced'] else "✅ BALANCEADO"
+        bal_warn = "[WARN] DESBALANCEADO" if not report['is_balanced'] else "[OK] BALANCEADO"
         print(f"  Balance mín/máx: {min_samples} / {max_samples} (ratio: {report['balance_ratio']} — {bal_warn})")
         print("\n  Distribución por clase:")
 
@@ -95,13 +94,13 @@ def compute_dataset_stats(dataset_dir: Path, as_json: bool = False):
             err = f" (Error: {c['error']})" if "error" in c else ""
             bar = generate_bar(c["samples"], max_samples)
             pct = round((c["samples"] / max_samples * 100), 1) if max_samples > 0 else 0
-            warn = " ⚠️" if c["label"] in underrepresented else ""
+            warn = " [WARN]" if c["label"] in underrepresented else ""
             print(f"    {c['label']:<16} {c['samples']:>5}  {bar} {pct:>5.1f}%{warn}{err}")
 
         if underrepresented:
-            print(f"\n  ⚠️ Clases con bajo volumen (<70% del máx): {underrepresented}")
+            print(f"\n  [WARN] Clases con bajo volumen (<70% del máx): {underrepresented}")
         else:
-            print("\n  ✅ Todas las clases mantienen una representación equilibrada.")
+            print("\n  [OK] Todas las clases mantienen una representación equilibrada.")
 
 
 def main():

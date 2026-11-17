@@ -1,41 +1,26 @@
-# ==============================================================================
-# Netlify Configuration - Expresat Frontend (React + Vite)
-# ==============================================================================
+# Netlify configuration for ExpresaT frontend (React + Vite)
 
 [build]
-  # Directorio base del frontend (relativo al directorio del proyecto expresat)
   base = "frontend"
-  
-  # Comando de build de Vite
   command = "npm run build"
-  
-  # Directorio de distribución generado por Vite
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "20"
 
-# ------------------------------------------------------------------------------
-# SPA Client-Side Routing (React Router DOM)
-# Redirecciona todas las peticiones HTML al entrypoint index.html
-# ------------------------------------------------------------------------------
+# SPA fallback for React Router DOM
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 
-# ------------------------------------------------------------------------------
-# Proxy de WebSocket / API al backend FastAPI (Descomentar si se requiere proxy en mismo dominio)
-# ------------------------------------------------------------------------------
+# Optional same-origin WebSocket proxy to FastAPI backend
 # [[redirects]]
 #   from = "/ws/*"
 #   to = "wss://api.expresat.cloud/ws/:splat"
 #   status = 200
 #   force = true
 
-# ------------------------------------------------------------------------------
-# Cabeceras de Seguridad y Optimización de Caché
-# ------------------------------------------------------------------------------
 [[headers]]
   for = "/*"
   [headers.values]
@@ -43,7 +28,7 @@
     X-Content-Type-Options = "nosniff"
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    # Permiso explícito de cámara para reconocimiento gestual con MediaPipe
+    # Allow camera access for MediaPipe gesture recognition
     Permissions-Policy = "camera=(self), microphone=()"
 
 [[headers]]

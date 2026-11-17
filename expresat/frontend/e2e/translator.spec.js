@@ -11,7 +11,7 @@ test.describe('ExpresaT Demo E2E — Navegador real con cámara falsa y MediaPip
     page.on('console', (msg) => {
       if (msg.type() === 'error') {
         const text = msg.text();
-        // Ignorar mensajes informativos XNNPACK de TFLite y errores de red esperados hacia el puerto 8000 cuando probamos sin backend
+        // Ignore TFLite XNNPACK info messages and expected port 8000 network failures when offline
         if (
           !text.includes('INFO: Created TensorFlow Lite XNNPACK') &&
           !text.includes('127.0.0.1:8000') &&
@@ -38,11 +38,11 @@ test.describe('ExpresaT Demo E2E — Navegador real con cámara falsa y MediaPip
 
     await page.goto('/translator');
 
-    // 1. Verificar que WASM cargó en el hilo principal sin ModuleFactory not set
+    // Verify WASM initialized on the main thread without ModuleFactory not set errors
     const wasmBadge = page.getByTestId('wasm-status-badge');
     await expect(wasmBadge).toHaveText('WASM Activo', { timeout: 15000 });
 
-    // 2. Esperar > 1.2s para que el ticker de FPS de 1000ms reporte valores reales > 0
+    // Wait > 1.2s for the 1000ms FPS ticker to report non-zero inference FPS
     await expect(async () => {
       const inferFpsText = await page.getByTestId('inference-fps').innerText();
       const match = inferFpsText.match(/(\d+)/);
@@ -50,17 +50,17 @@ test.describe('ExpresaT Demo E2E — Navegador real con cámara falsa y MediaPip
       expect(inferFps).toBeGreaterThan(0);
     }).toPass({ timeout: 10000 });
 
-    // 3. Verificar landmarks > 0 (21 puntos de mano)
+    // Verify 21 detected hand landmarks
     await expect(page.getByTestId('landmarks-count')).toContainText('21 landmarks', {
       timeout: 5000,
     });
 
-    // 4. Verificar que el gesto geométrico ("Dos") fue reconocido localmente sin backend
+    // Verify the "Dos" geometric gesture is recognized locally without backend
     await expect(page.getByTestId('detected-gesture')).toHaveText('Dos', {
       timeout: 5000,
     });
 
-    // 5. Verificar que no haya ReferenceError, ModuleFactory ni AbortError
+    // Ensure no ReferenceError, ModuleFactory, or AbortError occurred
     expect(pageErrors).toEqual([]);
     expect(consoleErrors).toEqual([]);
   });
@@ -86,18 +86,17 @@ test.describe('ExpresaT Demo E2E — Navegador real con cámara falsa y MediaPip
       timeout: 15000,
     });
 
-    // Verificar que si el backend local en :8000 está levantado en modo demo muestra "Conectado",
-    // o si no está levantado pasa limpiamente a estado explícito sin crashear
+    // Verify WebSocket shows "Conectado" if local demo backend is up,
+    // or cleanly reaches an explicit status when running offline
     const wsStatus = page.getByTestId('ws-status');
     await expect(wsStatus).toBeVisible();
-    // Si el backend local en :8000 está levantado durante el test, verificar estado "open" -> "Conectado"
     try {
       const healthResp = await page.request.get('http://127.0.0.1:8000/health', { timeout: 1500 });
       if (healthResp.ok()) {
         await expect(wsStatus).toContainText('Conectado', { timeout: 5000 });
       }
     } catch {
-      // Si se corre el test sin backend levantado, verificar que pasa limpiamente a estado explícito
+      // Offline mode: verify explicit status remains visible without crashing
       await expect(wsStatus).toBeVisible();
     }
     await expect(page.getByTestId('detected-gesture')).toHaveText('Mano Abierta', {

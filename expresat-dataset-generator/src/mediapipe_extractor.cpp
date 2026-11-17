@@ -3,15 +3,14 @@
 #include <cassert>
 #include <iostream>
 
-// ─── Stub vs. Real build paths ───────────────────────────────────────────────
+// Stub vs. Real build paths
 #if EXPRESAT_USE_MEDIAPIPE && !EXPRESAT_STUB_EXTRACTOR
 #  include "mediapipe/tasks/cc/vision/holistic_landmarker/holistic_landmarker.h"
 #endif
 
 namespace expresat {
 
-// ─── Connection tables for skeleton drawing ───────────────────────────────────
-// Pose connections: standard MediaPipe Pose 33 landmarks
+// Connection tables for skeleton drawing (standard MediaPipe 33-pt Pose and 21-pt Hand)
 static const std::vector<std::pair<int,int>> POSE_CONNECTIONS = {
     // Face / head
     {0,1},{1,2},{2,3},{3,7}, {0,4},{4,5},{5,6},{6,8}, {9,10},
@@ -39,7 +38,6 @@ static const std::vector<std::pair<int,int>> HAND_CONNECTIONS = {
     {5,9},{9,13},{13,17}
 };
 
-// ─── Constructor / Destructor ─────────────────────────────────────────────────
 MediapipeExtractor::MediapipeExtractor()
     : MediapipeExtractor(Config{}) {}
 
@@ -50,9 +48,7 @@ MediapipeExtractor::~MediapipeExtractor() { close(); }
 
 bool MediapipeExtractor::open() {
 #if EXPRESAT_USE_MEDIAPIPE && !EXPRESAT_STUB_EXTRACTOR
-    // Initialize real MediaPipe Tasks API
-    // mp_ = std::make_unique<MPImpl>(...);
-    // Full implementation requires Bazel-built MediaPipe C++ libs.
+    // Full MediaPipe C++ integration requires Bazel-built MediaPipe Tasks libraries.
     std::cerr << "[MediapipeExtractor] Real MediaPipe mode not fully linked.\n";
     open_ = false;
     return false;
@@ -71,12 +67,11 @@ void MediapipeExtractor::close() {
 #endif
 }
 
-// ─── process() — detect landmarks from a BGR frame ───────────────────────────
 FrameLandmarks MediapipeExtractor::process(const cv::Mat& /*bgrFrame*/) {
     FrameLandmarks result;
 
 #if EXPRESAT_STUB_EXTRACTOR
-    // ── Stub: generate plausible sine-wave landmarks ─────────────────────
+    // Stub: generate plausible sine-wave landmarks
     ++stubFrameIdx_;
     float t = stubFrameIdx_ * 0.1f;
 
@@ -115,7 +110,6 @@ FrameLandmarks MediapipeExtractor::process(const cv::Mat& /*bgrFrame*/) {
     return result;
 }
 
-// ─── extract() — normalize + flatten to FeatureVector ────────────────────────
 FeatureVector MediapipeExtractor::extract(const FrameLandmarks& landmarks,
                                           const BodyPartConfig& parts) {
     FeatureVector fv(TOTAL_FEATURES, 0.f);
@@ -125,15 +119,14 @@ FeatureVector MediapipeExtractor::extract(const FrameLandmarks& landmarks,
     std::vector<Landmark> leftHand  = landmarks.leftHand;
     std::vector<Landmark> rightHand = landmarks.rightHand;
 
-    // ── Shoulder-relative normalization ───────────────────────────────────
-    // Requires at least landmarks 11 and 12 in pose
+    // Shoulder-relative normalization (requires landmarks 11 and 12 in pose)
     if (landmarks.poseValid && (int)pose.size() > SHOULDER_RIGHT) {
         normalizePose(pose, leftHand, rightHand);
     }
 
     int offset = 0;
 
-    // ── Upper Pose (52 = 13 pts × 4) ──────────────────────────────────────
+    // Upper Pose (52 = 13 pts x 4)
     if (parts.upperPose && landmarks.poseValid) {
         for (int idx : POSE_UPPER_INDICES) {
             if (idx < (int)pose.size()) {
@@ -149,7 +142,7 @@ FeatureVector MediapipeExtractor::extract(const FrameLandmarks& landmarks,
         offset += POSE_FEATURE_DIM; // skip
     }
 
-    // ── Left Hand (63 = 21 pts × 3) ───────────────────────────────────────
+    // Left Hand (63 = 21 pts x 3)
     if (parts.leftHand && landmarks.leftValid) {
         for (int i = 0; i < HAND_LANDMARK_COUNT && i < (int)leftHand.size(); ++i) {
             fv[offset + 0] = leftHand[i].x;
@@ -161,7 +154,7 @@ FeatureVector MediapipeExtractor::extract(const FrameLandmarks& landmarks,
         offset += HAND_FEATURE_DIM;
     }
 
-    // ── Right Hand (63 = 21 pts × 3) ──────────────────────────────────────
+    // Right Hand (63 = 21 pts x 3)
     if (parts.rightHand && landmarks.rightValid) {
         for (int i = 0; i < HAND_LANDMARK_COUNT && i < (int)rightHand.size(); ++i) {
             fv[offset + 0] = rightHand[i].x;
@@ -177,7 +170,6 @@ FeatureVector MediapipeExtractor::extract(const FrameLandmarks& landmarks,
     return fv;
 }
 
-// ─── normalizePose() — shoulder-center subtraction ───────────────────────────
 void MediapipeExtractor::normalizePose(std::vector<Landmark>& pose,
                                        std::vector<Landmark>& leftHand,
                                        std::vector<Landmark>& rightHand) {
@@ -187,14 +179,14 @@ void MediapipeExtractor::normalizePose(std::vector<Landmark>& pose,
     float cy = (L.y + R.y) * 0.5f;
     float cz = (L.z + R.z) * 0.5f;
 
-    // Distancia inter-humeral como factor de escala (invariancia de tamaño aparente)
+    // Inter-shoulder distance for apparent-size invariance
     float dx = R.x - L.x;
     float dy = R.y - L.y;
     float dz = R.z - L.z;
     float dShoulders = std::sqrt(dx*dx + dy*dy + dz*dz);
-    if (dShoulders < 1e-6f) dShoulders = 1.0f;  // evitar división por cero
+    if (dShoulders < 1e-6f) dShoulders = 1.0f;  // prevent division by zero
 
-    // Centrar y escalar upper-pose landmarks
+    // Center and scale upper-pose landmarks
     for (int idx : POSE_UPPER_INDICES) {
         if (idx < (int)pose.size()) {
             pose[idx].x = (pose[idx].x - cx) / dShoulders;
@@ -204,7 +196,7 @@ void MediapipeExtractor::normalizePose(std::vector<Landmark>& pose,
         }
     }
 
-    // Centrar y escalar manos
+    // Center and scale hands
     for (auto& lm : leftHand) {
         lm.x = (lm.x - cx) / dShoulders;
         lm.y = (lm.y - cy) / dShoulders;
@@ -217,7 +209,6 @@ void MediapipeExtractor::normalizePose(std::vector<Landmark>& pose,
     }
 }
 
-// ─── drawSkeleton() ───────────────────────────────────────────────────────────
 void MediapipeExtractor::drawSkeleton(cv::Mat& frame,
                                        const FrameLandmarks& lm,
                                        const BodyPartConfig& parts) {
@@ -230,7 +221,7 @@ void MediapipeExtractor::drawSkeleton(cv::Mat& frame,
         return cv::Point(std::clamp(px, 0, W - 1), std::clamp(py, 0, H - 1));
     };
 
-    // ── 1. Pose Skeleton ──────────────────────────────────────────────────────
+    // Pose Skeleton
     if (parts.upperPose && lm.poseValid) {
         // Draw bone connections
         for (auto [a, b] : POSE_CONNECTIONS) {
@@ -267,7 +258,7 @@ void MediapipeExtractor::drawSkeleton(cv::Mat& frame,
         }
     }
 
-    // ── 2. Left Hand Skeleton ────────────────────────────────────────────────
+    // Left Hand Skeleton
     if (parts.leftHand && lm.leftValid) {
         // Draw finger bones
         for (auto [a, b] : HAND_CONNECTIONS) {
@@ -288,7 +279,7 @@ void MediapipeExtractor::drawSkeleton(cv::Mat& frame,
         }
     }
 
-    // ── 3. Right Hand Skeleton ───────────────────────────────────────────────
+    // Right Hand Skeleton
     if (parts.rightHand && lm.rightValid) {
         // Draw finger bones
         for (auto [a, b] : HAND_CONNECTIONS) {

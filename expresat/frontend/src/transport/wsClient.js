@@ -1,17 +1,17 @@
 /**
- * src/transport/wsClient.js — Cliente WebSocket Opcional con Máquina de Estados Explícita
+ * Optional WebSocket client with an explicit connection state machine.
  *
- * Estados explícitos:
+ * Explicit states:
  *   'idle' | 'connecting' | 'open' | 'auth_error' | 'failed'
  *
- * Reglas:
- * - El cliente WebSocket es 100% opcional: nunca bloquea el tracking local.
- * - Implementa backoff exponencial para fallas transitorias de red.
- * - PROHIBIDO reintentar cuando el rechazo es por:
- *     - Cierre WebSocket con código 1008 (Policy Violation), 4001, 4003, 4401, 4403
- *     - Respuesta HTTP 401 o 403 en el pre-chequeo de /health
- *     - Ausencia de token cuando el servidor informa `demo_mode === false`
- * - En esos casos transiciona inmediatamente a `'auth_error'` con un mensaje claro para la UI.
+ * Behavior:
+ * - 100% optional: never blocks local landmark tracking.
+ * - Uses exponential backoff for transient network failures.
+ * - Never retries when rejected by policy or authentication:
+ *     - WebSocket close codes 1008 (Policy Violation), 4001, 4003, 4401, 4403
+ *     - HTTP 401 or 403 on the `/health` pre-check
+ *     - Missing token when the server reports `demo_mode === false`
+ *   In those cases, transitions immediately to `'auth_error'` for UI reporting.
  */
 
 import { getActiveEndpoints } from '../config.js';
@@ -27,8 +27,8 @@ export const WS_STATES = Object.freeze({
 const AUTH_REJECT_CODES = new Set([1008, 4001, 4003, 4401, 4403]);
 
 /**
- * Convierte cualquier URL base (`http://...`, `https://...`, `ws://...`, `wss://...`)
- * en una URL WebSocket apuntando a `/ws/translate`.
+ * Normalizes any base URL (`http://...`, `https://...`, `ws://...`, `wss://...`)
+ * into a WebSocket URL targeting `/ws/translate`.
  */
 export function normalizeWsEndpoint(rawUrl) {
   const endpoints = getActiveEndpoints();
@@ -49,7 +49,7 @@ export function normalizeWsEndpoint(rawUrl) {
 }
 
 /**
- * Obtiene la URL HTTP `/health` asociada a un endpoint WebSocket.
+ * Derives the HTTP `/health` URL associated with a WebSocket endpoint.
  */
 export function deriveHealthUrl(wsUrl) {
   try {
@@ -65,12 +65,12 @@ export function deriveHealthUrl(wsUrl) {
 export class WSClient {
   /**
    * @param {Object} [options]
-   * @param {string} [options.url] URL del WebSocket
-   * @param {number} [options.maxRetries=4] Máximo de reintentos ante caída de red
-   * @param {number} [options.baseDelayMs=1000] Retardo base para backoff exponencial
-   * @param {number} [options.pingIntervalMs=5000] Intervalo de ping para medir latencia
-   * @param {Function} [options.WebSocketImpl] Inyección de clase WebSocket (para tests)
-   * @param {Function} [options.fetchImpl] Inyección de fetch (para tests)
+   * @param {string} [options.url] WebSocket URL
+   * @param {number} [options.maxRetries=4] Max reconnect retries on network failures
+   * @param {number} [options.baseDelayMs=1000] Base delay for exponential backoff
+   * @param {number} [options.pingIntervalMs=5000] Ping interval for latency measurement
+   * @param {Function} [options.WebSocketImpl] Injected WebSocket class (for tests)
+   * @param {Function} [options.fetchImpl] Injected fetch function (for tests)
    */
   constructor(options = {}) {
     this.url = normalizeWsEndpoint(options.url);
@@ -101,7 +101,7 @@ export class WSClient {
   }
 
   /**
-   * Suscribe un listener a los cambios de estado:
+   * Subscribes a listener to connection state changes:
    * `cb({ state, detail, retryCount, serverDemoMode, latencyMs })`
    */
   onStateChange(callback) {
@@ -113,7 +113,7 @@ export class WSClient {
   }
 
   /**
-   * Suscribe un listener a mensajes de traducción o telemetría del servidor.
+   * Subscribes a listener to server translation or telemetry messages.
    */
   onMessage(callback) {
     if (typeof callback === 'function') {
@@ -134,10 +134,10 @@ export class WSClient {
   }
 
   /**
-   * Inicia la conexión opcional al servidor WebSocket.
+   * Opens the optional connection to the WebSocket server.
    * @param {Object} [params]
-   * @param {string|null} [params.token] Token JWT de Supabase (opcional en modo demo)
-   * @param {string} [params.url] URL opcional para cambiar de entorno (Local vs Cloud)
+   * @param {string|null} [params.token] Supabase JWT token (optional in demo mode)
+   * @param {string} [params.url] Optional URL override for environment switching (Local vs Cloud)
    */
   async connect({ token = null, url = null } = {}) {
     if (url) {
@@ -158,7 +158,7 @@ export class WSClient {
 
     this._transition(WS_STATES.CONNECTING, 'Verificando servidor de traducción...');
 
-    // 1. Pre-chequeo opcional de /health para detectar modo demo, falta de token o 403
+    // Optional /health pre-check to detect demo_mode, missing token, or 401/403
     const healthUrl = deriveHealthUrl(this.url);
     if (healthUrl && this.fetchImpl) {
       try {
@@ -185,7 +185,7 @@ export class WSClient {
           if (typeof data?.demo_mode === 'boolean') {
             this.serverDemoMode = data.demo_mode;
           }
-          // Si el servidor NO está en modo demo y no tenemos token, no abrir WS ni hacer bucle de reintentos
+          // Skip opening WebSocket if server requires auth and no token is available
           if (data?.demo_mode === false && !this._token) {
             this._transition(
               WS_STATES.AUTH_ERROR,
@@ -270,7 +270,7 @@ export class WSClient {
     };
 
     ws.onerror = () => {
-      // El evento onclose se dispara inmediatamente después con el código y razón
+      // onclose fires immediately afterward with the close code and reason
     };
 
     ws.onclose = (event) => {
@@ -287,7 +287,7 @@ export class WSClient {
       const code = event?.code ?? 1006;
       const reason = event?.reason || '';
 
-      // Regla estricta: NO reintentar ante 1008 / 403 / error de token
+      // Strict policy: never retry on 1008 / 403 / token errors
       if (
         AUTH_REJECT_CODES.has(code) ||
         reason.toLowerCase().includes('token') ||
@@ -334,7 +334,7 @@ export class WSClient {
   }
 
   /**
-   * Envía un lote de frames (o un frame) al servidor sólo si el socket está en estado OPEN.
+   * Sends a frame or frame batch only when the socket is OPEN.
    * @param {Array<Object>|Object} landmarksPayload
    * @returns {boolean}
    */
@@ -402,7 +402,7 @@ export class WSClient {
   }
 
   /**
-   * Cierra limpiamente la conexión y pasa a estado `'idle'`.
+   * Cleanly closes the WebSocket connection and transitions to `'idle'`.
    */
   disconnect() {
     this._manualDisconnect = true;

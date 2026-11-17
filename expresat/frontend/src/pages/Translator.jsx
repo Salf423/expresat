@@ -76,7 +76,7 @@ const Translator = () => {
     enablePose: Boolean(import.meta.env.DEV),
   });
 
-  // Atajos de teclado: Ctrl+Shift+D (Debug) y Ctrl+Shift+T (Tracker)
+  // Keyboard shortcuts: Ctrl+Shift+D (Debug) and Ctrl+Shift+T (Tracker)
   React.useEffect(() => {
     const handleKey = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'D') {
@@ -182,7 +182,7 @@ const Translator = () => {
               flexWrap: 'wrap',
             }}
           >
-            {/* FPS Cámara */}
+            {/* Camera FPS */}
             <div
               data-testid="camera-fps"
               style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
@@ -200,7 +200,7 @@ const Translator = () => {
 
             <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
 
-            {/* FPS Inferencia Real */}
+            {/* Real Inference FPS */}
             <div
               data-testid="inference-fps"
               style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
@@ -218,7 +218,7 @@ const Translator = () => {
 
             <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
 
-            {/* Estado explícito del transporte WebSocket */}
+            {/* Explicit WebSocket transport status */}
             <div
               data-testid="ws-status"
               data-ws-state={wsSnapshot.state}
@@ -248,7 +248,7 @@ const Translator = () => {
             </div>
           </div>
 
-          {/* Indicador DEV separado: Cámara Real (rVFC) independiente del bucle de inferencia */}
+          {/* Separate DEV indicator: real camera rate (rVFC) decoupled from inference loop */}
           {import.meta.env.DEV && (
             <div
               data-testid="real-camera-fps"
@@ -283,7 +283,7 @@ const Translator = () => {
         </div>
       </header>
 
-      {/* Banner de Error Visible de Cámara o WASM */}
+      {/* Camera or WASM engine error banner */}
       {engineError && (
         <div
           role="alert"
@@ -310,7 +310,7 @@ const Translator = () => {
         </div>
       )}
 
-      {/* Aviso informativo cuando se opera sin backend o sin token (No bloquea tracking) */}
+      {/* Info banner when operating offline or without token (does not block tracking) */}
       {!engineError &&
         (wsSnapshot.state === WS_STATES.FAILED || wsSnapshot.state === WS_STATES.AUTH_ERROR) && (
           <div
@@ -438,7 +438,7 @@ const Translator = () => {
             />
           </div>
 
-          {/* Controles del Tracker */}
+          {/* Tracker controls */}
           {trackingConfig.enabled && (
             <div
               style={{
@@ -795,7 +795,7 @@ const Translator = () => {
             )}
           </div>
 
-          {/* Estado Geométrico de los 5 Dedos en Tiempo Real */}
+          {/* Live geometric finger state */}
           <div
             style={{
               marginTop: '0.75rem',
@@ -898,7 +898,7 @@ const Translator = () => {
         </section>
       </div>
 
-      {/* Panel de Diagnóstico (Ctrl+Shift+D) */}
+      {/* Diagnostic panel (Ctrl+Shift+D) */}
       {debugVisible && (
         <section
           aria-label="Panel de diagnóstico"

@@ -1,7 +1,7 @@
 ---
 title: "Plan de Negocio y Estrategia de Producto — ExpresaT"
-description: "Modelo de negocio Open-Core, análisis de mercado TAM/SAM/SOM, segmentación de usuarios, pricing escalonado en MXN, economía unitaria y cumplimiento regulatorio."
-version: "2.0.0"
+description: "Modelo de negocio Open-Core, análisis de mercado TAM/SAM/SOM (INEGI/OMS), segmentación de usuarios, pricing escalonado en MXN, economía unitaria, vocabulario LSM y cumplimiento regulatorio LFPDPPP/GDPR."
+version: "2.3.0"
 category: "Estrategia / Negocio"
 status: "Producción"
 target_agents: ["startup-analyst", "business-analyst", "legal-advisor"]
@@ -23,17 +23,28 @@ related_docs:
 
 ## 1. Resumen Ejecutivo y Misión
 
-**ExpresaT** nace con la misión de derribar las barreras de comunicación que aíslan a más de **70 millones de personas sordas** en el mundo (con más de 2.3 millones en México y Centroamérica con dificultades auditivas o del habla).
+**ExpresaT** tiene como misión derribar las barreras de comunicación que aíslan a más de **70 millones de personas sordas** en el mundo (según la Federación Mundial de Sordos / OMS), y a más de **2.3 millones de personas** en México con dificultades auditivas o del habla (según el Censo de Población y Vivienda de INEGI).
 
-A diferencia de las soluciones propietarias monolíticas que dependen de la nube y de costosas GPUs para visión artificial, **ExpresaT** democratiza la accesibilidad mediante un modelo **Open-Core** y una arquitectura ultra-eficiente en CPU (latencia de ~2 ms con modelos cuantizados ONNX INT8 de tan solo 4 KB), permitiendo su despliegue tanto en terminales móviles de bajo coste como en centros de atención pública.
+A diferencia de las soluciones propietarias monolíticas que dependen de la nube y de costosas GPUs para procesar video continuo, **ExpresaT** democratiza la accesibilidad mediante un modelo **Open-Core** y una arquitectura ultra-eficiente en CPU (inferencia ONNX INT8 de tan solo ~2 ms con ~4 KB de grafo), permitiendo su despliegue tanto en terminales móviles económicas como en centros de atención pública sin infraestructura especializada.
 
 ---
 
 ## 2. Filosofía y Modelo "Open-Core"
 
-El núcleo de la tecnología es de acceso abierto:
-- **Código Abierto (Community Edition):** Los modelos base, el generador de datasets en C++ (`expresat-dataset-generator`), la aplicación nativa de escritorio y el cliente web básico son y seguirán siendo gratuitos y libres. Esto fomenta que la comunidad de personas sordas, educadores e investigadores contribuyan señas regionales, validen la semántica y reporten mejoras ergonómicas.
-- **Servicios de Valor Añadido (Commercial Tier):** Se monetiza mediante el mantenimiento de servidores en la nube de alta disponibilidad, APIs de traducción para plataformas de terceros, sincronización multi-dispositivo y soporte institucional para administraciones públicas y corporativos.
+```mermaid
+flowchart TD
+    Core["Comunidad Open-Core (Gratuito / AGPLv3/MIT)\n• Modelos base pre-entrenados\n• Generador de datasets v2 (Tasks Vision + Python)\n• Motor nativo C++ y cliente web básico"]
+    
+    Servicios["Servicios Comerciales de Valor Añadido (SaaS)\n• Nivel Pro: Sincronización nube Supabase y voz neural\n• Nivel B2B/B2G: Terminales para ventanillas de atención ciudadana\n• API de traducción WebSocket con SLA del 99.9%"]
+
+    Core --> Servicios
+
+    style Core fill:#1a3a6b,color:#fff
+    style Servicios fill:#1d5b4a,color:#fff
+```
+
+- **Código Abierto (Community Edition):** Los modelos base, el capturador web de datasets, la aplicación nativa y el cliente web esencial son abiertos. La comunidad de personas sordas, intérpretes y lingüistas de LSM validan la semántica y aportan señas regionales.
+- **Servicios de Valor Añadido (Commercial Tier):** Se monetiza mediante el mantenimiento de servidores WebSocket cloud de alta velocidad, APIs para plataformas de terceros (Zoom, Teams, plataformas educativas) y terminales corporativas para ventanillas de atención ciudadana y salud pública.
 
 ---
 
@@ -41,15 +52,15 @@ El núcleo de la tecnología es de acceso abierto:
 
 ```mermaid
 pie title Distribución del Mercado Potencial en Accesibilidad Digital (LATAM)
-    "SOM: Cuota Inicial Captable (Educación y Salud)" : 15
-    "SAM: Mercado Disponible Útil (México y Colombia)" : 35
-    "TAM: Mercado Total Accesible (Comunidad Sorda y B2G en Español)" : 50
+    "SOM: Cuota Inicial Captable (Educación y Salud México)" : 15
+    "SAM: Mercado Disponible Útil (México, Colombia y Centroamérica)" : 35
+    "TAM: Mercado Total Accesible (Comunidad Sorda y B2G Hispanohablante)" : 50
 ```
 
 1. **TAM (Total Addressable Market):** 
-   - Más de **23 millones** de hispanohablantes con discapacidad auditiva o familiares directos, más un mercado de software de accesibilidad valorado en más de **$32,000 millones de USD** a nivel global.
+   - Más de **23 millones** de hispanohablantes con discapacidad auditiva o familiares directos, más un mercado de software de accesibilidad global valorado en más de **$32,000 millones de USD**.
 2. **SAM (Serviceable Addressable Market):** 
-   - Instituciones públicas, universidades, colegios de educación especial, hospitales y centros de atención telefónica/presencial en México, Colombia y España (~$45 millones de USD anuales en licitaciones de inclusión social).
+   - Instituciones públicas, universidades, colegios de educación especial, hospitales y centros de atención telefónica/presencial en México y Latinoamérica (~$45 millones de USD anuales en licitaciones de inclusión social).
 3. **SOM (Serviceable Obtainable Market):** 
    - Captación inicial de 100 escuelas primarias/secundarias y 15 entidades de salud pública en México durante los primeros 24 meses (~$450,000 USD anuales).
 
@@ -66,9 +77,7 @@ pie title Distribución del Mercado Potencial en Accesibilidad Digital (LATAM)
 
 ---
 
-## 5. Estructura de Precios y Niveles de Servicio
-
-Los precios están estructurados en **Pesos Mexicanos (MXN)** con paridad aproximada en dólares (USD) para facilitar la adopción regional:
+## 5. Estructura de Precios y Niveles de Servicio (MXN / USD)
 
 ```mermaid
 graph LR
@@ -83,9 +92,9 @@ graph LR
 ### Detalle de Niveles de Suscripción:
 
 1. **Nivel Comunitario (Gratuito - $0 MXN):**
-   - Descarga gratuita del binario nativo de escritorio (`expresat-native`).
-   - Inferencia 100% local e ilimitada en el hardware del usuario.
-   - Vocabulario estándar de señas de uso frecuente.
+   - Descarga del binario nativo offline (`expresat-native`).
+   - Inferencia 100% local en hardware del usuario.
+   - Vocabulario estándar de señas de uso frecuente (`catalog/signs_catalog.json`).
    - Sin soporte SLA comercial (asistencia comunitaria en GitHub).
 
 2. **Nivel Pro ($50 MXN / mes — aprox. $2.75 USD):**
@@ -98,7 +107,7 @@ graph LR
    - Despliegue en terminales dedicadas para mostradores de atención ciudadana, bancos o clínicas.
    - SLA garantizado del 99.9% de disponibilidad en la API WebSocket.
    - Personalización del vocabulario con jerga técnica (médica, jurídica o administrativa local).
-   - Acceso a métricas anonimizadas de uso, satisfacción y tiempos de resolución de atención.
+   - Métricas anonimizadas de uso, tiempos de atención y niveles de satisfacción.
    - Facturación empresarial formal y cumplimiento estricto con normativas de protección de datos.
 
 4. **API para Desarrolladores:**
@@ -107,7 +116,7 @@ graph LR
 
 ---
 
-## 6. Economía Unitaria y Costes Operativos
+## 6. Economía Unitaria y Eficiencia Operativa
 
 Gracias a la optimización con ONNX Runtime CPU e INT8:
 - **Consumo de Memoria por Instancia:** < 100 MB RAM (permite desplegar el contenedor en instancias micro de $5 a $10 USD/mes como Fly.io o Render).
@@ -127,7 +136,6 @@ Gracias a la optimización con ONNX Runtime CPU e INT8:
 
 ## 🤖 Asignación de Agentes y Skills Recomendadas
 
-Para evolucionar la estrategia de negocio o presentar propuestas de financiamiento:
 - **Especialistas en Negocio:** Utiliza las skills de [[Skills/Estrategia_Producto_y_Negocio]]:
   - `startup-business-analyst-business-case` para redactar pitch decks e informes para inversores.
   - `startup-business-analyst-financial-projections` para actualizar hojas de balance y cash-flow.

@@ -1,7 +1,7 @@
 ---
 title: "Explicación del Código: Frontend Web Moderno (React 19 + Vite + SignEngine)"
-description: "Estructura modular del frontend de producción: SignEngine en main-thread con Tasks Vision CPU, hook useSignEngine, featureExtractor.js canónico 178D v1.2.1, clasificador geométrico y WSClient con máquina de estados."
-version: "2.2.1"
+description: "Estructura modular del frontend de producción: SignEngine en main-thread con Tasks Vision CPU, prevención de las 8 fallas históricas, hook useSignEngine, featureExtractor.js canónico 178D v1.3.0, clasificador geométrico offline y WSClient con máquina de estados."
+version: "2.3.0"
 category: "Código / Frontend Web"
 status: "Producción"
 target_agents: ["frontend-developer", "ui-ux-designer", "accessibility-auditor", "ml-engineer"]
@@ -10,7 +10,7 @@ recommended_skills:
   - "[[../../Skills/Auditoria_Seguridad_y_Calidad|Auditoria_Seguridad_y_Calidad]] (`frontend-security-coder`)"
 related_docs:
   - "[[../../00_INDICE_MAESTRO]]"
-  - "[[../../Especificacion_Feature_Spec_v1_2_1]]"
+  - "[[../../Especificacion_Feature_Spec_v1_3_0]]"
   - "[[../Frontend]]"
   - "[[Legacy_Vanilla]]"
   - "[[../../Websocket]]"
@@ -21,26 +21,40 @@ related_docs:
 
 > **Navegación:** [[../../00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Explicación del Código** > **Frontend** > **Vite + React**
 
-El frontend de producción de **ExpresaT** (`expresat/frontend`) está construido con **React 19.2** y empaquetado con **Vite 8.1**, ofreciendo una interfaz ultra-rápida, completamente accesible (conforme a WCAG 2.2) y potenciada por un motor de visión local en JavaScript.
+El frontend de producción de **ExpresaT** (`expresat/frontend`) está construido con **React 19.2** y empaquetado con **Vite 8.1**, ofreciendo una interfaz ultra-rápida, completamente accesible (conforme a WCAG 2.2 nivel AA/AAA) y potenciada por un motor de visión local en JavaScript en el hilo principal.
 
 ---
 
-## 1. Decisiones Arquitectónicas Clave (Rearquitectura 2026)
+## 1. Decisiones Arquitectónicas Clave y Prevención de Fallas Históricas
 
-- **Eliminación de Web Workers:** La arquitectura legacy mediante Web Workers introducía cuellos de botella severos en la transferencia de estructuras complejas de landmarks y causaba incompatibilidades con los binarios WebAssembly de MediaPipe. Se migró a un motor directo en el hilo principal optimizado (**`SignEngine`**).
-- **`SignEngine` (@mediapipe/tasks-vision 1.0.1 en CPU):**
-  - Carga conjunta de `HandLandmarker` y `PoseLandmarker Lite` en modo `VIDEO`.
-  - Limpieza idempotente (`cleanup()`, `close()`) que previene fugas de descriptores de memoria WebAssembly o bucles de captura huérfanos.
-  - Soporte de emisión de landmarks crudos sin interpolación artificial (`smoothLandmarks: false`) para recolección de datasets.
-  - Medidor de FPS reales de procesamiento en vivo.
-- **Extractor Canónico 178D (`featureExtractor.js`):**
-  - Implementa con precisión bitwise el contrato [[../../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]].
-  - Normalización 3D por hombros, coordenada $Z$ desacoplada respecto a la propia muñeca, y asignación conjunta húngara de manos.
-  - Suite de paridad en Vitest contra fixtures de referencia con tolerancia $|\Delta| \le 10^{-6}$.
-- **Clasificador Geométrico Directo (`recognition/`):**
-  - Motor de heurística espacial pura que clasifica señas estáticas (como letras del abecedario) y gestos dinámicos en tiempo real sin esperar la respuesta del servidor.
-- **Capa de Transporte Robusta (`transport/wsClient.js`):**
-  - Cliente WebSocket con **máquina de estados finitos explícita** (`CONNECTING`, `OPEN`, `CLOSING`, `CLOSED`), reconexión con backoff exponencial, heartbeats y modo de demostración automático ante ausencia de backend.
+La arquitectura actual fue rediseñada para erradicar las **8 fallas históricas** documentadas en `docs/ARQUITECTURA.md`:
+
+```mermaid
+flowchart TD
+    subgraph Antiguo_Problema ["Falla Histórica en Web Worker"]
+        W1["mediapipe-worker.js (type: 'module')"] --> W2["vision_bundle.mjs invoca importScripts()"]
+        W2 --> W3["TypeError: importScripts no permitido en ESM"]
+        W3 --> W4["Fallback import() limpia self.ModuleFactory = void 0"]
+        W4 --> W5["Crash: Error: ModuleFactory not set"]
+    end
+
+    subgraph Solucion_Actual ["Solución Actual: SignEngine en Main-Thread"]
+        S1["SignEngine en Main Thread\n(@mediapipe/tasks-vision 1.0.1 CPU)"]
+        S2["Binarios WASM locales servidos desde /wasm"]
+        S3["HandLandmarker + PoseLandmarker Lite concurrentes"]
+        S4["Limpieza idempotente: cleanup() y close() sin memory leaks"]
+        S1 --> S2 --> S3 --> S4
+    end
+
+    style Antiguo_Problema fill:#6b1a2d,color:#fff
+    style Solucion_Actual fill:#1d5b4a,color:#fff
+```
+
+### Características de `SignEngine` (`src/engine/signEngine.js`):
+1. **Ejecución en CPU Directa:** Utiliza el delegado `'CPU'` con WebAssembly optimizado con SIMD/XNNPACK, evitando los cuellos de botella de transferencia de buffers de Web Workers.
+2. **Cálculo de FPS Reales:** Mide la tasa efectiva de cuadros procesados por el motor de visión (`getFps()`), diferenciándola de la tasa de refresco del monitor (60 Hz).
+3. **Emisión de Datos Crudos (`smoothLandmarks: false`):** Permite emitir coordenadas puras sin filtros artificiales para captura fiel de datasets.
+4. **Limpieza Idempotente:** Los métodos `cleanup()` y `close()` liberan los grafos WASM y detienen los bucles de captura huérfanos.
 
 ---
 
@@ -49,21 +63,21 @@ El frontend de producción de **ExpresaT** (`expresat/frontend`) está construid
 ```text
 expresat/frontend/src/
 ├── engine/                           # Motor de visión e ingeniería de características
-│   ├── signEngine.js                 # MediaPipe Tasks Vision CPU, ciclo de vida y FPS
-│   ├── featureExtractor.js           # Extractor canónico 178D conforme a FEATURE_SPEC v1.2.1
-│   ├── index.js                      # Punto de entrada del paquete compartido
-│   └── __tests__/                    # Tests unitarios en Vitest (paridad y regresión)
+│   ├── signEngine.js                 # MediaPipe Tasks Vision CPU, ciclo de vida y FPS reales
+│   ├── featureExtractor.js           # Extractor canónico 178D conforme a FEATURE_SPEC v1.3.0
+│   ├── index.js                      # Punto de entrada unificado del módulo de visión
+│   └── __tests__/                    # Tests unitarios en Vitest (paridad L_inf <= 10^-6)
 │
 ├── recognition/                      # Clasificación geométrica offline en cliente
-│   ├── geometry.js                   # Cálculo de distancias euclidianas, ángulos y palmScale
-│   ├── classifier.js                 # Lógica de clasificación articular y ventana de votación
-│   └── syntheticHand.js              # Fixtures de manos sintéticas para pruebas
+│   ├── geometry.js                   # Cálculo de distancias articulares, ángulos y palmScale
+│   ├── classifier.js                 # Lógica de clasificación estática y ventana de votación
+│   └── syntheticHand.js              # Fixtures de manos sintéticas para pruebas unitarias
 │
 ├── transport/                        # Capa de red y sincronización WebSocket
-│   ├── wsClient.js                   # Máquina de estados finitos y reconexión automática
-│   └── __tests__/                    # Tests de resiliencia de red
+│   ├── wsClient.js                   # Máquina de estados finitos y reconexión exponencial
+│   └── __tests__/                    # Tests de resiliencia y reconexión de socket
 │
-├── ui/                               # Componentes de presentación visual
+├── ui/                               # Componentes de presentación y renderizado
 │   ├── useSignEngine.js              # Custom Hook que enlaza cámara, canvas e inferencia
 │   └── drawLandmarks.js              # Dibujado acelerado en Canvas 2D de manos y torso
 │
@@ -82,8 +96,8 @@ expresat/frontend/src/
 
 ## 3. Fragmentos Clave de Implementación
 
-### Hook `useSignEngine` (`ui/useSignEngine.js`)
-Gestiona el enlace de la cámara, el loop de animación `requestAnimationFrame` y el renderizado sobre el canvas:
+### A. Hook Coordinador `useSignEngine` (`src/ui/useSignEngine.js`)
+Enlaza el elemento `<video>` del DOM, el `<canvas>` superpuesto para los landmarks y el despachador de inferencia:
 
 ```jsx
 import { useEffect, useRef, useState } from 'react';
@@ -99,6 +113,7 @@ export function useSignEngine({ onFrame, onPrediction }) {
     useEffect(() => {
         let isMounted = true;
         const engine = new SignEngine({
+            delegate: 'CPU',
             onResults: (results, framePayload) => {
                 if (!isMounted) return;
                 setFps(engine.getFps());
@@ -109,7 +124,11 @@ export function useSignEngine({ onFrame, onPrediction }) {
             }
         });
         engineRef.current = engine;
-        engine.init().then(() => engine.start(videoRef.current));
+        engine.init().then(() => {
+            if (isMounted && videoRef.current) {
+                engine.start(videoRef.current);
+            }
+        });
 
         return () => {
             isMounted = false;
@@ -121,11 +140,10 @@ export function useSignEngine({ onFrame, onPrediction }) {
 }
 ```
 
-### Extractor Canónico 178D (`engine/featureExtractor.js`)
-Asegura la invarianza exacta respecto al centro de hombros y muñecas:
+### B. Extractor Canónico 178D (`src/engine/featureExtractor.js`)
+Garantiza invarianza estricta de traslación 3D conforme a [[../../Especificacion_Feature_Spec_v1_3_0|FEATURE_SPEC v1.3.0]]:
 
 ```javascript
-// En engine/featureExtractor.js
 export function extract178D(pose, leftHand, rightHand) {
     if (!pose || pose.length < 23) {
         return { valid: false, error: 'ERR_POSE_MISSING' };
@@ -148,23 +166,38 @@ export function extract178D(pose, leftHand, rightHand) {
     // [0..51] Upper Pose normalizado relativo a C y escalado por D
     // [52..114] Mano Izquierda: (x-cx)/D, (y-cy)/D, (z-z_wrist)/D
     // [115..177] Mano Derecha: (x-cx)/D, (y-cy)/D, (z-z_wrist)/D
+    // Si una mano es nula, permanece con ceros exactos (0.0f)
     return { valid: true, features };
 }
 ```
 
 ---
 
-## 4. Pruebas Automatizadas y Calidad
+## 4. Pruebas Automatizadas y Calidad de Código
 
-El frontend cuenta con compuertas estrictas de calidad y pruebas de integración:
-1. **Linter Estricto:** Reglas ESLint con `rules-of-hooks` y `no-undef` obligatorias, complementadas por Oxlint.
-2. **Vitest Unit Suite:** Cobertura de extracción 178D (TC-01 a TC-05C), clasificador geométrico y estados de WSClient.
-3. **Playwright E2E:** Flujo visual completo del traductor simulando cámara web en navegador headless (`e2e/translator.spec.js`).
+El repositorio cuenta con compuertas automatizadas de verificación:
+
+1. **Pruebas Unitarias de Paridad Matemática (Vitest):**
+   ```bash
+   cd expresat/frontend
+   npx vitest run src/engine/__tests__/featureExtractor.test.js
+   ```
+   Valida que los vectores calculados en JavaScript coincidan elemento a elemento con los generados en Python bajo la norma $\|v_{\text{JS}} - v_{\text{Py}}\|_\infty \le 10^{-6}$.
+2. **Pruebas de Red y WSClient:**
+   ```bash
+   npx vitest run src/transport/__tests__/wsClient.test.js
+   ```
+   Verifica transiciones de estado, reconexión exponencial y conmutación a modo demo.
+3. **Pruebas End-to-End con Playwright:**
+   ```bash
+   npx playwright test e2e/translator.spec.js
+   ```
+   Simula cámara web en navegador headless con streams simulados de 640×480 a 4:3.
 
 ---
 
-## 🤖 Asignación de Agentes y Skills Recomendadas
+## 🤖 Guía de Operación para Agentes Frontend
 
-- **Para Desarrollo React y Refactorizaciones:** Invocar **`react-modernization`** y **`react-state-management`** (ver [[../../Skills/UI_UX_y_Frontend]]).
-- **Para Auditorías de Accesibilidad e Inclusión:** Invocar **`wcag-audit-patterns`** y **`a11y-debugging`** para verificar contraste, lectores de pantalla y directivas ARIA.
-- **Para Validación de Extracción 178D:** Consultar [[../../Especificacion_Feature_Spec_v1_2_1]].
+- **Prohibido reintroducir Web Workers** para `@mediapipe/tasks-vision`.
+- **Asegurar accesibilidad en cada cambio visual:** Verificar atributos `aria-live="polite"` en el contenedor de traducción y contraste cromático $\ge 4.5:1$.
+- **Al modificar `featureExtractor.js`**, ejecutar inmediatamente `npx vitest run` y `pytest tests/test_feature_spec.py`.

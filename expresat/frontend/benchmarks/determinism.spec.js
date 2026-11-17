@@ -9,7 +9,7 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
     test.setTimeout(90000);
     const browserName = testInfo.project.name || 'chromium';
 
-    // Escuchar mensajes de consola
+    // Collect browser console output
     const consoleLogs = [];
     page.on('console', (msg) => {
       consoleLogs.push(msg.text());
@@ -17,13 +17,13 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
 
     await page.goto('/translator');
 
-    // Esperar a que WASM y los modelos de MediaPipe estén listos
+    // Wait for WASM and MediaPipe models to become ready
     const wasmBadge = page.getByTestId('wasm-status-badge');
     await expect(wasmBadge).toHaveText('WASM Activo', { timeout: 25000 });
 
-    // Ejecutar el arnés determinista directamente en el contexto del navegador donde vive MediaPipe Tasks Vision
+    // Run deterministic harness inside the browser context hosting MediaPipe Tasks Vision
     const results = await page.evaluate(async () => {
-      // 1. Obtener los módulos de MediaPipe expuestos en window.__TasksVision__
+      // Obtain MediaPipe constructors exposed on window.__TasksVision__
       const { FilesetResolver, HandLandmarker, PoseLandmarker } = window.__TasksVision__;
 
       const vision = await FilesetResolver.forVisionTasks('/wasm');
@@ -56,12 +56,12 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
         console.warn('PoseLandmarker error:', err);
       }
 
-      // Cargar imagen de mano real para estimulación sensorial de la CNN
+      // Load a real hand image for CNN feature stimulation
       const img = new Image();
       img.src = '/test_hand.png';
       await img.decode();
 
-      // 2. Crear un canvas 640x480 con un patrón visual determinista
+      // Create a 640x480 canvas with a deterministic visual pattern
       const canvas = document.createElement('canvas');
       canvas.width = 640;
       canvas.height = 480;
@@ -71,17 +71,17 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, 640, 480);
 
-        // Movimiento controlado y determinista de la mano
+        // Deterministic synthetic motion path
         const handX = 180 + Math.sin(frameIdx * 0.1) * 10;
         const handY = 100 + Math.cos(frameIdx * 0.1) * 8;
         ctx.drawImage(img, handX, handY, 260, 300);
       }
 
-      // 3. Secuencia fija de 30 timestamps: dt = 33.333 ms (30 FPS durante 1000 ms)
+      // Fixed sequence of 30 timestamps: dt = 33.333 ms (30 FPS over 1000 ms)
       const numFrames = 30;
       const timestamps = Array.from({ length: numFrames }, (_, i) => Math.round(i * 33.333));
 
-      // --- CORRIDA 1 ---
+      // Run 1
       const run1 = [];
       for (let i = 0; i < numFrames; i++) {
         drawFrame(i);
@@ -95,7 +95,7 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
         });
       }
 
-      // Cerrar y volver a inicializar para una corrida completamente independiente con idéntica entrada
+      // Close and re-initialize for an independent second run with identical input
       handLandmarker.close();
       if (poseLandmarker) poseLandmarker.close();
 
@@ -125,10 +125,10 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
           minTrackingConfidence: 0.3,
         });
       } catch (e) {
-        // opcional
+        // Optional pose model
       }
 
-      // --- CORRIDA 2 ---
+      // Run 2
       const run2 = [];
       for (let i = 0; i < numFrames; i++) {
         drawFrame(i);
@@ -145,7 +145,7 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
       handLandmarker2.close();
       if (poseLandmarker2) poseLandmarker2.close();
 
-      // 4. Medición estadística de ruido entre Run 1 y Run 2 (Manos)
+      // Measure statistical noise between Run 1 and Run 2 (Hands)
       let totalPoints = 0;
       let maxLandmarkDiff = 0.0;
       let sumDiff = 0.0;
@@ -192,7 +192,7 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
       const variance = totalPoints > 0 ? (sumSqDiff / totalPoints) - (meanDiff * meanDiff) : 0.0;
       const stdDiff = Math.sqrt(Math.max(0, variance));
 
-      // 5. Medición estadística de Pose (si se detectó)
+      // Pose noise statistics (if pose landmarks were detected)
       let totalPosePoints = 0;
       let maxPoseDiff = 0.0;
       let sumPoseDiff = 0.0;
@@ -256,14 +256,14 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
     }
     console.log('===============================================================\n');
 
-    // Escribir informe a archivo para trazabilidad de auditoría
+    // Write per-browser report file for traceability
     const reportPath = path.resolve(
       process.cwd(),
       `../../docs/dataset-generator/GATE_1B_WASM_NOISE_REPORT_${browserName.toUpperCase()}.json`
     );
     fs.writeFileSync(reportPath, JSON.stringify(results, null, 2), 'utf-8');
 
-    // También actualizar reporte consolidado principal
+    // Update consolidated report file
     const mainReportPath = path.resolve(process.cwd(), '../../docs/dataset-generator/GATE_1B_WASM_NOISE_REPORT.json');
     let consolidated = {};
     if (fs.existsSync(mainReportPath)) {
@@ -276,14 +276,14 @@ test.describe('Gate 1B — Arnés Determinista y Medición de Ruido WASM', () =>
     consolidated[browserName] = results;
     fs.writeFileSync(mainReportPath, JSON.stringify(consolidated, null, 2), 'utf-8');
 
-    // 1. Confirmar detección estricta 30/30 en manos
+    // Confirm 30/30 hand detections
     expect(results.framesDetectedHand).toBe(30);
 
-    // 2. Asegurar que categoryName no cambie entre corridas idénticas (100% consistencia)
+    // Ensure categoryName stays 100% consistent across identical runs
     expect(results.labelMismatches).toBe(0);
 
-    // 3. Tolerancia empírica de landmarks WASM (XNNPACK CPU)
-    // Con media E = 1.09e-4 y pico de SIMD reduction ~9.77e-4, 1.5e-3 acota todo jitter
+    // Empirical WASM (XNNPACK CPU) landmark jitter bound:
+    // With mean E = 1.09e-4 and SIMD reduction peak ~9.77e-4, 1.5e-3 bounds all observed jitter
     expect(results.maxLandmarkNoise).toBeLessThanOrEqual(1.5e-3);
   });
 });

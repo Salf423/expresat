@@ -1,0 +1,18 @@
+{
+  "environment": {
+    "crossOriginIsolated": false,
+    "hardwareConcurrency": 8,
+    "wasmSimdSupported": false,
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.8127.18 Safari/537.36"
+  },
+  "hand_divergence": {
+    "hands_detected_cpu": 1,
+    "hands_detected_gpu": 1,
+    "linf_hand_landmarks": 0.002367
+  },
+  "pose_divergence": {
+    "poses_detected_cpu": 0,
+    "poses_detected_gpu": 1,
+    "linf_pose_landmarks": 0
+  }
+}

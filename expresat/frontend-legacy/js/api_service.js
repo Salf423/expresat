@@ -1,8 +1,8 @@
 export class ApiService {
     /**
-     * Inicializa el servicio de API con soporte para WebSockets.
-     * @param {string} url - La URL del endpoint de WebSocket.
-     * Configura parámetros de reconexión exponencial para manejar caídas de red de forma resiliente.
+     * Initializes the API service with WebSocket support.
+     * @param {string} url - WebSocket endpoint URL.
+     * Configures exponential backoff parameters to recover cleanly from network drops.
      */
     constructor(url) {
         this.url = url;
@@ -17,11 +17,10 @@ export class ApiService {
     }
 
     /**
-     * Establece la conexión WebSocket con el servidor.
-     * Decisión: El token JWT se envía en la URL para simplificar la autenticación en el handshake inicial.
-     * Configura manejadores para eventos open, message, close y error.
-     * Incluye un sistema de 'ping/pong' para calcular la latencia en tiempo real.
-     * @param {string} token - Token de acceso de Supabase.
+     * Establishes the WebSocket connection with the server.
+     * Sends the JWT token in the URL query string for initial handshake auth,
+     * registers event handlers, and runs a ping/pong latency probe.
+     * @param {string} token - Supabase access token.
      */
     connect(token) {
         const wsUrl = `${this.url}?token=${encodeURIComponent(token)}`;
@@ -67,9 +66,8 @@ export class ApiService {
     }
 
     /**
-     * Implementa la lógica de reconexión con backoff exponencial.
-     * Incrementa el tiempo de espera entre intentos para no saturar el servidor.
-     * @param {string} token - El token para re-autenticar la conexión.
+     * Implements exponential backoff reconnection logic to avoid overloading the server.
+     * @param {string} token - Access token used to re-authenticate on reconnect.
      */
     handleReconnect(token) {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -86,9 +84,9 @@ export class ApiService {
     }
 
     /**
-     * Actualiza el estado visual de la conexión en la UI.
-     * @param {string} text - Texto a mostrar (ej. "Conectado").
-     * @param {string} className - Clase CSS para el estilo visual.
+     * Updates the visual connection state in the UI.
+     * @param {string} text - Status label (e.g. "Conectado").
+     * @param {string} className - CSS class applied for visual styling.
      */
     updateStatus(text, className) {
         if (this.onStatusChangeCallback) {
@@ -97,9 +95,9 @@ export class ApiService {
     }
 
     /**
-     * Envía los puntos clave (landmarks) detectados al servidor para su procesamiento.
-     * Solo envía datos si la conexión está abierta para evitar errores.
-     * @param {Object} landmarksData - Coordenadas X,Y,Z de manos y pose.
+     * Sends detected landmarks to the server for processing.
+     * Only transmits when the WebSocket is open to avoid errors.
+     * @param {Object} landmarksData - Hand and pose X, Y, Z coordinates.
      */
     sendLandmarks(landmarksData) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {

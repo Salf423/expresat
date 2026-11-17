@@ -14,11 +14,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const logoutBtn = document.getElementById('logout-btn');
     const wsStatus = document.getElementById('ws-status');
     const translationText = document.getElementById('translation-text');
-    
+
     // Initial Configuration
     const authService = new AuthService();
     // Change to real FastAPI backend URL
-    const apiService = new ApiService('ws://127.0.0.1:8000/ws'); 
+    const apiService = new ApiService('ws://127.0.0.1:8000/ws');
     let mediaPipeEngine = null;
 
     /**
@@ -61,12 +61,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Start WebSockets
         apiService.connect(token);
-        
+
         // Start MediaPipe if not started
         if (!mediaPipeEngine) {
             const videoEl = document.getElementById('input-video');
             const canvasEl = document.getElementById('output-canvas');
-            
+
             // Adjust canvas internally
             canvasEl.width = 640;
             canvasEl.height = 480;
@@ -122,10 +122,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     logoutBtn.addEventListener('click', async () => {
         await authService.logout();
         // Reload to clear states
-        window.location.reload(); 
+        window.location.reload();
     });
 
-    // --- API EVENTS (WEBSOCKETS) ---
+    // API events (WebSockets)
     apiService.onStatusChange((text, className) => {
         wsStatus.innerText = text;
         wsStatus.className = `indicator ${className}`;

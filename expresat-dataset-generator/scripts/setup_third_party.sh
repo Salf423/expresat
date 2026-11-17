@@ -18,7 +18,7 @@ TP="$ROOT/third_party"
 mkdir -p "$TP"
 cd "$TP"
 
-# ─── Dear ImGui ───────────────────────────────────────────────────────────────
+# Dear ImGui
 IMGUI_VERSION="v1.91.1"
 IMGUI_DIR="$TP/imgui"
 
@@ -30,7 +30,7 @@ else
     echo "[setup] Dear ImGui already present, skipping."
 fi
 
-# ─── GLAD ─────────────────────────────────────────────────────────────────────
+# GLAD
 # Pre-generated for OpenGL 3.3 Core Profile (no extensions needed).
 GLAD_DIR="$TP/glad"
 
@@ -58,7 +58,7 @@ else
     echo "[setup] GLAD already present, skipping."
 fi
 
-# ─── nlohmann/json (single header) ───────────────────────────────────────────
+# nlohmann/json (single header)
 JSON_DIR="$TP/json/include/nlohmann"
 JSON_HEADER="$JSON_DIR/json.hpp"
 
@@ -74,5 +74,5 @@ else
 fi
 
 echo ""
-echo "✓ Third-party setup complete."
+echo "[OK] Third-party setup complete."
 echo "  CMake will use vendored copies; FetchContent is a fallback."

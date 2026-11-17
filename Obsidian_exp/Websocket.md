@@ -1,7 +1,7 @@
 ---
 title: "Especificación del Protocolo de Comunicación WebSocket y Streaming en Tiempo Real"
-description: "Protocolo de red bidireccional, contratos de mensajes JSON (Batch y Stream Mode), autenticación Supabase JWT, gestión de conexiones asíncronas y tolerancia a fallos."
-version: "2.0.0"
+description: "Protocolo de red bidireccional, contratos de mensajes JSON (Batch y Stream Mode), autenticación Supabase JWT, mitigaciones de seguridad de auditoría Opencode y gestión asíncrona no bloqueante."
+version: "2.3.0"
 category: "Especificación / Red & Streaming"
 status: "Producción"
 target_agents: ["backend-architect", "fastapi-pro", "security-auditor"]
@@ -21,30 +21,38 @@ related_docs:
 
 > **Navegación:** [[00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Protocolo WebSocket**
 
-La comunicación en tiempo real entre el cliente de captura (navegador o cliente ligero) y el motor de inferencia centralizado se realiza mediante el protocolo **WebSocket (RFC 6455)**, diseñado para minimizar la latencia de transporte y posibilitar un intercambio continuo de coordenadas corporales.
+La comunicación en tiempo real entre el cliente de captura (navegador web con React 19 o cliente nativo ligero) y el servidor de inferencia se realiza mediante el protocolo **WebSocket (RFC 6455)**, diseñado para minimizar la latencia de transporte y posibilitar un intercambio continuo de coordenadas corporales bajo estrictas salvaguardas de seguridad.
 
 ---
 
 ## 1. Puntos de Conexión (Endpoints)
 
-| Endpoint | Estado | Descripción |
-|---|---|---|
-| `/ws/translate` | **Activo (Producción)** | Endpoint principal para inferencia en tiempo real. Admite modo por lotes (*Batch Mode*) y modo streaming clásico. |
-| `/ws` | *Legacy (Compatibilidad)* | Redirecciona internamente hacia `/ws/translate` para soportar clientes antiguos. |
-
-### Handshake y Autenticación con Supabase
-La conexión se establece suministrando opcionalmente el token de acceso JWT provisto por Supabase como parámetro en la URL:
-
-```
-wss://api.expresat.com/ws/translate?token=<SUPABASE_JWT_ACCESS_TOKEN>
-```
-
-- En modo desarrollo (`ENVIRONMENT=development`), la función `verify_supabase_token` acepta cualquier token.
-- En modo producción, el servidor valida la firma criptográfica del JWT contra el secreto de Supabase antes de autorizar el socket.
+| Endpoint | Estado | Protocolo | Descripción |
+|---|---|---|---|
+| `/ws/translate` | **Activo (Producción)** | `wss://` | Endpoint principal para inferencia en tiempo real. Admite modo por lotes (*Batch Mode* de 15 frames) y modo streaming clásico. |
+| `/ws` | *Legacy (Compatibilidad)* | `wss://` | Redirecciona internamente hacia `/ws/translate` para soportar clientes anteriores. |
 
 ---
 
-## 2. Contratos de Mensajería y Esquemas JSON
+## 2. Autenticación y Mitigaciones de Seguridad (Auditoría Opencode)
+
+> [!CAUTION] Mitigaciones Críticas de Seguridad
+> En la auditoría de seguridad del repositorio (`AUDIT_OPENCODE_REPORT.md`), se identificaron vulnerabilidades críticas que deben respetarse en toda modificación del backend y frontend:
+
+1. **Tokens en Query URL (Hallazgo C4):**  
+   - *Riesgo:* Pasar el JWT como `?token=...` en la URL de conexión expone el token en logs de servidores proxy, balanceadores e historiales de navegador.  
+   - *Mitigación:* Se implementa lectura del token prioritariamente desde cabeceras (`Authorization: Bearer <token>`) o cookies seguras (`HttpOnly`, `SameSite=Strict`, `Secure`). Si se recibe vía query-string por compatibilidad, el servidor enmascara la URL en los logs (`/ws/translate?token=***`).
+2. **Validación Criptográfica Supabase JWT (Hallazgo C2):**  
+   - En producción (`ENVIRONMENT=production`), la función `verify_supabase_token` valida la firma criptográfica del JWT contra el secreto de Supabase antes de autorizar el socket.  
+   - Si el token es inválido o expiró, el servidor cierra la conexión con el código de error WebSocket **`1008 (Policy Violation)`** y un log de diagnóstico explícito.
+3. **Control Estricto de Orígenes CORS (Hallazgo C3):**  
+   - Prohibido `allow_origins=["*"]` en producción. Los orígenes deben definirse explícitamente mediante la variable de entorno `CORS_ORIGINS` (ej. `https://expresat.netlify.app,https://expresat.com`).
+4. **Bandera de Modo Demostración Explícita (Hallazgo C1):**  
+   - La variable `EXPRESAT_DEMO_MODE` debe evaluarse de forma booleana estricta: `os.getenv("EXPRESAT_DEMO_MODE", "false").lower() in ("true", "1", "yes")`. En producción, el servidor nunca arranca en modo demo por omisión.
+
+---
+
+## 3. Contratos de Mensajería y Esquemas JSON
 
 ```mermaid
 flowchart TD
@@ -63,24 +71,33 @@ flowchart TD
 
 ### A. Mensajes del Cliente hacia el Servidor
 
-#### 1. Modo por Lotes (Batch Mode — Recomendado)
+#### 1. Modo por Lotes (Batch Mode — Canónico y Recomendado)
 Envía un bloque temporal consolidado de 15 fotogramas contiguos (equivalente a 1 segundo de movimiento a 15 FPS):
 ```json
 {
   "type": "inference",
   "payload": [
     {
-      "pose": [{"x": 0.5, "y": 0.2, "z": -0.1, "visibility": 0.99}, "... 13 puntos"],
-      "leftHand": [{"x": 0.4, "y": 0.6, "z": 0.05}, "... 21 puntos"],
-      "rightHand": [{"x": 0.6, "y": 0.6, "z": 0.05}, "... 21 puntos"]
+      "pose": [
+        {"x": 0.501, "y": 0.201, "z": -0.041, "visibility": 0.99},
+        // ... 13 landmarks del torso superior (0, 11-22)
+      ],
+      "leftHand": [
+        {"x": 0.450, "y": 0.600, "z": -0.020},
+        // ... 21 articulaciones de la mano izquierda
+      ],
+      "rightHand": [
+        {"x": 0.550, "y": 0.600, "z": -0.020}
+        // ... 21 articulaciones de la mano derecha
+      ]
     }
-    // ... 15 elementos en total
+    // ... exactamente 15 fotogramas
   ]
 }
 ```
 
 #### 2. Modo Flujo Continuo (Stream Mode — Compatibilidad hacia atrás)
-Envía un único fotograma; el servidor acumula internamente los frames en una cola por cliente:
+Envía un único fotograma por mensaje; el backend mantiene una cola circular por cliente:
 ```json
 {
   "type": "inference",
@@ -92,8 +109,8 @@ Envía un único fotograma; el servidor acumula internamente los frames en una c
 }
 ```
 
-#### 3. Mensaje de Control (Ping / Heartbeat)
-Permite mantener la conexión activa ante proxies inversos con timeouts agresivos:
+#### 3. Control Keep-Alive (Heartbeat Ping)
+Para mantener la conexión viva ante proxies inversos:
 ```json
 {
   "type": "ping"
@@ -105,7 +122,7 @@ Permite mantener la conexión activa ante proxies inversos con timeouts agresivo
 ### B. Mensajes del Servidor hacia el Cliente
 
 #### 1. Resultado de Traducción (`translation`)
-Emitido cuando la inferencia se completa y supera el umbral de confianza configurado (`confidence >= CONFIDENCE_THRESHOLD`):
+Emitido tras la inferencia si la confianza supera el umbral configurado (`confidence >= CONFIDENCE_THRESHOLD`, por defecto 0.50):
 ```json
 {
   "type": "translation",
@@ -118,7 +135,7 @@ Emitido cuando la inferencia se completa y supera el umbral de confianza configu
       "gracias": 0.031,
       "adios": 0.012,
       "por_favor": 0.003,
-      "si": 0.002
+      "reposo": 0.002
     }
   }
 }
@@ -132,19 +149,22 @@ Emitido cuando la inferencia se completa y supera el umbral de confianza configu
 ```
 
 #### 3. Mensaje de Error (`error`)
-Emitido ante datos mal formados o excepciones internas del modelo:
+Emitido ante datos mal formados, distorsiones geométricas o violaciones de contrato:
 ```json
 {
   "type": "error",
-  "payload": "Payload inválido: se esperaban 15 frames para la inferencia."
+  "payload": {
+    "code": "ERR_SHOULDERS_TOO_SMALL",
+    "message": "Distancia inter-humeral inferior a 0.08. Ajuste su posición frente a la cámara."
+  }
 }
 ```
 
 ---
 
-## 3. Implementación del Administrador de Conexiones (`ConnectionManager`)
+## 4. Implementación del Administrador de Conexiones (`ConnectionManager`)
 
-En `expresat/backend/main.py`, la gestión de estado de los sockets está encapsulada en una clase con control de concurrencia:
+En `expresat/backend/main.py`, la concurrencia está encapsulada en una clase con control de estado y offload no bloqueante:
 
 ```python
 class ConnectionManager:
@@ -172,33 +192,35 @@ Para evitar congelar el bucle de eventos (`asyncio event loop`) al procesar tens
 
 ```python
 async def run_inference_async(engine, raw_frames):
-    # Offload de CPU bound task a un thread pool desacoplado
+    # Offload de tarea CPU-bound a un thread pool desacoplado
     return await asyncio.to_thread(engine.predict, raw_frames)
 ```
 
 ---
 
-## 4. Consideraciones Operativas y de Red
+## 5. Arquitectura del Cliente Web (`wsClient.js`)
 
-1. **Configuración de Proxy Inverso (Nginx):**
-   Para evitar cierres abruptos por timeout tras periodos breves de silencio gestual:
-   ```nginx
-   proxy_set_header Upgrade $http_upgrade;
-   proxy_set_header Connection "upgrade";
-   proxy_read_timeout 3600s;
-   proxy_send_timeout 3600s;
-   ```
-2. **Cliente WebSocket con Máquina de Estados (`wsClient.js`):**
-   El cliente web implementa una máquina de estados finitos explícita (`CONNECTING`, `OPEN`, `CLOSING`, `CLOSED`), reconexión automática con *exponential backoff*, control de heartbeats periódicos (ping/pong) y degradación suave (*fallback*) a modo demostración si el backend no responde.
-3. **Validación de Origen en Backend (`config.py`):**
-   El servidor FastAPI valida los orígenes permitidos en el handshake del socket, rechazando orígenes no autorizados o conexiones maliciosas de terceros.
-4. **Alternativa Nativa (IPC Sin Red):**
-   En la aplicación C++ `expresat-native`, este protocolo de red es reemplazado por colas circulares en memoria (*lock-free SPSC*), eliminando el protocolo WebSocket y reduciendo el transporte a 0 milisegundos.
+El cliente implementa una **máquina de estados finitos explícita**:
+
+```mermaid
+stateDiagram-v2
+    [*] --> CLOSED
+    CLOSED --> CONNECTING : connect()
+    CONNECTING --> OPEN : onopen
+    CONNECTING --> CLOSED : onerror / timeout
+    OPEN --> CLOSING : disconnect()
+    OPEN --> CLOSED : onclose / error
+    CLOSING --> CLOSED : onclose terminado
+    CLOSED --> CONNECTING : auto-reconnect (exponential backoff)
+```
+
+- **Reconexión Exponencial:** Espera base de $1.0\text{ s}$, multiplicador $1.5\times$, jitter estocástico $\pm 20\%$, hasta un máximo de $30\text{ s}$.
+- **Fallback a Modo Demostración:** Si el backend no responde tras 3 intentos, el cliente conmuta transparentemente al clasificador geométrico local (`classifier.js`).
 
 ---
 
 ## 🤖 Asignación de Agentes y Skills Recomendadas
 
-- **Para Desarrollo y Optimización de Sockets:** Invocar **`fastapi-pro`** y **`async-python-patterns`** (ver [[Skills/Backend_APIs_y_Sistemas]]).
-- **Para Auditoría de Vulnerabilidades y DoS:** Invocar **`backend-security-coder`** y **`security-auditor`** (ver [[Skills/Auditoria_Seguridad_y_Calidad]]) para asegurar que se restrinja el tamaño máximo de los mensajes JSON entrantes y se evite la saturación de memoria.
-- **Para Simulación y Pruebas de Carga:** Invocar **`api-testing-observability-api-mock`**.
+- **Para Desarrollo y Rutas Asíncronas:** Invocar **`fastapi-pro`** y **`async-python-patterns`** (ver [[Skills/Backend_APIs_y_Sistemas]]).
+- **Para Auditoría de Vulnerabilidades y DoS:** Invocar **`backend-security-coder`** y **`security-auditor`** (ver [[Skills/Auditoria_Seguridad_y_Calidad]]).
+- **Para Pruebas de Carga y Simulación:** Invocar **`api-testing-observability-api-mock`**.

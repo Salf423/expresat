@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Local pre-commit hook blocking JWT/.env secrets and raw recordings.
+# Enable manually with: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+SECRET_REGEX='(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|SUPABASE_SERVICE_ROLE_KEY[[:space:]]*=|sb_secret_[A-Za-z0-9_-]{10,})'
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$staged_files" ]; then
+  exit 0
+fi
+
+# Reject sensitive files and local capture artifacts by path
+while IFS= read -r file; do
+  case "$file" in
+    .env|.env.*|*/.env|*/.env.*)
+      case "$file" in
+        *.env.example) ;;
+        *)
+          echo "[pre-commit] BLOQUEADO: archivo de entorno prohibido en staging: $file" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *.pem|*.key|*.raw.json|*.raw.bin|*.raw.f32.bin|*.raw.meta.json|recordings_local/*)
+      echo "[pre-commit] BLOQUEADO: artefacto privado o grabación cruda en staging: $file" >&2
+      exit 1
+      ;;
+  esac
+done <<< "$staged_files"
+
+# Scan added lines in the staged diff for secret patterns
+if git diff --cached -U0 --diff-filter=ACM | grep -nE "^\+[^+].*${SECRET_REGEX}" >/dev/null 2>&1; then
+  echo "[pre-commit] BLOQUEADO: patrón de token JWT o clave de servicio detectado en líneas agregadas." >&2
+  git diff --cached -U0 --diff-filter=ACM | grep -nE "^\+\+\+ b/|^\+[^+].*${SECRET_REGEX}" | sed -E "s/${SECRET_REGEX}/[REDACTED_SECRET]/g" >&2 || true
+  echo "[pre-commit] Verifica tus archivos o mueve secretos a .env (ignorado por Git)." >&2
+  exit 1
+fi
+
+exit 0

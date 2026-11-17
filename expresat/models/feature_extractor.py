@@ -1,20 +1,19 @@
 """
-feature_extractor.py — ExpresaT: Extractores Canónicos de Vectores 178D v1.3.0
+Canonical 178D feature vector extractors (FEATURE_SPEC v1.3.0).
 
-Implementa estrictamente la especificación docs/dataset-generator/FEATURE_SPEC.md v1.3.0.
-Topología por frame:
-  - [0..51] Upper Pose (13 landmarks × 4 coords: x, y, z, visibility)
-  - [52..114] Mano Izquierda (21 landmarks × 3 coords: x, y, z)
-  - [115..177] Mano Derecha (21 landmarks × 3 coords: x, y, z)
-Total: 178 features float32 por frame. Invariante de ventana: (1, 15, 178).
+Frame layout:
+  - [0..51]   Upper Pose (13 landmarks x 4: x, y, z, visibility)
+  - [52..114] Left Hand  (21 landmarks x 3: x, y, z)
+  - [115..177] Right Hand (21 landmarks x 3: x, y, z)
+Total: 178 float32 features per frame; window tensor shape (1, 15, 178).
 
-Secuencia estricta de ExtractWindow (Sección 5):
-  1. Validar hombros crudos y brechas temporales (<= 100 ms)
-  2. Asignar manos por frame crudo (costo conjunto + etiquetas + continuidad temporal)
-  3. Remuestrear temporalmente por bloque a 15 frames equidistantes (Δt = 66.67 ms)
-  4. Escala D y Centro C por ventana (mediana de 15 frames, D >= 0.08)
-  5. Filtro EMA temporal por bloque (α = 0.50, reinicio por bloque independiente)
-  6. Normalizar hombros y muñeca Z -> Tensor (1, 15, 178) float32
+`extract_window` pipeline order:
+  1. Validate raw shoulders and temporal gaps (<= 100 ms)
+  2. Assign hands to anatomical slots per raw frame (spatial + label + temporal continuity)
+  3. Resample each anatomical block to 15 equidistant frames (dt = 66.67 ms)
+  4. Compute per-window scale D and center C (median over 15 frames, D >= 0.08)
+  5. Apply per-block temporal EMA filter (alpha = 0.50, reset on hand reappearance)
+  6. Normalize to shoulders and wrist Z -> (1, 15, 178) float32 tensor
 """
 
 from __future__ import annotations
@@ -29,20 +28,14 @@ from typing import Any, Optional
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# 1. Constantes canónicas v1.3.0
-# ---------------------------------------------------------------------------
-
 FEATURE_SPEC_VERSION: str = "1.3.0"
 TOTAL_FEATURES: int = 178
 SEQUENCE_LENGTH: int = 15
 
-# Upper Pose indices (13 landmarks)
 POSE_UPPER_INDICES: list[int] = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 POSE_COORDS: int = 4  # x, y, z, visibility
 POSE_FEATURES_COUNT: int = len(POSE_UPPER_INDICES) * POSE_COORDS  # 52
 
-# Hands
 HAND_LANDMARKS: int = 21
 HAND_COORDS: int = 3  # x, y, z
 HAND_FEATURES_COUNT: int = HAND_LANDMARKS * HAND_COORDS  # 63
@@ -66,7 +59,6 @@ UPPER_BILATERAL_INDEX_PAIRS: list[tuple[int, int]] = [
     (11, 12),
 ]
 
-# Umbrales
 SHOULDER_VIS_THRESH: float = 0.40
 SHOULDERS_D_MIN: float = 0.08
 HAND_DISCONNECTED_THRESH: float = 1.75
@@ -74,17 +66,13 @@ HAND_AMBIGUITY_THRESH: float = 0.15
 POSE_WRIST_MIN_VIS: float = 0.50
 MAX_GAP_MS: float = 100.0
 
-# Pesos para asignación de manos en unidades de D (FEATURE_SPEC v1.3.0)
+# Hand assignment cost weights in units of shoulder span D
 WEIGHT_LABEL_PENALTY: float = 0.25
 WEIGHT_TEMPORAL_CONTINUITY: float = 0.50
 
 
-# ---------------------------------------------------------------------------
-# 2. Hash criptográfico de configuración (config_hash)
-# ---------------------------------------------------------------------------
-
 def get_fixtures_sha256(fixtures_path: Optional[Path] = None) -> str:
-    """Calcula el digest SHA256 de tests/fixtures/feature_spec_cases.json."""
+    """Compute the SHA-256 digest of tests/fixtures/feature_spec_cases.json."""
     if fixtures_path is None:
         fixtures_path = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "feature_spec_cases.json"
     if not fixtures_path.exists():
@@ -93,15 +81,13 @@ def get_fixtures_sha256(fixtures_path: Optional[Path] = None) -> str:
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def compute_config_hash(fixtures_sha256: Optional[str] = None) -> str:
-    """
-    Calcula el config_hash canónico para sellar artefactos y verificar modelos.
-    Incluye SHA256 íntegro de los fixtures de prueba y parámetros de normalización.
-    """
+def compute_config_hash(fixtures_sha256: Optional[str] = None, delegate: str = "GPU") -> str:
+    """Compute the canonical config_hash sealing artifacts, delegate, and normalization parameters."""
     if fixtures_sha256 is None:
         fixtures_sha256 = get_fixtures_sha256()
 
     canonical_dict = {
+        "delegate": delegate,
         "duration_ms": 1000.0,
         "feature_spec_version": FEATURE_SPEC_VERSION,
         "fixtures_sha256": fixtures_sha256,
@@ -116,12 +102,8 @@ def compute_config_hash(fixtures_sha256: Optional[str] = None) -> str:
     return hashlib.sha256(raw_bytes).hexdigest()
 
 
-# ---------------------------------------------------------------------------
-# 3. Utilidades internas
-# ---------------------------------------------------------------------------
-
 def _get_category_label(h_item: Any) -> Optional[str]:
-    """Extrae de forma tolerante el categoryName de MediaPipe."""
+    """Extract MediaPipe categoryName from a string, dict, or nested list."""
     if isinstance(h_item, list) and len(h_item) > 0:
         return _get_category_label(h_item[0])
     if isinstance(h_item, dict):
@@ -137,9 +119,8 @@ def _get_category_label(h_item: Any) -> Optional[str]:
 
 def _get_detected_hands_and_labels(raw_frame: dict) -> tuple[list[list[dict]], list[Optional[str]]]:
     """
-    Normaliza el frame de entrada para extraer una lista de manos detectadas
-    y sus etiquetas categoryName correspondientes. Soporta formato de array y
-    formato de objetos del grabador de desarrollo ({"landmarks": [...], "categoryName": ...}).
+    Normalize the input frame into parallel lists of hand landmarks and category labels,
+    supporting both array and dev-recorder object formats.
     """
     hands: list[list[dict]] = []
     labels: list[Optional[str]] = []
@@ -176,7 +157,7 @@ def _hand_to_features(
     Cx: float,
     Cy: float,
 ) -> np.ndarray:
-    """Normaliza los 21 landmarks de una mano a un vector de 63 float64."""
+    """Normalize 21 hand landmarks into a 63-element float64 vector."""
     out = np.zeros(HAND_FEATURES_COUNT, dtype=np.float64)
     if not raw_hand:
         return out
@@ -194,10 +175,6 @@ def _hand_to_features(
     return out
 
 
-# ---------------------------------------------------------------------------
-# 3. Asignación anatómica de manos con término de etiqueta y continuidad
-# ---------------------------------------------------------------------------
-
 def assign_hands_to_anatomical_slots(
     raw_frame: dict,
     pose: list[dict],
@@ -206,14 +183,13 @@ def assign_hands_to_anatomical_slots(
     prev_right_wrist: Optional[tuple[float, float]] = None,
 ) -> tuple[Optional[list[dict]], Optional[list[dict]], bool]:
     """
-    Asigna las manos detectadas en un frame a (assigned_left_hand, assigned_right_hand).
-    Retorna (left_hand, right_hand, is_ambiguous).
+    Assign detected hands to anatomical (left_hand, right_hand) slots.
+    Returns (left_hand, right_hand, is_ambiguous).
 
-    Reglas:
-      1. Descarte por desconexión: min(d_left, d_right) > 1.75 * D SOLO si vis(P_wrist) >= 0.50.
-      2. Si 2 manos: costo conjunto considerando distancias a P15/P16, penalización de etiqueta
-         y continuidad temporal respecto al frame anterior.
-      3. Ambigüedad: registrada cuando |costo_A - costo_B| < 0.15 * D (en 2 manos) o |d_left - d_right| < 0.15*D.
+    Rules:
+      1. Drop disconnected hands: min(d_left, d_right) > 1.75 * D when closer pose wrist vis >= 0.50.
+      2. For 2 hands, minimize joint spatial distance + label penalty + temporal continuity.
+      3. Mark ambiguous when assignment cost margin < 0.15 * D.
     """
     detected_hands, detected_labels = _get_detected_hands_and_labels(raw_frame)
 
@@ -225,7 +201,7 @@ def assign_hands_to_anatomical_slots(
     pw16_y = float(pose[16].get("y", 0.0))
     pw16_vis = float(pose[16].get("visibility", 1.0))
 
-    # Filtrar manos desconectadas respetando la visibilidad de la muñeca de pose
+    # Discard disconnected hands only if the closer pose wrist is sufficiently visible
     valid_hands: list[tuple[list[dict], Optional[str], float, float]] = []
     for h, lbl in zip(detected_hands, detected_labels):
         hw_x = float(h[0].get("x", 0.0))
@@ -233,7 +209,6 @@ def assign_hands_to_anatomical_slots(
         d_left = math.hypot(hw_x - pw15_x, hw_y - pw15_y)
         d_right = math.hypot(hw_x - pw16_x, hw_y - pw16_y)
 
-        # Determinar si la muñeca más cercana tiene visibilidad suficiente para descartar
         closer_wrist_vis = pw15_vis if d_left <= d_right else pw16_vis
         is_disconnected = (min(d_left, d_right) > HAND_DISCONNECTED_THRESH * D) and (closer_wrist_vis >= POSE_WRIST_MIN_VIS)
 
@@ -251,27 +226,23 @@ def assign_hands_to_anatomical_slots(
         hw0_x, hw0_y = float(h0[0].get("x", 0.0)), float(h0[0].get("y", 0.0))
         hw1_x, hw1_y = float(h1[0].get("x", 0.0)), float(h1[0].get("y", 0.0))
 
-        # Costo base espacial
         cost_A = d0_l + d1_r  # H0 -> Left, H1 -> Right
         cost_B = d1_l + d0_r  # H1 -> Left, H0 -> Right
 
-        # Término de penalización por etiqueta MediaPipe:
-        # MediaPipe 'Left' -> mano derecha del usuario
-        # MediaPipe 'Right' -> mano izquierda del usuario
+        # MediaPipe 'Left' maps to user right hand; 'Right' maps to user left hand
         penalty_A = 0.0
         penalty_B = 0.0
 
-        if lbl0 == "Left":  # H0 prefiere slot derecho
+        if lbl0 == "Left":
             penalty_A += WEIGHT_LABEL_PENALTY * D
-        elif lbl0 == "Right":  # H0 prefiere slot izquierdo
+        elif lbl0 == "Right":
             penalty_B += WEIGHT_LABEL_PENALTY * D
 
-        if lbl1 == "Left":  # H1 prefiere slot derecho
+        if lbl1 == "Left":
             penalty_B += WEIGHT_LABEL_PENALTY * D
-        elif lbl1 == "Right":  # H1 prefiere slot izquierdo
+        elif lbl1 == "Right":
             penalty_A += WEIGHT_LABEL_PENALTY * D
 
-        # Término de continuidad temporal respecto al frame previo
         if prev_left_wrist is not None and prev_right_wrist is not None:
             c_temp_A = (
                 math.hypot(hw0_x - prev_left_wrist[0], hw0_y - prev_left_wrist[1])
@@ -309,14 +280,13 @@ def assign_hands_to_anatomical_slots(
         if ambiguity_cond:
             is_ambiguous = True
 
-        # Desempate por etiqueta o continuidad temporal
+        # Break ties using label first, then temporal proximity, then pose wrist distance
         if lbl0 in ("Left", "Right"):
             if lbl0 == "Left":
                 assigned_right = h0
             else:
                 assigned_left = h0
         elif prev_left_wrist is not None or prev_right_wrist is not None:
-            # Evaluar cercanía a la última posición conocida
             dist_prev_l = math.hypot(hw0_x - prev_left_wrist[0], hw0_y - prev_left_wrist[1]) if prev_left_wrist else float("inf")
             dist_prev_r = math.hypot(hw0_x - prev_right_wrist[0], hw0_y - prev_right_wrist[1]) if prev_right_wrist else float("inf")
             if dist_prev_l <= dist_prev_r:
@@ -332,15 +302,8 @@ def assign_hands_to_anatomical_slots(
     return assigned_left, assigned_right, is_ambiguous
 
 
-# ---------------------------------------------------------------------------
-# 4. Función canónica: extract_frame_features (1 frame individual)
-# ---------------------------------------------------------------------------
-
 def validate_frame_hand_labels(raw_frame: dict) -> tuple[bool, Optional[str]]:
-    """
-    Valida que todas las manos detectadas en el frame tengan etiqueta válida ('Left' o 'Right').
-    Falla con ERR_HAND_MISSING_LABEL si alguna mano detectada carece de categoryName o tiene 'Unknown'.
-    """
+    """Verify every detected hand in the frame carries a valid 'Left' or 'Right' label."""
     detected_hands, detected_labels = _get_detected_hands_and_labels(raw_frame)
     if not detected_hands:
         return True, None
@@ -355,10 +318,7 @@ def validate_frame_hand_labels(raw_frame: dict) -> tuple[bool, Optional[str]]:
 
 
 def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool, Optional[str]]:
-    """
-    Extrae y normaliza un frame individual a 178 características float32
-    siguiendo estrictamente docs/dataset-generator/FEATURE_SPEC.md v1.3.0.
-    """
+    """Extract and normalize a single frame to 178 float32 features per FEATURE_SPEC v1.3.0."""
     pose = raw_frame.get("pose")
     if pose is None or len(pose) < 23:
         return None, False, "ERR_POSE_MISSING"
@@ -393,7 +353,7 @@ def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool,
 
     features = np.zeros(TOTAL_FEATURES, dtype=np.float64)
 
-    # Upper Pose [0..51] (13 landmarks x 4)
+    # Upper Pose [0..51]
     for i, p_idx in enumerate(POSE_UPPER_INDICES):
         lm = pose[p_idx]
         px = float(lm.get("x", 0.0))
@@ -406,7 +366,6 @@ def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool,
         features[i * 4 + 2] = (pz - cz) / D
         features[i * 4 + 3] = max(0.0, min(1.0, pvis))
 
-    # Asignación de manos anatómicas
     assigned_left, assigned_right, _ = assign_hands_to_anatomical_slots(raw_frame, pose, D)
 
     if assigned_left is not None:
@@ -422,30 +381,22 @@ def extract_frame_features(raw_frame: dict) -> tuple[Optional[np.ndarray], bool,
     return features.astype(np.float32), True, None
 
 
-# ---------------------------------------------------------------------------
-# 5. Función de ventana: extract_window (Orden canónico por bloques v1.2.2)
-# ---------------------------------------------------------------------------
-
 def extract_window(
     frames_with_timestamps: list[dict],
     target_fps: int = 15,
     duration_ms: float = 1000.0,
 ) -> tuple[Optional[np.ndarray], bool, Optional[str]]:
     """
-    Implementa la secuencia estricta por bloques de ExtractWindow v1.2.2:
-      1. Validar hombros crudos y brechas continuas (gap <= 100 ms)
-      2. Asignar manos por frame crudo -> raw_left_hand y raw_right_hand por separado
-      3. Remuestrear temporalmente por bloque anatómico a 15 frames (Δt = 66.67 ms)
-      4. Calcular D_ventana y C_ventana (mediana de 15 frames, D >= 0.08)
-      5. Filtro EMA temporal por bloque (α = 0.50, reinicio al reaparecer cada mano)
-      6. Normalizar y ensamblar tensor (1, 15, 178) float32
+    Execute the canonical block-based window extraction pipeline (FEATURE_SPEC v1.2.2+):
+    validate raw shoulders/gaps, assign hand slots, resample to 15 frames, compute
+    median window scale/center, apply per-block EMA smoothing, and assemble (1, 15, 178).
     """
     if not frames_with_timestamps:
         return None, False, "ERR_POSE_MISSING"
 
     dt_nominal = duration_ms / SEQUENCE_LENGTH
 
-    # --- Paso 1: Validar hombros crudos y filtrar frames válidos ---
+    # 1. Validate raw shoulders and filter valid frames
     valid_raw_frames: list[dict] = []
     for fr in frames_with_timestamps:
         if fr is None:
@@ -470,7 +421,6 @@ def extract_window(
 
     valid_raw_frames.sort(key=lambda f: float(f.get("t_ms", f.get("timestamp_ms", 0.0))))
 
-    # Validación de brechas temporales (gap <= 100 ms)
     for i in range(len(valid_raw_frames) - 1):
         t_curr = float(valid_raw_frames[i].get("t_ms", valid_raw_frames[i].get("timestamp_ms", 0.0)))
         t_next = float(valid_raw_frames[i + 1].get("t_ms", valid_raw_frames[i + 1].get("timestamp_ms", 0.0)))
@@ -478,7 +428,7 @@ def extract_window(
         if gap > MAX_GAP_MS:
             return None, False, "ERR_INVALID_FRAME_GAP_TOO_LARGE"
 
-    # --- Paso 2: Asignar manos por frame crudo (bloques anatómicos desacoplados) ---
+    # 2. Assign anatomical hand slots per raw frame
     frames_with_assigned_blocks: list[dict] = []
     prev_left_w: Optional[tuple[float, float]] = None
     prev_right_w: Optional[tuple[float, float]] = None
@@ -510,7 +460,7 @@ def extract_window(
 
     t_start = frames_with_assigned_blocks[0]["timestamp_ms"]
 
-    # --- Paso 3: Remuestreo temporal por bloque a SEQUENCE_LENGTH frames ---
+    # 3. Resample each anatomical block to SEQUENCE_LENGTH equidistant timestamps
     resampled_blocks: list[dict] = []
 
     for k in range(SEQUENCE_LENGTH):
@@ -531,7 +481,6 @@ def extract_window(
         t_next = next_f["timestamp_ms"]
         tau = 0.0 if t_prev == t_next else max(0.0, min(1.0, (t_target - t_prev) / (t_next - t_prev)))
 
-        # Interpolar Pose linealmente
         interp_pose: list[dict] = []
         for p_i in range(min(len(prev_f["pose"]), len(next_f["pose"]))):
             lp = prev_f["pose"][p_i]
@@ -543,7 +492,6 @@ def extract_window(
                 "visibility": (1.0 - tau) * float(lp.get("visibility", 1.0)) + tau * float(ln.get("visibility", 1.0)),
             })
 
-        # Interpolar Bloque Mano Izquierda
         lh_p = prev_f["left_hand"]
         lh_n = next_f["left_hand"]
         interp_left_hand: Optional[list[dict]] = None
@@ -560,7 +508,6 @@ def extract_window(
         elif tau >= 0.5 and lh_n is not None:
             interp_left_hand = copy.deepcopy(lh_n)
 
-        # Interpolar Bloque Mano Derecha
         rh_p = prev_f["right_hand"]
         rh_n = next_f["right_hand"]
         interp_right_hand: Optional[list[dict]] = None
@@ -584,7 +531,7 @@ def extract_window(
             "timestamp_ms": t_target,
         })
 
-    # --- Paso 4: Escala D y Centro C por ventana (Mediana) ---
+    # 4. Median window scale D and shoulder center C
     D_per_frame: list[float] = []
     Cx_per_frame: list[float] = []
     Cy_per_frame: list[float] = []
@@ -609,7 +556,7 @@ def extract_window(
     if D_ventana < SHOULDERS_D_MIN:
         return None, False, "ERR_SHOULDERS_TOO_SMALL"
 
-    # --- Paso 5: Filtro EMA temporal por bloque (α = 0.50) ---
+    # 5. Per-block temporal EMA smoothing (alpha = 0.50; reset when hand reappears)
     alpha = 0.50
     smoothed_blocks: list[dict] = []
     prev_pose: Optional[list[dict]] = None
@@ -617,7 +564,6 @@ def extract_window(
     prev_right_h: Optional[list[dict]] = None
 
     for k, fr in enumerate(resampled_blocks):
-        # 1. Pose
         curr_pose = fr["pose"]
         smooth_pose: list[dict] = []
         if k == 0 or prev_pose is None:
@@ -634,12 +580,11 @@ def extract_window(
                 })
         prev_pose = smooth_pose
 
-        # 2. Bloque Mano Izquierda
         curr_lh = fr["left_hand"]
         smooth_lh: Optional[list[dict]] = None
         if curr_lh is not None:
             if prev_left_h is None or len(prev_left_h) != len(curr_lh):
-                smooth_lh = copy.deepcopy(curr_lh)  # Reinicio al reaparecer
+                smooth_lh = copy.deepcopy(curr_lh)
             else:
                 smooth_lh = []
                 for pt_idx in range(len(curr_lh)):
@@ -650,12 +595,11 @@ def extract_window(
                     })
         prev_left_h = smooth_lh
 
-        # 3. Bloque Mano Derecha
         curr_rh = fr["right_hand"]
         smooth_rh: Optional[list[dict]] = None
         if curr_rh is not None:
             if prev_right_h is None or len(prev_right_h) != len(curr_rh):
-                smooth_rh = copy.deepcopy(curr_rh)  # Reinicio al reaparecer
+                smooth_rh = copy.deepcopy(curr_rh)
             else:
                 smooth_rh = []
                 for pt_idx in range(len(curr_rh)):
@@ -673,13 +617,12 @@ def extract_window(
             "timestamp_ms": fr["timestamp_ms"],
         })
 
-    # --- Paso 6: Normalización y Ensamble del Tensor (1, 15, 178) ---
+    # 6. Normalize and assemble (1, 15, 178) tensor
     tensor_data = np.zeros((SEQUENCE_LENGTH, TOTAL_FEATURES), dtype=np.float64)
 
     for k, fr in enumerate(smoothed_blocks):
         pose = fr["pose"]
 
-        # Upper pose [0..51]
         for i, p_idx in enumerate(POSE_UPPER_INDICES):
             lm = pose[p_idx]
             tensor_data[k, i * 4 + 0] = (float(lm.get("x", 0.0)) - Cx_ventana) / D_ventana
@@ -687,13 +630,11 @@ def extract_window(
             tensor_data[k, i * 4 + 2] = (float(lm.get("z", 0.0)) - Cz_ventana) / D_ventana
             tensor_data[k, i * 4 + 3] = max(0.0, min(1.0, float(lm.get("visibility", 1.0))))
 
-        # Mano Izquierda [52..114]
         if fr["left_hand"] is not None:
             tensor_data[k, 52:115] = _hand_to_features(fr["left_hand"], D_ventana, Cx_ventana, Cy_ventana)
         else:
             tensor_data[k, 52:115] = 0.0
 
-        # Mano Derecha [115..177]
         if fr["right_hand"] is not None:
             tensor_data[k, 115:178] = _hand_to_features(fr["right_hand"], D_ventana, Cx_ventana, Cy_ventana)
         else:
@@ -703,15 +644,10 @@ def extract_window(
     return result_tensor, True, None
 
 
-# ---------------------------------------------------------------------------
-# 6. Funciones de simetría y espejo
-# ---------------------------------------------------------------------------
-
 def mirror_raw_frame(raw_frame: dict) -> dict:
-    """Aplica la transformación de espejo sobre landmarks crudos (en espacio [0, 1])."""
+    """Apply horizontal mirror transformation (x -> 1 - x, bilateral swaps) to raw [0, 1] landmarks."""
     mirrored = copy.deepcopy(raw_frame)
 
-    # 1. Pose
     pose = mirrored.get("pose")
     if pose:
         for lm in pose:
@@ -724,7 +660,6 @@ def mirror_raw_frame(raw_frame: dict) -> dict:
                 pose[idx_l] = pose[idx_r]
                 pose[idx_r] = temp
 
-    # 2. Manos
     if "hands" in mirrored and isinstance(mirrored["hands"], list):
         for h in mirrored["hands"]:
             if h:
@@ -737,7 +672,6 @@ def mirror_raw_frame(raw_frame: dict) -> dict:
                 if "x" in lm:
                     lm["x"] = 1.0 - float(lm["x"])
 
-    # 3. Handedness
     handedness = mirrored.get("handedness")
     if handedness and isinstance(handedness, list):
         for h_item in handedness:
@@ -754,10 +688,9 @@ def mirror_raw_frame(raw_frame: dict) -> dict:
 
 
 def mirror_features_178(features: np.ndarray) -> np.ndarray:
-    """Aplica la transformación de espejo analítica sobre el vector de 178 features."""
+    """Apply analytical mirror transformation to a normalized 178D feature vector."""
     out = features.copy().astype(np.float64)
 
-    # Upper Pose
     out[0] = -out[0]
     for idx_l, idx_r in UPPER_BILATERAL_INDEX_PAIRS:
         start_l = idx_l * 4
@@ -769,7 +702,6 @@ def mirror_features_178(features: np.ndarray) -> np.ndarray:
         out[start_l:start_l + 4] = block_r
         out[start_r:start_r + 4] = block_l
 
-    # Manos
     left_hand = out[52:115].copy()
     right_hand = out[115:178].copy()
     for i in range(HAND_LANDMARKS):

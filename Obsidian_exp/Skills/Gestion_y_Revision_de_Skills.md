@@ -1,10 +1,11 @@
 ---
 title: "Skills Especializadas: Gestión, Auditoría y Revisión de Skills"
 description: "Guía y conjunto de herramientas para administrar, auditar, evaluar, optimizar y crear nuevas skills de agentes dentro del entorno de desarrollo Google Antigravity."
-version: "2.0.0"
+version: "2.3.0"
 category: "Skills / Meta-Skills & Orquestación"
+status: "Producción"
 target_agents: ["skills-manager", "agent-orchestrator", "prompt-engineer"]
-related_docs:
+recommended_skills:
   - "[[00_Matriz_General_Skills]]"
   - "[[../00_INDICE_MAESTRO]]"
   - "[[Auditoria_Seguridad_y_Calidad]]"
@@ -38,7 +39,7 @@ Esta sección define las herramientas y flujos de trabajo (*meta-skills*) utiliz
 - **Objetivo:** Análisis sistemático del desempeño de agentes autónomos, optimización de prompts de sistema, reducción de tokens redundantes y perfilado de flujos multi-agente en tareas colaborativas.
 - **Cuándo invocar:**
   - Si un agente experimenta alucinaciones en la lectura de la estructura de 178 landmarks.
-  - Para distribuir cargas complejas (ej. entrenamiento simultáneo y generación de interfaz).
+  - Para distribuir cargas complejas entre agentes especializados (ej. frontend vs backend).
 
 ### 3. `workflow-skill-creator`
 - **Ubicación:** `~/.gemini/config/skills/workflow-skill-creator/SKILL.md`
@@ -52,10 +53,6 @@ Esta sección define las herramientas y flujos de trabajo (*meta-skills*) utiliz
   - `~/.gemini/config/skills/prompt-engineer/SKILL.md`
 - **Objetivo:** Diseño de metaprompts, razonamiento en cadena de pensamiento (*Chain of Thought*), salidas estructuradas JSON y control determinista de respuestas.
 
-### 5. `dx-optimizer`
-- **Ubicación:** `~/.gemini/config/skills/dx-optimizer/SKILL.md`
-- **Objetivo:** Optimización de la experiencia del desarrollador (Developer Experience), reduciendo fricciones en scripts de setup, linters y herramientas de diagnóstico.
-
 ---
 
 ## 🔄 Procedimiento para Crear o Actualizar una Skill para ExpresaT
@@ -63,12 +60,12 @@ Esta sección define las herramientas y flujos de trabajo (*meta-skills*) utiliz
 Para documentar o estandarizar una nueva skill en el proyecto:
 
 1. **Definir el Alcance:** Especificar exactamente la entrada, salida y restricciones de la habilidad.
-2. **Estructura YAML Frontmatter:** Todo archivo `SKILL.md` debe contener:
+2. **Estructura YAML Frontmatter Obligatoria:**
    ```yaml
    ---
    name: expresat-gesture-validator
-   description: "Valida la consistencia topológica y normalización de arrays de 178 puntos de MediaPipe."
-   tools: ["run_command", "view_file"]
+   description: "Valida la consistencia topológica y normalización de arrays de 178 puntos de MediaPipe conforme a FEATURE_SPEC v1.3.0."
+   tools: ["run_command", "read_file"]
    ---
    ```
 3. **Instrucciones Deterministas:** Proporcionar scripts verificables en Bash o Python en lugar de explicaciones abstractas.

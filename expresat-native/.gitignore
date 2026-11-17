@@ -7,10 +7,10 @@ install/
 *.dll
 *.exe
 
-# vcpkg (bootstrapped en CI, no se commitea)
+# vcpkg (bootstrapped in CI, not committed)
 vcpkg/
 
-# ONNX Runtime prebuilt (se descarga en CI)
+# Prebuilt ONNX Runtime (downloaded in CI)
 third_party/onnxruntime/
 
 # CMake
@@ -32,10 +32,10 @@ android/app/build/
 android/app/libs/*.aar
 android/local.properties
 
-# Modelos (demasiado grandes, usar LFS o descargar separado)
-# Comenta esta línea si quieres versionar los modelos pequeños
+# Models (too large for git; use LFS or download separately)
+# Uncomment the next line to track smaller models
 # models/
 
-# Logs y temporales
+# Logs and temporary files
 *.log
 .cache/

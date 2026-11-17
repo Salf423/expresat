@@ -10,19 +10,17 @@ import {
   HeartHandshake,
   Mail,
   ChevronRight,
-  Award,
-  Globe2,
   Calendar
 } from 'lucide-react';
 
 const Github = ({ size = 20, ...rest }) => (
-  <svg viewBox="0 0 24 24" width={size} height={size} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+  <svg aria-hidden="true" viewBox="0 0 24 24" width={size} height={size} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" {...rest}>
     <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
   </svg>
 );
 
 const Linkedin = ({ size = 20, ...rest }) => (
-  <svg viewBox="0 0 24 24" width={size} height={size} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+  <svg aria-hidden="true" viewBox="0 0 24 24" width={size} height={size} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" {...rest}>
     <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" />
     <rect x="2" y="9" width="4" height="12" />
     <circle cx="4" cy="4" r="2" />
@@ -149,7 +147,7 @@ const teamMembers = [
 const About = () => {
   const [selectedMember, setSelectedMember] = useState(null);
 
-  // Manejar teclado (Escape) y bloquear scroll al abrir modal
+  // Lock background scroll and handle Escape while member modal is open
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && selectedMember) {
@@ -183,9 +181,6 @@ const About = () => {
         }}
       >
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <span className="chip" style={{ marginBottom: '1rem' }}>
-            <Globe2 size={15} /> Impacto Social & IA
-          </span>
           <h1 className="gradient-text" style={{ fontSize: 'clamp(2.25rem, 5vw, 3.5rem)', fontWeight: 800 }}>
             Sobre Nosotros
           </h1>
@@ -207,9 +202,6 @@ const About = () => {
       {/* Team Grid Section */}
       <section style={{ maxWidth: '1100px', marginInline: 'auto' }}>
         <div className="section-heading" style={{ marginBottom: '3.5rem' }}>
-          <span className="chip" style={{ marginBottom: '0.75rem' }}>
-            <Award size={15} /> Nuestro Equipo
-          </span>
           <h2 style={{ fontSize: 'clamp(1.75rem, 4vw, 2.75rem)', fontWeight: 800 }}>
             Conoce a los Creadores de ExpresaT
           </h2>
@@ -252,7 +244,6 @@ const About = () => {
 
               <span className="btn-outline" style={{ fontSize: '0.8rem', padding: '0.35rem 0.85rem', width: '100%', display: 'flex', justifyContent: 'center' }}>
                 <span>Ver Aportaciones</span>
-                <ChevronRight size={14} />
               </span>
             </article>
           ))}

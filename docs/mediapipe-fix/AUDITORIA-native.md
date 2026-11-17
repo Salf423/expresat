@@ -1,96 +1,89 @@
-# MediaPipe Audit — Desktop / Native
+# Auditoría MediaPipe — Nativo / Desktop (`expresat-native`)
 
-**Scope:** `/home/adrian/Proyectos/expresat/expresat-native/`
-**Project:** ExpresT — Desktop Sign Recognition Application
-**Date:** 2026-11-08
+- **Ámbito:** `expresat-native/`
+- **Proyecto:** ExpresaT — Aplicación Nativa de Escritorio para Reconocimiento de Señas
+- **Fecha:** 2026-11-08
+- **Estado:** **Histórico (Bloqueado posteriormente por conformidad `v1.3.0`)**
 
----
-
-## 1. Overview
-
-The native desktop application is a C++/OpenGL/ImGui-based standalone app for sign language recognition. Key features:
-- **Camera capture** via OpenCV (`cv::VideoCapture`)
-- **ONNX Runtime inference** for sign classification (not MediaPipe Tasks)
-- **Landmark extraction** from camera frames ( MediaPipe stub — TODO to replace)
-- **Two-thread architecture**: camera thread + inference thread
-- **UI** via ImGui rendered with OpenGL3
-
-The app uses **ONNX Runtime** for inference, not MediaPipe Tasks. However, the `extract_landmarks()` method (a stub) is a placeholder for future MediaPipe C++ integration. The feature pipeline expects 178-dimensional feature vectors matching the frontend/backend.
-
-Critical issues identified: MediaPipe stub not replaced, ONNX model path, landmark format consistency, thread safety.
+> [!NOTE]
+> Posteriormente a esta auditoría inicial, el módulo `expresat-native/` fue marcado formalmente como **`NO_CONFORME_FEATURE_SPEC_1_3_0`**: aunque [`inference_thread.cpp`](../../expresat-native/core/src/inference_thread.cpp) calcula la escala 3D de hombros en `normalize_to_shoulders()`, no implementa `ExtractWindow` (`v1.3.0`) y rechaza activamente la ejecución devolviendo `ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0`. Véase [FEATURE_SPEC.md](../dataset-generator/FEATURE_SPEC.md).
 
 ---
 
-## 2. File-by-File Audit
+## 1. Resumen General
 
-### `main.cpp` (desktop entry point)
+La aplicación de escritorio nativa es un cliente C++/OpenGL/ImGui con:
+- **Captura de cámara** mediante OpenCV (`cv::VideoCapture`).
+- **Inferencia ONNX Runtime** (`inference_thread.cpp`), sin MediaPipe Tasks C++ enlazado.
+- **Extracción de landmarks** (`extract_landmarks()` implementado como stub pendiente de reemplazar).
+- **Arquitectura multihilo:** hilo de captura + cola SPSC lock-free (`frame_queue.h`) + hilo de inferencia + bus de resultados (`result_bus.h`).
+- **Interfaz gráfica** con Dear ImGui sobre OpenGL 3.
 
-| Severity | Finding | Evidence | Line(s) |
-|----------|---------|----------|---------|
-| **Low** | **No MediaPipe integration currently** | The app uses ONNX Runtime for inference (`inference_thread.cpp`), not MediaPipe Tasks. The camera thread captures OpenCV frames, the inference thread extracts landmarks (stub) and runs ONNX model. No MediaPipe C++ API is linked or used. | Entire file |
-| **Low** | **Model path hardcoded to ONNX, not MediaPipe** | Default model: `models/exported_model/expresat_gru_float32.onnx` (line 233). No MediaPipe `.task` or `.wasm` files are referenced. | 231-233 |
-| **Low** | **Camera index configurable but no default check** | `camera_index` defaults to 0 (line 234). No check if camera is available before starting threads. | 234 |
-
-### `core/src/inference_thread.cpp` (inference pipeline)
-
-| Severity | Finding | Evidence | Line(s) |
-|----------|---------|----------|---------|
-| **Critical** | **`extract_landmarks()` is a stub with TODO to replace with MediaPipe** | Lines 301-310: `<comment>MediaPipe stub (replace with MediaPipe Tasks C++ API)</comment>`. The method returns hardcoded empty `LandmarkFrame` with 33/21/21 landmark arrays filled with dummy data (or just default-constructed). If the app is used for sign recognition with the ONNX model, the features will be garbage/invalid because no real landmarks are extracted. | 302-310 |
-| **High** | **Landmark feature extraction `extract_pose_upper()` and `extract_hand()`** | Lines 200-228: These methods extract upper-pose (52 dims) and hand (63 dims each) features from the `LandmarkFrame`. They expect the `LandmarkFrame` to be populated with real landmark coordinates. Since `extract_landmarks()` is a stub, these will output zeros or synthetic values. The feature vector dimension (POSE_UPPER_INDICES × 4 + HAND_POINTS × 3) must match the ONNX model's expected input of `NUM_FEATURES`. | 200-228 |
-| **High** | **`preprocess_sequence()` assembles [1, 15, 178] tensor for ONNX** | Lines 170-198: The tensor shape is `[1, SEQUENCE_LENGTH, NUM_FEATURES]` = `[1, 15, 178]`. This matches the 178-feature pipeline (pose 52 + left hand 63 + right hand 63). **Critical**: If `extract_landmarks()` stub doesn't populate real landmarks, the ONNX input tensor will have wrong values (likely zeros or synthetic sine-waves). | 170-198 |
-| **Medium** | **`normalize_to_shoulders()` normalizes relative to shoulders** | Lines 231-255: Uses shoulder landmarks 11 and 12 to compute center and scale. This matches the dataset generator and frontend `LandmarkTracker`. If the stub `extract_landmarks()` populates landmarks with the synthetic data from the dataset generator's stub, normalization will work but on fake data. | 231-255 |
-| **Low** | **FPS calculation and latency tracking** | Lines 130-137: FPS is calculated from inference calls. Latency tracking for preprocess and inference is present. Useful for performance debugging. | 130-137 |
-| **Low** | **Sequence buffer of 15 frames** | Lines 162-166: `push_landmark_frame()` stores frames in a circular buffer of `SEQUENCE_LENGTH` (15). Matches the frontend's 15-frame temporal window and the backend's `ConnectionManager.frame_buffer` deque maxlen=15. | 162-166 |
-
-### `core/include/inference_thread.h` (header)
-
-| Severity | Finding | Evidence | Line(s) |
-|----------|---------|----------|---------|
-| **Low** | **`LandmarkFrame` struct must match frontend/backend format** | The header defines `LandmarkFrame` with `pose` (33), `left_hand` (21), `right_hand` (21). The `PoseLandmark` and `HandLandmark` structs likely have `x, y, z` fields. Must ensure this matches the MediaPipe Tasks output format if/when the stub is replaced. | Entire file — needs verification |
-| **Low** | **`EngineInfo` struct returned by `engine_info()`** | Returns model file, ONNX version, input/output names, sequence length, number of features. Used for diagnostics. | Entire file |
-
-### `core/src/types.h` (types definition)
-
-| Severity | Finding | Evidence | Line(s) |
-|----------|---------|----------|---------|
-| **Low** | **Landmark struct fields** | Need to verify that `PoseLandmark` and `HandLandmark` have `x, y, z` (and possibly `visibility`) fields matching the MediaPipe Tasks C++ API. If the stub is replaced with real MediaPipe, the struct fields must match exactly for the feature extraction methods to compile and run correctly. | Entire file — needs verification against actual MediaPipe C++ API |
-| **Low** | **`SIGN_LABELS` array** | Defines the signs the model can recognize. Must match the ONNX model's output classes. | Entire file |
-
-### `desktop/main.cpp` (already audited above, no additional findings)
+**Hallazgos críticos:** stub de `extract_landmarks()`, ruta del modelo ONNX, consistencia del formato de landmarks y seguridad entre hilos.
 
 ---
 
-## 3. Pipeline Compatibility Issues
+## 2. Auditoría Archivo por Archivo (Instantánea del 2026-11-08)
 
-| Finding | Evidence |
-|---------|----------|
-| **178-feature invariant across all three platforms** | - **Desktop**: `inference_thread.cpp` expects to receive `LandmarkFrame` with 33 pose + 21 left hand + 21 right hand landmarks, then extracts features: 52 (upper pose) + 63 (left hand) + 63 (right hand) = 178 features via `extract_pose_upper()`, `extract_hand()`, and `normalize_to_shoulders()`.<br>- **Frontend**: `useMediaPipe.js` `buildPayload()` returns same structure, sent to backend as 15-frame batch.<br>- **Backend**: `main.py` `run_inference_async()` expects same 178-dim feature vector per frame.<br>**Risk**: If any platform's `extract_landmarks()` or feature extraction changes dimensions, the entire pipeline breaks. The desktop stub is the most likely point of failure since it's not connected to a real MediaPipe implementation. |
-| **Normalization must match** | All three platforms use shoulder-center normalization (landmarks 11 and 12). The frontend `LandmarkTracker.normalizeLandmarks()` (landmarkTracker.js:148-182), the dataset generator `MediapipeExtractor.normalizePose()` (mediapipe_extractor.cpp:181-218), and the desktop `InferenceThread.normalize_to_shoulders()` (inference_thread.cpp:231-255) all use the same formula. This is consistent **as long as** the input landmarks have the same meaning (landmark 11 = left shoulder, 12 = right shoulder). |
-| **MediaPipe Tasks C++ not linked in desktop** | The desktop app has a TODO stub (`extract_landmarks()` line 302-310) but no actual MediaPipe C++ integration. The app relies on ONNX Runtime alone. If the goal is to use MediaPipe for landmark detection, the desktop app needs a real MediaPipe Tasks C++ implementation or a bridge to the frontend worker approach. |
+### `desktop/main.cpp` (punto de entrada de escritorio)
+
+| Severidad | Hallazgo | Evidencia | Líneas (snapshot) |
+|---|---|---|---|
+| **Baja** | **Sin integración real de MediaPipe** | Captura frames OpenCV y ejecuta ONNX Runtime; no enlaza MediaPipe Tasks C++. | Archivo completo |
+| **Baja** | **Ruta de modelo ONNX cableada por defecto** | Apunta a `models/exported_model/expresat_gru_float32.onnx`; sin modelos `.task` ni WASM. | 231–233 |
+| **Baja** | **Índice de cámara sin validación previa** | `camera_index` por defecto en `0` sin verificación previa antes de lanzar hilos. | 234 |
+
+### `core/src/inference_thread.cpp` (pipeline de inferencia)
+
+| Severidad | Hallazgo | Evidencia | Líneas (snapshot) |
+|---|---|---|---|
+| **Crítica** | **`extract_landmarks()` es un stub** | Marcado con comentario `TODO` de reemplazo por MediaPipe Tasks C++ API; retorna un `LandmarkFrame` vacío/sintético sin leer el frame real de cámara, produciendo entradas inválidas para ONNX. | 301–310 |
+| **Alta** | **Extracción `extract_pose_upper()` y `extract_hand()`** | Extraen 52D de pose y 63D por mano esperando un `LandmarkFrame` poblado con coordenadas reales para alcanzar `NUM_FEATURES = 178`. | 200–228 |
+| **Alta** | **`preprocess_sequence()` ensambla el tensor `[1, 15, 178]`** | Requiere 15 frames válidos; si `extract_landmarks()` permanece en stub, el modelo recibe ceros o datos sintéticos. | 170–198 |
+| **Media** | **`normalize_to_shoulders()` normaliza respecto a hombros** | Usa landmarks 11 y 12 (`cx, cy, cz` y distancia 3D). *(Nota: sin `ExtractWindow` `v1.3.0`, el pipeline completo queda bloqueado por conformidad.)* | 231–255 |
+| **Baja** | **Cálculo de FPS y latencias de preprocesamiento/inferencia** | Registra tiempos de inferencia para diagnóstico. | 130–137 |
+| **Baja** | **Buffer circular de 15 frames** | `push_landmark_frame()` mantiene ventana de `SEQUENCE_LENGTH = 15`. | 162–166 |
+
+### `core/include/inference_thread.h` (cabecera)
+
+| Severidad | Hallazgo | Evidencia | Líneas |
+|---|---|---|---|
+| **Baja** | **Compatibilidad de `LandmarkFrame`** | Define `pose` (33), `left_hand` (21) y `right_hand` (21); debe coincidir con cualquier extractor MediaPipe futuro. | Archivo completo |
+| **Baja** | **Estructura diagnóstica `EngineInfo`** | Expone archivo de modelo, versión ORT, nombres de tensores, longitud de secuencia y dimensión de features. | Archivo completo |
+
+### `core/include/landmark_types.h` *(citado originalmente por error como `core/src/types.h`)*
+
+| Severidad | Hallazgo | Evidencia | Líneas |
+|---|---|---|---|
+| **Baja** | **Campos de structs de landmarks** | `PoseLandmark` (`x, y, z, visibility`) y `HandLandmark` (`x, y, z`) en [`core/include/landmark_types.h`](../../expresat-native/core/include/landmark_types.h) deben coincidir exactamente con la salida de MediaPipe si se reemplaza el stub. | Archivo completo |
+| **Baja** | **Constantes dimensionales del modelo** | `SEQUENCE_LENGTH = 15`, `NUM_FEATURES = 178`, `NUM_CLASSES = 15` y `POSE_UPPER_INDICES` deben mantenerse alineados con `model_metadata.json`. | Archivo completo |
 
 ---
 
-## 4. Severity Summary
+## 3. Compatibilidad entre Plataformas (Análisis de 2026-11-08)
 
-| Severity | Count |
-|----------|-------|
-| Critical | 1 |
-| High | 3 |
-| Medium | 1 |
-| Low | 7 |
-
-**Priority order for fixes:**
-1. **Replace `extract_landmarks()` stub with real MediaPipe Tasks C++ API** or integrate the frontend Web Worker approach (send frames to worker, receive landmarks). This is the highest priority because without real landmarks, the ONNX inference will produce garbage results.
-2. Ensure `LandmarkFrame` / `PoseLandmark` / `HandLandmark` structs match the MediaPipe Tasks C++ API format if the stub is replaced.
-3. Verify `NUM_FEATURES` = 178 matches the ONNX model's expected input dimension.
-4. Ensure `normalize_to_shoulders()` formula consistency with frontend/dataset generator.
-5. Add command-line or config option to switch between stub/synthetic landmarks and real MediaPipe input.
+| Hallazgo | Evidencia |
+|---|---|
+| **Invariante 178D transversal** | Desktop (`extract_pose_upper` + `extract_hand`), web y backend requieren coincidir en `52 + 63 + 63 = 178` características por frame en ventanas de 15 frames. |
+| **Normalización por hombros** | Desktop, generador C++ y modelo Python coinciden en el uso de hombros 11 y 12, aunque solo Python y JS implementan hoy `ExtractWindow` completo (`FEATURE_SPEC v1.3.0`). |
+| **MediaPipe Tasks C++ no enlazado** | La app de escritorio opera únicamente con OpenCV + ONNX Runtime; el módulo nativo quedó formalmente bloqueado (`ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0`) hasta implementar el extractor conforme. |
 
 ---
 
-## 5. Evidence Collection
+## 4. Resumen de Severidades y Prioridades Originales
 
-- **`extract_landmarks()` is a stub**: `inference_thread.cpp:301-310` — the method has a TODO comment and returns default-constructed `LandmarkFrame` without reading from the actual camera frame. The `// TODO: Replace with MediaPipe Tasks C++ API` comment confirms this is pending work.
-- **ONNX model uses 178 features**: The tensor shape `[1, 15, 178]` (inference_thread.cpp:275) matches the 178-feature pipeline. If the stub produces wrong landmark data, the ONNX model will receive incorrect inputs.
-- **Normalization consistency**: `normalize_to_shoulders()` (lines 231-255) uses the same shoulder-center + scale formula as the frontend and dataset generator, which is good for when the stub is eventually replaced.
-- **No MediaPipe C++ integration**: The desktop app currently has zero MediaPipe Tasks C++ code. It's purely ONNX Runtime + OpenCV camera capture. MediaPipe would need to be added separately.
+| Severidad | Cantidad |
+|---|---|
+| Crítica | 1 |
+| Alta | 3 |
+| Media | 1 |
+| Baja | 7 |
+
+**Orden de prioridades registrado:**
+1. Reemplazar el stub `extract_landmarks()` con extracción MediaPipe real o puente equivalente.
+2. Verificar alineación de `LandmarkFrame` / `PoseLandmark` / `HandLandmark` con la API elegida.
+3. Confirmar coincidencia de `NUM_FEATURES = 178` con el modelo ONNX activo.
+4. Garantizar conformidad completa con [`FEATURE_SPEC.md`](../dataset-generator/FEATURE_SPEC.md) (`ExtractWindow`) antes de levantar el bloqueo `NO_CONFORME_FEATURE_SPEC_1_3_0`.
+
+**Evidencia clave verificada:**
+- `inference_thread.cpp`: `extract_landmarks()` retorna un `LandmarkFrame` vacío (stub); `preprocess_sequence()` genera tensores `[1, 15, 178]`; actualmente `InferenceThread::run()` aborta con `ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0` salvo que `CPP_FEATURE_SPEC_CONFORMANCE == "CONFORME"`.

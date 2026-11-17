@@ -1,20 +1,8 @@
 """
-inference_engine.py — ExpresaT: Motor de Inferencia ONNX Runtime (CPU-Only)
-===========================================================================
-Clase de producción que carga el modelo GRU cuantizado a INT8 en formato ONNX
-y ejecuta inferencia sobre lotes de 15 frames de landmarks de MediaPipe.
+Production CPU-only ONNX Runtime inference engine.
 
-Características clave:
-    - ONNX Runtime como motor de inferencia (NO PyTorch/TensorFlow en prod)
-    - Preprocesamiento vectorizado con NumPy (zero-copy cuando es posible)
-    - Normalización relativa a los hombros para invariancia de posición
-    - Thread-safe: usa un lock para serializar acceso a la sesión ONNX
-    - Latencia objetivo: < 100ms por batch en CPU
-
-Uso:
-    engine = InferenceEngine("./exported_model")
-    result = engine.predict(batch_15_frames)
-    print(result)  # {"label": "hola", "confidence": 0.95, "latency_ms": 3.2}
+Loads the quantized INT8 GRU model and runs thread-safe inference over
+15-frame MediaPipe landmark windows normalized relative to shoulder center.
 """
 
 import json
@@ -35,64 +23,36 @@ except ImportError:
         from expresat.models.feature_extractor import extract_window, FEATURE_SPEC_VERSION
 
 
-# =============================================================================
-# CONSTANTES — Deben coincidir con train_and_export.py
-# =============================================================================
-
+# Must match train_and_export.py
 SEQUENCE_LENGTH = 15
-
-# Pose superior: landmarks de MediaPipe que nos interesan
-# Índices de MediaPipe Pose (33 total) que corresponden al torso superior:
-#   0: nariz, 11-12: hombros, 13-14: codos, 15-16: muñecas,
-#   17-18: meñique, 19-20: índice, 21-22: pulgar, 23-24: caderas
+# Upper-body MediaPipe Pose indices (nose, shoulders, elbows, wrists, hand anchors)
 POSE_UPPER_INDICES = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-POSE_COORDS = 4       # x, y, z, visibility
+POSE_COORDS = 4
 HAND_LANDMARKS = 21
-HAND_COORDS = 3       # x, y, z
+HAND_COORDS = 3
 
 NUM_FEATURES = (len(POSE_UPPER_INDICES) * POSE_COORDS) + (HAND_LANDMARKS * HAND_COORDS * 2)
-# = 52 + 63 + 63 = 178
 
 
 class InferenceEngine:
     """
-    Motor de inferencia de producción para ExpresaT.
-
-    Carga el modelo ONNX cuantizado y proporciona una interfaz limpia
-    para ejecutar predicciones sobre secuencias de landmarks.
-
-    Attributes:
-        session: Sesión de ONNX Runtime configurada para CPU
-        labels: Lista de etiquetas de señas
-        metadata: Metadatos del modelo (dimensiones, config, etc.)
-        confidence_threshold: Umbral mínimo de confianza para reportar
+    Thread-safe ONNX Runtime inference wrapper for ExpresaT sign classification.
     """
 
     def __init__(self, model_dir: str, confidence_threshold: float = 0.5):
         """
-        Inicializa el motor de inferencia.
-
-        Args:
-            model_dir: Directorio que contiene el modelo .onnx y model_metadata.json
-            confidence_threshold: Confianza mínima (0-1) para considerar una predicción válida
-
-        Raises:
-            FileNotFoundError: Si no se encuentra el modelo o los metadatos
-            RuntimeError: Si ONNX Runtime no puede cargar el modelo
+        Initialize the inference engine from `model_dir` containing the `.onnx`
+        artifact and `model_metadata.json`.
         """
         self.model_dir = Path(model_dir)
         self.confidence_threshold = confidence_threshold
         self._lock = threading.Lock()
 
-        # --- Cargar metadatos ---
         self.metadata = self._load_metadata()
         self.labels = self.metadata["labels"]
         self.num_classes = self.metadata["num_classes"]
 
-        # --- Inicializar sesión ONNX Runtime ---
         self.session = self._create_onnx_session()
-
-        # --- Cachear nombre del input para evitar lookups repetidos ---
         self._input_name = self.session.get_inputs()[0].name
 
         print(f"    InferenceEngine inicializado")
@@ -102,7 +62,7 @@ class InferenceEngine:
         print(f"    Threshold:  {self.confidence_threshold}")
 
     def _load_metadata(self) -> dict:
-        """Carga y valida el archivo de metadatos del modelo."""
+        """Load model metadata JSON from `model_dir`."""
         meta_path = self.model_dir / "model_metadata.json"
         if not meta_path.exists():
             raise FileNotFoundError(
@@ -113,10 +73,7 @@ class InferenceEngine:
             return json.load(f)
 
     def _get_model_path(self) -> Path:
-        """
-        Busca el mejor modelo disponible (prefiere INT8 cuantizado).
-        Orden de preferencia: int8.onnx > float32.onnx
-        """
+        """Prefer quantized INT8 ONNX model; fall back to float32."""
         int8_path = self.model_dir / "expresat_gru_int8.onnx"
         float32_path = self.model_dir / "expresat_gru_float32.onnx"
 
@@ -132,12 +89,7 @@ class InferenceEngine:
             )
 
     def _create_onnx_session(self):
-        """
-        Creates a CPU-optimized ONNX Runtime session.
-        - Dynamic thread allocation matching CPU cores (max 4)
-        - Arena allocator disabled for reduced RAM footprint (~40MB initial savings)
-        - Memory pattern reuse enabled
-        """
+        """Create a CPU-optimized ONNX Runtime session (arena disabled to save RAM)."""
         import onnxruntime as ort
         import os
 
@@ -151,13 +103,8 @@ class InferenceEngine:
         session_options.intra_op_num_threads = intra_threads
         session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-
-        # Disable CPU memory arena to minimize RAM usage on constrained systems
         session_options.enable_cpu_mem_arena = False
-
-        # Reuse memory allocation patterns across runs
         session_options.enable_mem_pattern = True
-
         session_options.log_severity_level = 3  # ERROR only
 
         session = ort.InferenceSession(
@@ -168,31 +115,15 @@ class InferenceEngine:
 
         return session
 
-    # =========================================================================
-    # PREPROCESAMIENTO — Normalización vectorizada con NumPy
-    # =========================================================================
-
     def preprocess_batch(self, raw_frames: list[dict]) -> np.ndarray:
-        """
-        Preprocesa una secuencia de frames crudos usando ExtractWindow canónico v1.2.2.
-
-        Returns:
-            np.ndarray de forma (1, 15, 178) dtype float32
-        Raises:
-            ValueError: Si la validación falla (cero caídas silenciosas a coordenadas crudas).
-        """
+        """Preprocess raw frames via canonical `extract_window` into shape (1, 15, 178) float32."""
         tensor, valid, error = extract_window(raw_frames)
         if not valid or tensor is None:
             raise ValueError(f"Preprocesamiento de inferencia falló: {error} (prohibido caer a coordenadas crudas)")
         return tensor
 
     def _extract_pose_upper(self, pose_landmarks: Optional[list]) -> np.ndarray:
-        """
-        Extrae los 13 landmarks del torso superior con visibility.
-
-        Returns:
-            np.ndarray de forma (52,) → 13 landmarks × 4 coordenadas
-        """
+        """Extract the 13 upper-body pose landmarks with visibility into a (52,) array."""
         if not pose_landmarks:
             return np.zeros(len(POSE_UPPER_INDICES) * POSE_COORDS, dtype=np.float32)
 
@@ -212,16 +143,10 @@ class InferenceEngine:
         return np.array(features, dtype=np.float32)
 
     def _extract_hand(self, hand_landmarks: Optional[list]) -> np.ndarray:
-        """
-        Extrae los 21 landmarks de una mano.
-
-        Returns:
-            np.ndarray de forma (63,) → 21 landmarks × 3 coordenadas
-        """
+        """Extract 21 hand landmarks into a (63,) float32 array."""
         if not hand_landmarks:
             return np.zeros(HAND_LANDMARKS * HAND_COORDS, dtype=np.float32)
 
-        # Vectorización NumPy: convertir lista de dicts a array directamente
         try:
             hand_array = np.array(
                 [[lm.get("x", 0.0), lm.get("y", 0.0), lm.get("z", 0.0)]
@@ -230,7 +155,6 @@ class InferenceEngine:
             )
             result = hand_array.flatten()
 
-            # Pad si hay menos de 21 landmarks
             if result.shape[0] < HAND_LANDMARKS * HAND_COORDS:
                 result = np.pad(
                     result,
@@ -244,86 +168,52 @@ class InferenceEngine:
     def _normalize_to_shoulders(self, features: np.ndarray,
                                  pose_landmarks: list) -> np.ndarray:
         """
-        Normaliza las coordenadas haciéndolas relativas al punto medio
-        entre los hombros (landmarks 11 y 12 de MediaPipe Pose) y
-        las escala por la distancia inter-humeral 3D.
-
-        Esto hace que el modelo sea invariante a la posición y escala aparente
-        de la persona en el frame. Replica exactamente la normalización del
-        generador C++ (mediapipe_extractor.cpp::normalizePose) y la del
-        entrenamiento (train_and_export.py).
-
-        Args:
-            features: Vector de features del frame (178,)
-            pose_landmarks: Lista completa de 33 landmarks de pose
-
-        Returns:
-            features normalizadas (178,)
+        Normalize coordinates relative to the shoulder midpoint (pose 11 and 12)
+        and scale by 3D inter-shoulder distance, matching the C++ extractor.
         """
         try:
             left_shoulder = pose_landmarks[11]
             right_shoulder = pose_landmarks[12]
 
-            # Punto medio entre hombros como origen
             center_x = (left_shoulder.get("x", 0) + right_shoulder.get("x", 0)) / 2.0
             center_y = (left_shoulder.get("y", 0) + right_shoulder.get("y", 0)) / 2.0
             center_z = (left_shoulder.get("z", 0) + right_shoulder.get("z", 0)) / 2.0
 
-            # Distancia 3D inter-humeral como factor de escala (invariancia de tamaño aparente)
-            # IMPORTANTE: usar distancia 3D completa (x,y,z), igual que el generador C++
+            # Full 3D Euclidean shoulder distance to match C++ normalization
             dx = left_shoulder.get("x", 0) - right_shoulder.get("x", 0)
             dy = left_shoulder.get("y", 0) - right_shoulder.get("y", 0)
             dz = left_shoulder.get("z", 0) - right_shoulder.get("z", 0)
             shoulder_dist = np.sqrt(dx*dx + dy*dy + dz*dz)
 
-            # Evitar división por cero
             scale = max(shoulder_dist, 1e-6)
-
             normalized = features.copy()
 
-            # --- Normalizar pose superior (13 landmarks × 4 coords) ---
-            pose_end = len(POSE_UPPER_INDICES) * POSE_COORDS  # 52
+            # Upper pose: preserve visibility at offset +3
+            pose_end = len(POSE_UPPER_INDICES) * POSE_COORDS
             for j in range(0, pose_end, POSE_COORDS):
-                normalized[j]     = (features[j]     - center_x) / scale  # x
-                normalized[j + 1] = (features[j + 1] - center_y) / scale  # y
-                normalized[j + 2] = (features[j + 2] - center_z) / scale  # z
-                # visibility (j+3) se deja sin modificar
+                normalized[j]     = (features[j]     - center_x) / scale
+                normalized[j + 1] = (features[j + 1] - center_y) / scale
+                normalized[j + 2] = (features[j + 2] - center_z) / scale
 
-            # --- Normalizar manos (21 landmarks × 3 coords cada una) ---
-            hand_start = pose_end  # 52
-            hand_total = HAND_LANDMARKS * HAND_COORDS * 2  # 126
+            hand_start = pose_end
+            hand_total = HAND_LANDMARKS * HAND_COORDS * 2
             for j in range(hand_start, hand_start + hand_total, HAND_COORDS):
-                normalized[j]     = (features[j]     - center_x) / scale  # x
-                normalized[j + 1] = (features[j + 1] - center_y) / scale  # y
-                normalized[j + 2] = (features[j + 2] - center_z) / scale  # z
+                normalized[j]     = (features[j]     - center_x) / scale
+                normalized[j + 1] = (features[j + 1] - center_y) / scale
+                normalized[j + 2] = (features[j + 2] - center_z) / scale
 
             return normalized
 
         except (IndexError, KeyError, TypeError):
-            # Si falla la normalización, devolver features sin normalizar
             return features
-
-    # =========================================================================
-    # INFERENCIA
-    # =========================================================================
 
     def predict(self, raw_frames: list[dict]) -> dict:
         """
-        Ejecuta el pipeline completo: preprocesamiento → inferencia → post-procesamiento.
-
-        Args:
-            raw_frames: Lista de hasta 15 frames de landmarks de MediaPipe.
-
-        Returns:
-            dict con:
-                - "label": str — Seña detectada (o None si bajo threshold)
-                - "confidence": float — Probabilidad de la predicción
-                - "latency_ms": float — Tiempo total del pipeline
-                - "all_probabilities": dict — Probabilidades por clase (top 5)
+        Run preprocessing, ONNX Runtime inference, and softmax post-processing
+        over a batch of up to 15 raw MediaPipe frames.
         """
         start_time = time.perf_counter()
 
-        # 1. Preprocesar con extract_window canónico v1.2.2 (sin caídas silenciosas a crudo)
         tensor, valid, error = extract_window(raw_frames)
         if not valid or tensor is None:
             return {
@@ -335,28 +225,24 @@ class InferenceEngine:
                 "all_probabilities": {},
             }
 
-        # 2. Inferir (thread-safe)
         with self._lock:
             logits = self.session.run(
                 None,
                 {self._input_name: tensor}
-            )[0]  # Shape: (1, num_classes)
+            )[0]
 
-        # 3. Post-procesar
         probabilities = self._softmax(logits[0])
         predicted_idx = int(np.argmax(probabilities))
         predicted_confidence = float(probabilities[predicted_idx])
 
         latency_ms = (time.perf_counter() - start_time) * 1000
 
-        # Top-5 predicciones para debugging/UI
         top_indices = np.argsort(probabilities)[::-1][:5]
         top_predictions = {
             self.labels[idx]: round(float(probabilities[idx]), 4)
             for idx in top_indices
         }
 
-        # Aplicar threshold de confianza
         if predicted_confidence < self.confidence_threshold:
             return {
                 "label": None,
@@ -374,19 +260,12 @@ class InferenceEngine:
 
     @staticmethod
     def _softmax(logits: np.ndarray) -> np.ndarray:
-        """
-        Softmax numéricamente estable sobre logits.
-        Resta el máximo antes de exponenciar para evitar overflow.
-        """
+        """Numerically stable softmax (subtracts max logit before exp)."""
         exp_logits = np.exp(logits - np.max(logits))
         return exp_logits / exp_logits.sum()
 
-    # =========================================================================
-    # UTILIDADES
-    # =========================================================================
-
     def get_info(self) -> dict:
-        """Retorna información del motor de inferencia para health checks."""
+        """Return inference engine metadata for health checks."""
         model_path = self._get_model_path()
         return {
             "engine": "ONNX Runtime",
@@ -401,21 +280,16 @@ class InferenceEngine:
         }
 
 
-# =============================================================================
-# MODO STANDALONE — pruebas rápidas
-# =============================================================================
-
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Test InferenceEngine")
     parser.add_argument("--model-dir", default="./exported_model",
-                        help="Directorio del modelo exportado")
+                        help="Directory containing exported ONNX model")
     parser.add_argument("--quantize", action="store_true",
-                        help="Cuantizar el modelo float32 a INT8 dinámico")
+                        help="Quantize float32 model to dynamic INT8")
     args = parser.parse_args()
 
-    # Dynamic INT8 Quantization CLI tool
     if args.quantize:
         try:
             from onnxruntime.quantization import quantize_dynamic, QuantType
@@ -430,9 +304,8 @@ if __name__ == "__main__":
                 print("  Run train_and_export.py first to export FP32 model.")
                 exit(1)
 
-            print(f"\n Quantizing {float32_path.name} → Dynamic INT8...")
+            print(f"\n Quantizing {float32_path.name} -> Dynamic INT8...")
 
-            # Quantize MatMul and GEMM operations to INT8
             quantize_dynamic(
                 model_input=str(float32_path),
                 model_output=str(int8_path),
@@ -454,12 +327,8 @@ if __name__ == "__main__":
             print("\n  ERROR: onnxruntime-tools package missing.")
         exit(0)
 
-    # ==========================================================================
-    # PRUEBA NORMAL DEL MOTOR
-    # ==========================================================================
     engine = InferenceEngine(args.model_dir, confidence_threshold=0.3)
 
-    # Generar batch sintético de 15 frames
     dummy_frames = []
     for _ in range(15):
         dummy_frames.append({

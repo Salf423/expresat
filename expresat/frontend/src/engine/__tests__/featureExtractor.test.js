@@ -1,13 +1,11 @@
 /**
- * src/engine/__tests__/featureExtractor.test.js
- *
- * Suite de conformidad de featureExtractor.js (JavaScript) con FEATURE_SPEC.md v1.2.2.
- * Consume OBLIGATORIAMENTE tests/fixtures/feature_spec_cases.json y compara
- * ELEMENTO A ELEMENTO bajo la norma del supremo L_inf <= 1e-6.
+ * Mathematical conformance suite for featureExtractor.js against FEATURE_SPEC.md.
+ * Compares element-by-element against tests/fixtures/feature_spec_cases.json under L_inf <= 1e-6.
  */
 
 import { describe, it, expect } from 'vitest';
 import fixtures from '../../../../../tests/fixtures/feature_spec_cases.json';
+import realLaterality15f from '../../../../../tests/fixtures/real_recording_laterality_15f.json';
 import {
   FEATURE_SPEC_VERSION,
   TOTAL_FEATURES,
@@ -186,7 +184,7 @@ describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.3.0', () => {
     it('Rechazo de manos sin etiqueta categoryName o con Unknown (Punto 3)', () => {
       const baseRaw = JSON.parse(JSON.stringify(fixtures.frame_cases.TC_01_canonical_frame.input));
 
-      // Caso 1: Mano detectada pero sin handedness
+      // Case 1: Hand detected with empty handedness
       const rawNoLabel = JSON.parse(JSON.stringify(baseRaw));
       rawNoLabel.handedness = [];
       rawNoLabel.hands = [Array(21).fill({ x: 0.63, y: 0.5, z: 0.0 })];
@@ -194,7 +192,7 @@ describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.3.0', () => {
       expect(res1.valid).toBe(false);
       expect(res1.error).toContain('ERR_HAND_MISSING_LABEL');
 
-      // Caso 2: categoryName Unknown
+      // Case 2: categoryName Unknown
       const rawUnknown = JSON.parse(JSON.stringify(baseRaw));
       rawUnknown.handedness = [[{ categoryName: 'Unknown', score: 0.5 }]];
       rawUnknown.hands = [Array(21).fill({ x: 0.63, y: 0.5, z: 0.0 })];
@@ -202,7 +200,7 @@ describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.3.0', () => {
       expect(res2.valid).toBe(false);
       expect(res2.error).toContain('ERR_HAND_MISSING_LABEL');
 
-      // Caso 3: Formato grabador con categoryName: 'Unknown'
+      // Case 3: Recorder object format with categoryName 'Unknown'
       const rawDevUnknown = JSON.parse(JSON.stringify(baseRaw));
       rawDevUnknown.hands = [
         { landmarks: Array(21).fill({ x: 0.63, y: 0.5, z: 0.0 }), categoryName: 'Unknown', score: 0.5 },
@@ -211,7 +209,7 @@ describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.3.0', () => {
       expect(res3.valid).toBe(false);
       expect(res3.error).toContain('ERR_HAND_MISSING_LABEL');
 
-      // Caso 4: Etiqueta válida ('Right') es aceptada
+      // Case 4: Valid label accepted
       const rawValid = JSON.parse(JSON.stringify(baseRaw));
       rawValid.hands = [
         { landmarks: Array(21).fill({ x: 0.63, y: 0.5, z: 0.0 }), categoryName: 'Right', score: 0.95 },
@@ -219,6 +217,91 @@ describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.3.0', () => {
       const res4 = validateFrameHandLabels(rawValid);
       expect(res4.valid).toBe(true);
       expect(res4.error).toBeNull();
+    });
+
+    it('TC_06_recorder_object_hands produce el mismo vector que TC_01_canonical_frame', () => {
+      const f01 = extractFrameFeatures(fixtures.frame_cases.TC_01_canonical_frame.input);
+      const f06 = extractFrameFeatures(fixtures.frame_cases.TC_06_recorder_object_hands.input);
+      expect(f01.valid).toBe(true);
+      expect(f06.valid).toBe(true);
+      assertLinfClose(f06.features, Array.from(f01.features), 1e-6, 'TC_06 vs TC_01');
+    });
+
+    it.fails('Espejo con objetos {landmarks, categoryName, score}: invierte x y categoryName (fallo conocido hasta Fase 2)', () => {
+      const raw = JSON.parse(JSON.stringify(fixtures.frame_cases.TC_06_recorder_object_hands.input));
+      const mirrored = mirrorRawFrame(raw);
+
+      expect(mirrored.hands[0].categoryName).toBe('Left');
+      expect(mirrored.hands[1].categoryName).toBe('Right');
+      expect(mirrored.hands[0].landmarks[0].x).toBeCloseTo(1.0 - 0.70, 5);
+      expect(mirrored.hands[1].landmarks[0].x).toBeCloseTo(1.0 - 0.30, 5);
+      expect(mirrorRawFrame(mirrored)).toEqual(raw);
+    });
+
+    it.fails('Conmutatividad asimétrica de espejo con objeto de 1 mano (fallo conocido hasta Fase 2)', () => {
+      const base = JSON.parse(JSON.stringify(fixtures.frame_cases.TC_06_recorder_object_hands.input));
+      const oneHand = { pose: base.pose, hands: [base.hands[0]] };
+
+      const mirrored = mirrorRawFrame(oneHand);
+      const { features: featMirroredRaw, valid: vm } = extractFrameFeatures(mirrored);
+      const { features: featBase, valid: vb } = extractFrameFeatures(oneHand);
+      expect(vm).toBe(true);
+      expect(vb).toBe(true);
+
+      const featMirrorFunc = mirrorFeatures178(featBase);
+      assertLinfClose(featMirroredRaw, featMirrorFunc, 1e-6, 'Conmutatividad objeto 1 mano');
+    });
+  });
+
+  describe('Lateralidad real 15 frames (TDD xfail para FEATURE_SPEC v1.4.0)', () => {
+    it.fails('v1.4.0: 15 frames reales asignan Left->leftHand[52..114] y Right->rightHand[115..177] igual que Pose', () => {
+      for (const fr of realLaterality15f.frames) {
+        const raw = {
+          pose: JSON.parse(JSON.stringify(fr.pose)),
+          hands: JSON.parse(JSON.stringify(fr.hands)),
+        };
+        const { features, valid, error } = extractFrameFeatures(raw);
+        expect(valid, `Frame ${fr.source_frame_idx} error=${error}`).toBe(true);
+
+        const hasLeft = features.slice(52, 115).some((v) => Math.abs(v) > 1e-9);
+        const hasRight = features.slice(115, 178).some((v) => Math.abs(v) > 1e-9);
+
+        expect(hasLeft, `Frame ${fr.source_frame_idx} leftHand`).toBe(
+          fr.expected_pose_slots.includes('leftHand')
+        );
+        expect(hasRight, `Frame ${fr.source_frame_idx} rightHand`).toBe(
+          fr.expected_pose_slots.includes('rightHand')
+        );
+      }
+    });
+
+    it.fails('v1.4.0: extractWindow mantiene convención directa en los 15 frames reales (incluidos AMBIG 20 y 78)', () => {
+      const dtStep = 1000.0 / 15.0;
+      const windowFrames = realLaterality15f.frames.map((fr, idx) => ({
+        t_ms: idx * dtStep,
+        pose: JSON.parse(JSON.stringify(fr.pose)),
+        hands: JSON.parse(JSON.stringify(fr.hands)),
+      }));
+
+      const { tensor, valid, error } = extractWindow(windowFrames, 15, 1000.0);
+      expect(valid, `extractWindow error=${error}`).toBe(true);
+      expect(tensor.length).toBe(SEQUENCE_LENGTH * TOTAL_FEATURES);
+
+      for (let k = 0; k < realLaterality15f.frames.length; k++) {
+        const fr = realLaterality15f.frames[k];
+        const base = k * TOTAL_FEATURES;
+        const leftSlice = tensor.slice(base + 52, base + 115);
+        const rightSlice = tensor.slice(base + 115, base + 178);
+        const hasLeft = leftSlice.some((v) => Math.abs(v) > 1e-9);
+        const hasRight = rightSlice.some((v) => Math.abs(v) > 1e-9);
+
+        expect(hasLeft, `Slot ${k} (frame ${fr.source_frame_idx}) leftHand`).toBe(
+          fr.expected_pose_slots.includes('leftHand')
+        );
+        expect(hasRight, `Slot ${k} (frame ${fr.source_frame_idx}) rightHand`).toBe(
+          fr.expected_pose_slots.includes('rightHand')
+        );
+      }
     });
   });
 });

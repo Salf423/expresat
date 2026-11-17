@@ -31,21 +31,21 @@
 
     <main class="container">
         <div class="traductor-container reveal">
-            <!-- Zona de Video y Liquid Loader -->
+            <!-- Video and liquid loader section -->
             <div class="glass-panel video-section">
-                <!-- Capa de Carga -->
+                <!-- Loading overlay -->
                 <div id="liquid-loader" class="liquid-loader-overlay">
                     <div class="liquid-loader"></div>
                     <p class="progress-text">Inicializando IA...</p>
                 </div>
                 
-                <!-- Video Oculto Base -->
+                <!-- Hidden raw video source -->
                 <video id="input-video" autoplay playsinline style="display: none;"></video>
-                <!-- Canvas de renderizado -->
+                <!-- Output render canvas -->
                 <canvas id="output-canvas"></canvas>
             </div>
 
-            <!-- Panel de Resultados -->
+            <!-- Results panel -->
             <div class="glass-panel result-panel">
                 <h3>Traducción</h3>
                 <div id="translation-text" class="translation-box">
@@ -97,12 +97,12 @@
 
     <script src="./js/ui_controller.js"></script>
     <script src="./js/navbar.js"></script>
-    <!-- Script temporal para demostrar Liquid Loader en UI -->
+    <!-- Temporary script demonstrating the Liquid Loader UI -->
     <script>
         document.getElementById('btn-start').addEventListener('click', function() {
             this.classList.add('btn-loading');
             this.querySelector('.btn-text').innerText = 'Conectando...';
-            // Simular carga de 2 segundos y luego ocultar loader
+            // Simulate a 2-second load before hiding the loader
             setTimeout(() => {
                 document.getElementById('liquid-loader').classList.add('hidden');
                 this.classList.remove('btn-loading');

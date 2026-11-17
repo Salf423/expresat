@@ -1,0 +1,43 @@
+{
+  "environment": {
+    "python_version": "3.14.9",
+    "mediapipe_version": "1.2.2",
+    "cpu_model": "AMD Ryzen 3 7320U with Radeon Graphics (4C/8T)",
+    "frames": 200,
+    "resolution": "640x480"
+  },
+  "stages": {
+    "hand_landmarker": {
+      "mean": 49.15,
+      "p50": 49.64,
+      "p95": 51.55,
+      "p99": 52.57,
+      "max": 70.89
+    },
+    "pose_landmarker": {
+      "mean": 23.77,
+      "p50": 22.32,
+      "p95": 24.46,
+      "p99": 52.15,
+      "max": 52.32
+    },
+    "total_frame": {
+      "mean": 72.93,
+      "p50": 72.1,
+      "p95": 76.5,
+      "p99": 93.5,
+      "max": 101.24
+    }
+  },
+  "performance": {
+    "effective_fps_mean": 13.71,
+    "fps_p50": 13.87,
+    "fps_p95": 13.07
+  },
+  "cpu_usage": {
+    "process_cpu_percent": 101.2,
+    "user_cpu_seconds": 15.02,
+    "system_cpu_seconds": 0.12,
+    "wall_duration_seconds": 14.96
+  }
+}

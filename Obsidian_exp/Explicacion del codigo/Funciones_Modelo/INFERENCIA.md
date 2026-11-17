@@ -1,7 +1,7 @@
 ---
-title: "Explicación del Código: Motor de Inferencia en Tiempo Real"
-description: "Implementación detallada de la inferencia en C++ y Python: sesiones ONNX Runtime, normalización conforme a FEATURE_SPEC v1.2.1 y evaluación de umbral de confianza."
-version: "2.2.1"
+title: "Explicación del Código: Motor de Inferencia en Tiempo Real (InferenceEngine)"
+description: "Implementación detallada de la inferencia en tiempo real en Python y C++: sesiones ONNX Runtime en CPU, normalización canónica con ExtractWindow v1.3.0 y evaluación del umbral de confianza."
+version: "2.3.0"
 category: "Código / IA & Inferencia"
 status: "Producción"
 target_agents: ["ml-engineer", "cpp-pro", "fastapi-pro"]
@@ -10,7 +10,7 @@ recommended_skills:
   - "[[../../Skills/Backend_APIs_y_Sistemas|Backend_APIs_y_Sistemas]] (`cpp-pro`, `fastapi-pro`)"
 related_docs:
   - "[[../../00_INDICE_MAESTRO]]"
-  - "[[../../Especificacion_Feature_Spec_v1_2_1]]"
+  - "[[../../Especificacion_Feature_Spec_v1_3_0]]"
   - "[[Training_and_Inference]]"
   - "[[ENTRENO Y EXPORTACION]]"
   - "[[../Backend/Main C++]]"
@@ -21,94 +21,113 @@ related_docs:
 
 > **Navegación:** [[../../00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Explicación del Código** > **Modelos** > **Inferencia**
 
-La inferencia de señas en **ExpresaT** está diseñada para ejecutarse en CPUs estándar con una latencia de ~2 milisegundos, tanto en Python (`inference_engine.py`) como en C++ (`InferenceThread`), operando estrictamente bajo el contrato de [[../../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]].
+La inferencia de señas en **ExpresaT** (`expresat/models/inference_engine.py`) está diseñada para ejecutarse exclusivamente en CPUs estándar con una latencia inferior a 3 milisegundos, operando bajo el contrato matemático estricto de [[../../Especificacion_Feature_Spec_v1_3_0|FEATURE_SPEC v1.3.0]].
 
 ---
 
 ## 1. Conceptos Clave
 
-1. **Inferencia ONNX Runtime:** Ejecución del grafo cuantizado `expresat_gru_int8.onnx` con soporte multi-hilo en CPU.
-2. **Buffer de Secuencia (Ventana Temporal):** Acumulación circular de 15 fotogramas contiguos (1 segundo a 15 FPS) para alimentar la red recurrente.
-3. **Verificación de Versión e Integridad:** `InferenceEngine` verifica que `feature_spec_version == "1.2.1"` y que el `config_hash` coincida con el cálculo canónico SHA-256.
+1. **Sesión ONNX Runtime CPU:** Carga del grafo cuantizado `expresat_gru_int8.onnx` optimizado con SIMD (AVX2/NEON), prescindiendo de dependencias de GPU (CUDA/PyTorch en producción).
+2. **Algoritmo `extract_window`:** Procesa la ventana deslizante de 15 frames aplicando la secuencia por bloques: validación de hombros, asignación de manos, remuestreo, escala y centro por mediana de ventana, y filtro EMA ($\alpha = 0.50$).
+3. **Verificación de Versión e Integridad Criptográfica:** Comprueba que `feature_spec_version == "1.3.0"` y que el `config_hash` coincida con el cálculo SHA-256.
 4. **Filtro de Umbral de Confianza (*Confidence Threshold*):** Las predicciones sólo se emiten si la probabilidad calculada tras el *Softmax* supera el valor configurado (por defecto `0.50`).
 
 ---
 
 ## 2. Inferencia en Python (`expresat/models/inference_engine.py`)
 
-En el backend asíncrono, `InferenceEngine` delega la vectorización al extractor canónico `feature_extractor.py`:
-
 ```python
-# En expresat/models/inference_engine.py
-from models.feature_extractor import extract_window_features, CANONICAL_SPEC_VERSION
+import os
+import json
+import time
+import threading
+import numpy as np
+import onnxruntime as ort
+
+from models.feature_extractor import extract_window, FEATURE_SPEC_VERSION
 
 class InferenceEngine:
     def __init__(self, model_dir: str, confidence_threshold: float = 0.50):
-        self.load_metadata(model_dir)
-        self.verify_spec_compatibility()
-        self.session = ort.InferenceSession(os.path.join(model_dir, "expresat_gru_int8.onnx"))
-
-    def predict(self, raw_frames: list) -> dict:
-        # Extracción y normalización canónica v1.2.1 con filtro EMA y mediana
-        tensor_178 = extract_window_features(raw_frames, target_fps=15)
-        if tensor_178 is None:
-            return {"label": None, "confidence": 0.0, "status": "INVALID_WINDOW"}
-
-        # Inferencia con ONNX Runtime
-        input_data = np.expand_dims(tensor_178, axis=0).astype(np.float32)
-        outputs = self.session.run(None, {self.input_name: input_data})
-        probs = softmax(outputs[0][0])
-        best_idx = int(np.argmax(probs))
+        self.model_dir = model_dir
+        self.confidence_threshold = confidence_threshold
+        self._lock = threading.Lock()
         
+        # 1. Cargar y verificar metadatos
+        self.load_metadata()
+        self.verify_spec_compatibility()
+        
+        # 2. Iniciar sesión ONNX Runtime CPU
+        model_file = os.path.join(model_dir, "expresat_gru_int8.onnx")
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = min(4, os.cpu_count() or 1)
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        self.session = ort.InferenceSession(model_file, opts, providers=["CPUExecutionProvider"])
+        
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_name = self.session.get_outputs()[0].name
+
+    def predict(self, raw_frames: list[dict]) -> dict:
+        t0 = time.perf_counter()
+        
+        # 3. Extracción y normalización canónica v1.3.0
+        window_result = extract_window(raw_frames)
+        if not window_result["valid"]:
+            return {
+                "label": None,
+                "confidence": 0.0,
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+                "error": window_result["error"]
+            }
+
+        # 4. Inferencia con ONNX Runtime
+        tensor_178 = window_result["features"]  # Forma: (15, 178)
+        input_data = np.expand_dims(tensor_178, axis=0).astype(np.float32)
+
+        with self._lock:
+            outputs = self.session.run([self.output_name], {self.input_name: input_data})
+        
+        # 5. Softmax y evaluación de umbral
+        logits = outputs[0][0]
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / np.sum(exp_logits)
+        
+        best_idx = int(np.argmax(probs))
         confidence = float(probs[best_idx])
+        latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+        all_probs = {self.labels[i]: round(float(probs[i]), 4) for i in range(len(self.labels))}
+
         if confidence >= self.confidence_threshold:
-            return {"label": self.labels[best_idx], "confidence": confidence}
-        return {"label": None, "confidence": confidence}
+            return {
+                "label": self.labels[best_idx],
+                "confidence": round(confidence, 4),
+                "latency_ms": latency_ms,
+                "all_probabilities": all_probs
+            }
+        
+        return {
+            "label": None,
+            "confidence": round(confidence, 4),
+            "latency_ms": latency_ms,
+            "all_probabilities": all_probs
+        }
 ```
 
 ---
 
-## 3. Bucle de Inferencia en C++ (`expresat-native/core/src/inference_thread.cpp`)
+## 3. Estado de la Inferencia en C++ (`expresat-native`)
 
-```cpp
-void InferenceThread::run(const std::atomic<bool> &running) {
-    while (running) {
-        cv::Mat current_frame;
-        // 1. Extraer fotograma de la cola lock-free
-        if (!frame_queue_.pop(current_frame)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            continue;
-        }
-
-        // 2. Extraer puntos clave anatómicos
-        LandmarkFrame lm_frame = extract_landmarks(current_frame);
-
-        // 3. Insertar en el buffer circular de 15 frames
-        push_landmark_frame(std::move(lm_frame));
-        if (frames_accumulated_ < SEQUENCE_LENGTH) continue;
-
-        // 4. Preprocesar y normalizar a hombros según FEATURE_SPEC v1.2.1
-        //    (Escala 3D, Z relativo a muñeca en manos, visibilidad clamp)
-        auto input_tensor = preprocess_sequence();
-
-        // 5. Inferencia con ONNX Runtime C++ API
-        auto logits = run_onnx(input_tensor);
-
-        // 6. Post-procesado: Softmax + Top-5 probabilidades
-        std::vector<float> probs = softmax(logits);
-        int best_class = std::distance(probs.begin(), std::max_element(probs.begin(), probs.end()));
-
-        if (probs[best_class] >= confidence_threshold_) {
-            result_bus_.publish(labels_[best_class]);
-        }
-    }
-}
-```
+En `expresat-native/core/src/inference_thread.cpp`, el método `run()` implementa la inferencia en C++ mediante la API de ONNX Runtime C++.
+- **Advertencia v1.3.0:** Como se documenta en [[../../Especificacion_Feature_Spec_v1_3_0|FEATURE_SPEC v1.3.0]], el motor C++ no implementa actualmente la secuencia por bloques de `extract_window` y emitirá códigos de error explícitos (`ERR_CPP_NOT_CONFORMANT` o `ERR_SHOULDERS_TOO_SMALL`) si se invoca con datos no preprocesados.
 
 ---
 
-## 🤖 Asignación de Agentes y Skills Recomendadas
+## 🤖 Guía de Operación para Agentes
 
-- **Para Inferencia Nativa C++:** Invocar **`cpp-pro`** (ver [[../../Skills/Backend_APIs_y_Sistemas]]).
-- **Para Inferencia Asíncrona Python:** Invocar **`fastapi-pro`** y **`async-python-patterns`**.
-- **Para Conformidad Matemática:** Consultar [[../../Especificacion_Feature_Spec_v1_2_1]].
+- **Para Pruebas Rápidas de Inferencia:**
+  ```python
+  from expresat.models.inference_engine import InferenceEngine
+  engine = InferenceEngine("exported_model")
+  print(engine.get_info())
+  ```
+- **Paridad con JavaScript:** Comprobar que cualquier actualización a `predict()` preserve idéntico resultado contra el frontend (`src/engine/featureExtractor.js`).

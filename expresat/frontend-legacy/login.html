@@ -47,7 +47,7 @@
         </div>
     </main>
 
-    <!-- Modal Global -->
+    <!-- Global modal -->
     <div class="modal-overlay" id="global-modal">
         <div class="glass-panel modal-content">
             <h3 id="modal-title" style="margin-bottom: 1rem; color: var(--accent-cyan);">Atención</h3>
@@ -110,7 +110,7 @@
             const btn = document.getElementById('login-submit');
             btn.classList.add('btn-loading');
             
-            // Simulación de carga
+            // Simulated loading delay
             setTimeout(() => {
                 btn.classList.remove('btn-loading');
                 showModal('¡Error!', 'Esta es la maquetación UI. Conecta auth_service.js para la funcionalidad real.', '--error-color');

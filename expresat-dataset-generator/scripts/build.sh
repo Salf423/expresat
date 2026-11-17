@@ -52,9 +52,9 @@ cmake --build "$BUILD_DIR" --parallel "$JOBS"
 BINARY="$BUILD_DIR/expresat_dataset_generator"
 if [ -f "$BINARY" ]; then
     echo ""
-    echo "✓ Build succeeded: $BINARY"
+    echo "[OK] Build succeeded: $BINARY"
     echo "  Run: $BINARY"
 else
-    echo "✗ Build failed — binary not found."
+    echo "[FAIL] Build failed — binary not found."
     exit 1
 fi

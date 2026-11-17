@@ -43,7 +43,7 @@ describe('engine/devTelemetry — Percentiles, fases Reposo vs Grabando y detecc
     const col = new DevTelemetryCollector({ enabled: true });
     col.setRvfcSupported(true);
 
-    // Fase reposo: cámara entrega 3 frames únicos (presentedFrames 1->3), loop infiere 2 veces sobre mismo currentTime
+    // Idle phase: camera yields 3 unique frames (presentedFrames 1->3), loop runs twice on same currentTime
     col.recordRealCameraFrame(100, { presentedFrames: 1, mediaTime: 0.1 });
     col.recordRealCameraFrame(133, { presentedFrames: 2, mediaTime: 0.133 });
     col.recordRealCameraFrame(166, { presentedFrames: 3, mediaTime: 0.166 });
@@ -55,16 +55,15 @@ describe('engine/devTelemetry — Percentiles, fases Reposo vs Grabando y detecc
     col.recordStageDuration('ui_dispatch', 1);
     col.endInferenceStep(215);
 
-    // Inferencia duplicada sobre mismo currentTime = 0.166
+    // Duplicate inference on same currentTime = 0.166
     col.beginInferenceStep(0.166, 225);
     col.recordStageDuration('hand', 24);
     col.recordStageDuration('canvas', 2);
     col.endInferenceStep(252);
     col.recordUiCommit('translator', 4.5);
 
-    // Cambiar a grabando
     col.setPhase('grabando');
-    // rVFC reporta salto de presentedFrames 3 -> 5 (1 frame perdido mientras main thread estaba ocupado)
+    // rVFC skips from presentedFrames 3 -> 5 (1 dropped/skipped frame while main thread was busy)
     col.recordRealCameraFrame(300, { presentedFrames: 5, mediaTime: 0.233 });
     col.beginInferenceStep(0.233, 305);
     col.recordStageDuration('hand', 30);
@@ -196,7 +195,7 @@ describe('engine/SignEngine — Negociación getSettings() y experimento exact15
       const ok = await engine.start(fakeVideo);
 
       expect(ok).toBe(false);
-      // Sin fallback a { video: true }: solo 1 llamada con exact + min: 15
+      // Must not fall back to { video: true }: single call with exact + min: 15
       expect(getUserMediaMock).toHaveBeenCalledTimes(1);
       expect(getUserMediaMock).toHaveBeenCalledWith({
         video: {
@@ -237,9 +236,9 @@ describe('engine/SignEngine — Negociación getSettings() y experimento exact15
 
     const fakeVideo = { currentTime: 1.25, videoWidth: 640, videoHeight: 480 };
     await engine._runInferenceStep(fakeVideo, 100);
-    // Segundo paso con el MISMO currentTime -> inferencia duplicada
+    // Same currentTime -> duplicate inference
     await engine._runInferenceStep(fakeVideo, 150);
-    // Tercer paso con nuevo currentTime -> inferencia única
+    // New currentTime -> unique inference
     fakeVideo.currentTime = 1.3;
     await engine._runInferenceStep(fakeVideo, 200);
 
@@ -251,7 +250,7 @@ describe('engine/SignEngine — Negociación getSettings() y experimento exact15
     expect(snap.phases.reposo.stages.totalFrameMs.count).toBe(3);
     expect(snap.phases.reposo.stages.frameWaitForNewCameraMs.count).toBe(2);
 
-    // Si detectForVideo lanza error, no se contabiliza como inferencia completada sino como inferenceErrors
+    // Throwing detectForVideo increments inferenceErrors rather than completed inferences
     engine._handLandmarker = {
       detectForVideo: () => {
         throw new Error('GLctx is undefined');
@@ -275,13 +274,13 @@ describe('engine/SignEngine — Negociación getSettings() y experimento exact15
       engine._running = true;
       engine._startFpsTicker();
 
-      // En reposo, el ticker 1 Hz sí refresca UI
+      // During reposo, 1 Hz ticker refreshes UI snapshots
       vi.advanceTimersByTime(1000);
       expect(getSnapSpy).toHaveBeenCalledTimes(1);
       expect(snapshotsRecibidos).toHaveLength(1);
       expect(snapshotsRecibidos[0].phase).toBe('reposo');
 
-      // En grabando, solo acumula en O(1) sin calcular snapshot/percentiles ni disparar listeners UI
+      // During grabando, accumulate O(1) counters without snapshot/percentile computation
       engine.setDevPhase('grabando');
       col.beginInferenceStep(100, 10);
       col.recordStageDuration('hand', 12);
@@ -296,7 +295,7 @@ describe('engine/SignEngine — Negociación getSettings() y experimento exact15
       expect(liveDuringRec.phases).toBeNull();
       expect(getSnapSpy).toHaveBeenCalledTimes(1);
 
-      // Al volver a reposo (fin de grabación), refresca el snapshot completo con lo acumulado en grabando
+      // Returning to reposo flushes accumulated grabando metrics
       engine.setDevPhase('reposo');
       expect(getSnapSpy).toHaveBeenCalledTimes(2);
       expect(snapshotsRecibidos).toHaveLength(2);

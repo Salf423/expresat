@@ -1,12 +1,8 @@
 """
-inference.py — ExpresaT: Módulo Legacy (OBSOLETO / DEPRECADO)
-=============================================================
-⚠️  OBSOLETO: Este módulo está oficialmente fuera de servicio desde FEATURE_SPEC v1.2.2.
-    No realiza inferencia real (utilizaba stubs aleatorios y carece de normalización canónica).
-    Para cualquier tarea de inferencia en producción o backend, debe usarse estrictamente:
-        from models.inference_engine import InferenceEngine
+Deprecated mock sign predictor.
 
-    Cualquier llamada a este módulo emitirá advertencias y debe ser migrada.
+OBSOLETE since FEATURE_SPEC v1.2.2 (used random stubs without canonical
+normalization). Use `models.inference_engine.InferenceEngine` in production.
 """
 
 import warnings
@@ -19,27 +15,21 @@ warnings.warn(
 import numpy as np
 
 
-# =============================================================================
-# CONSTANTES CORRECTAS — Topología 178D (ExpresaT GRU)
-# =============================================================================
-# Upper Pose: índices MediaPipe {0,11,12,13,14,15,16,17,18,19,20,21,22} = 13 pts × 4D
+# 178D feature topology (13 upper-pose x 4 + 21 left-hand x 3 + 21 right-hand x 3)
 POSE_UPPER_INDICES = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-POSE_COORDS   = 4   # x, y, z, visibility
+POSE_COORDS   = 4
 HAND_LANDMARKS = 21
-HAND_COORDS   = 3   # x, y, z
-NUM_FEATURES  = len(POSE_UPPER_INDICES) * POSE_COORDS + HAND_LANDMARKS * HAND_COORDS * 2  # 178
-SEQUENCE_LENGTH = 15  # frames
+HAND_COORDS   = 3
+NUM_FEATURES  = len(POSE_UPPER_INDICES) * POSE_COORDS + HAND_LANDMARKS * HAND_COORDS * 2
+SEQUENCE_LENGTH = 15
 
 __all__ = ["SignLanguagePredictor"]
 
 
 class SignLanguagePredictor:
     """
-    DEPRECADO. Usa InferenceEngine de inference_engine.py para producción.
-
-    Esta clase se mantiene por compatibilidad con código anterior.
-    La topología de features ha sido corregida para coincidir con el modelo GRU
-    entrenado: vector 178D (upper_pose:52 + left_hand:63 + right_hand:63).
+    Deprecated mock predictor kept only for legacy compatibility.
+    Use `InferenceEngine` from `inference_engine.py` for real inference.
     """
 
     def __init__(self):
@@ -52,7 +42,7 @@ class SignLanguagePredictor:
         self.sequence_length = SEQUENCE_LENGTH
         self.threshold = 0.8
 
-        # Vocabulario de señas (debe coincidir con model_metadata.json en producción)
+        # Vocabulary aligned with model_metadata.json
         self.actions = [
             "hola", "gracias", "por_favor", "adios", "si", "no",
             "ayuda", "bien", "mal", "nombre", "como_estas", "mucho_gusto",
@@ -61,17 +51,8 @@ class SignLanguagePredictor:
 
     def extract_keypoints(self, landmarks_dict: dict) -> np.ndarray:
         """
-        Extrae y normaliza landmarks a un vector de 178 dimensiones.
-
-        Topología correcta:
-          [0:52]   — Upper Pose: 13 landmarks × (x, y, z, visibility)
-          [52:115] — Mano Izquierda: 21 landmarks × (x, y, z)
-          [115:178]— Mano Derecha:   21 landmarks × (x, y, z)
-
-        Returns:
-            np.ndarray de forma (178,) dtype float32
+        Extract a 178D feature vector: upper_pose (52) + left_hand (63) + right_hand (63).
         """
-        # ── Upper Pose (13 landmarks × 4 coords) ──────────────────────────
         raw_pose = landmarks_dict.get("pose") or []
         pose_features = []
         for idx in POSE_UPPER_INDICES:
@@ -83,9 +64,8 @@ class SignLanguagePredictor:
                 ])
             else:
                 pose_features.extend([0.0, 0.0, 0.0, 0.0])
-        pose_arr = np.array(pose_features, dtype=np.float32)  # (52,)
+        pose_arr = np.array(pose_features, dtype=np.float32)
 
-        # ── Mano izquierda (21 landmarks × 3 coords) ──────────────────────
         raw_lh = landmarks_dict.get("leftHand") or []
         if raw_lh:
             lh = np.array([[lm.get("x", 0.0), lm.get("y", 0.0), lm.get("z", 0.0)]
@@ -94,7 +74,6 @@ class SignLanguagePredictor:
         else:
             lh = np.zeros(HAND_LANDMARKS * HAND_COORDS, dtype=np.float32)
 
-        # ── Mano derecha (21 landmarks × 3 coords) ────────────────────────
         raw_rh = landmarks_dict.get("rightHand") or []
         if raw_rh:
             rh = np.array([[lm.get("x", 0.0), lm.get("y", 0.0), lm.get("z", 0.0)]
@@ -103,14 +82,10 @@ class SignLanguagePredictor:
         else:
             rh = np.zeros(HAND_LANDMARKS * HAND_COORDS, dtype=np.float32)
 
-        return np.concatenate([pose_arr, lh, rh])  # (178,)
+        return np.concatenate([pose_arr, lh, rh])
 
     def process_frame(self, landmarks_dict: dict):
-        """
-        Recibe un frame, extrae puntos y, cuando acumula 15, dispara inferencia.
-
-        ⚠️  Este método usa inferencia MOCK. Para inferencia real, usar InferenceEngine.
-        """
+        """Buffer 15 frames and return a mock prediction. Use InferenceEngine for real inference."""
         if not landmarks_dict:
             return None
 

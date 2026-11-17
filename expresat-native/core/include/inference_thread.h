@@ -17,7 +17,7 @@ class SessionOptions;
 
 namespace expresat {
 
-// Estado de conformidad formal con FEATURE_SPEC v1.3.0
+// Formal conformance status against FEATURE_SPEC v1.3.0
 constexpr const char* CPP_FEATURE_SPEC_CONFORMANCE = "NO_CONFORME_FEATURE_SPEC_1_3_0";
 
 // Dedicated inference pipeline: consumes frames, extracts landmarks, runs ONNX

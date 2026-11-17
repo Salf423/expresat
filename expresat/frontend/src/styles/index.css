@@ -44,5 +44,5 @@
 
 main {
   flex: 1;
-  padding-top: 80px; /* Space for fixed navbar */
+  padding-top: var(--space-20); /* Space for fixed navbar */
 }

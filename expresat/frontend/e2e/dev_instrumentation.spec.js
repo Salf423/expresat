@@ -31,7 +31,7 @@ test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y 
   test('expone indicador de cámara real separado, marcas performance.mark y comparación Reposo vs Grabando', async ({
     page,
   }) => {
-    // Headless Chromium sin GPU física compila shaders SwiftShader (~12s frío + ~1.4s/frame)
+    // Headless Chromium without a physical GPU compiles SwiftShader shaders (~12s cold + ~1.4s/frame)
     test.setTimeout(120000);
     const { consoleErrors, pageErrors, failedRequests } = attachOfflineErrorListeners(page);
 
@@ -44,17 +44,17 @@ test.describe('Instrumentación Dev — Reposo vs Grabando, rVFC, getSettings y 
     await expect(page.getByTestId('real-camera-fps')).toBeVisible();
     await expect(page.getByTestId('dev-instrumentation-panel')).toBeVisible();
 
-    // Esperar ~1.5s en reposo para acumular métricas y ticker 1 Hz
+    // Wait ~1.5s in idle phase to accumulate metrics and the 1 Hz ticker
     await expect(async () => {
       const snap = await page.evaluate(() => window.__EXPRESAT_DEV_TELEMETRY__?.getSnapshot());
       expect(snap).toBeTruthy();
       expect(snap.phases.reposo.counts.totalInferences).toBeGreaterThan(0);
     }).toPass({ timeout: 10000 });
 
-    // Botón manual de refresco presente y funcional incluso antes/después de grabar
+    // Manual refresh button remains visible and usable outside recording
     await expect(page.getByTestId('dev-refresh-report-btn')).toBeVisible();
 
-    // Iniciar grabación ~1.2s y detener para poblar fase grabando
+    // Record ~1.2s and stop to populate the grabando phase
     await page.getByTestId('dev-record-start-btn').click();
     await expect(async () => {
       const snap = await page.evaluate(() => window.__EXPRESAT_DEV_TELEMETRY__?.getSnapshot());

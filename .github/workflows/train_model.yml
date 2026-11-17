@@ -60,14 +60,14 @@ jobs:
                   assert len(data["data"]) > 0, "Empty data array"
                   assert data["feature_dim"] in (178, 52, 63, 126), f"Unexpected feature_dim: {data['feature_dim']}"
                   labels.append(data["label"])
-                  print(f"  ✓ {f.name}: {data['num_samples']} samples, {data['feature_dim']}D, {data['sequence_length']} frames")
+                  print(f"  [OK] {f.name}: {data['num_samples']} samples, {data['feature_dim']}D, {data['sequence_length']} frames")
               except Exception as e:
                   errors.append(f"{f}: {e}")
 
           if errors:
               print("\nValidation errors:")
               for e in errors:
-                  print(f"  ✗ {e}")
+                  print(f"  [FAIL] {e}")
               sys.exit(1)
 
           print(f"\nLabels found: {labels}")
@@ -107,7 +107,7 @@ jobs:
           input_name = session.get_inputs()[0].name
           dummy = np.random.randn(1, 15, 178).astype(np.float32)
           outputs = session.run(None, {input_name: dummy})
-          print(f"✓ ONNX inference OK — output shape: {outputs[0].shape}")
+          print(f"[OK] ONNX inference OK — output shape: {outputs[0].shape}")
           EOF
 
       - name: Upload model artifacts

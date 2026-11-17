@@ -1,9 +1,12 @@
 # Auditoría Técnica y Línea Base — Dataset Generator (Paso 0)
 
-> **Documento:** Auditoría exhaustiva del generador de datasets (`expresat-dataset-generator/`), rastreo de la demo (`rearquitectura-demo`), topología de 178 características, perfil de memoria RAM y condiciones bloqueantes detectadas.  
-> **Fecha:** 2026-11-10  
-> **Rama:** `dataset-v2` (creada a partir de `rearquitectura-demo`)  
-> **Rol:** Arquitecto y Orquestador
+- **Documento:** `docs/dataset-generator/AUDITORIA.md`
+- **Fecha:** 2026-11-10
+- **Estado:** **Histórico (Línea Base Paso 0)** — Anterior a la unificación en [FEATURE_SPEC.md](./FEATURE_SPEC.md) (`v1.3.0`) y [DECISIONES.md](./DECISIONES.md)
+- **Rama origen:** `dataset-v2` (derivada de `rearquitectura-demo`)
+
+> [!NOTE]
+> Este documento conserva la auditoría inicial que motivó el aislamiento de `letra_a_derecha_2.json` en cuarentena y la creación del extractor canónico unificado (`expresat/models/feature_extractor.py` + `expresat/frontend/src/engine/featureExtractor.js`). Véase la nota técnica corregida en §2 sobre la fórmula 3D en `expresat-native/`.
 
 ---
 
@@ -80,9 +83,8 @@ Existe una fragmentación crítica del constructor de features a lo largo del re
    - Implementa la normalización 3D canónica en `normalizePose()`.
    - *Estado:* Ejecuta en modo **STUB**; no extrae landmarks de video real.
 3. **`expresat-native/core/src/inference_thread.cpp` (C++ Motor Nativo):**
-   - **Discrepancia matemática:** Calcula la escala usando **distancia 2D** en el plano XY:
-     $$\text{scale} = \sqrt{(L_x - R_x)^2 + (L_y - R_y)^2}$$
-     Ignora $z$, produciendo una escala diferente a la del modelo de producción si el firmante está ligeramente ladeado.
+   - *Corrección técnica posterior:* `normalize_to_shoulders()` sí calcula la distancia **3D** ($\sqrt{dx^2 + dy^2 + dz^2}$), aunque carece del pipeline `ExtractWindow` (`v1.3.0`: asignación conjunta de manos, remuestreo por bloques a 15 frames y mediana por ventana). Por ello `expresat-native/` permanece bloqueado como `NO_CONFORME_FEATURE_SPEC_1_3_0` devolviendo `ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0`.
+   - *(En la revisión inicial de Paso 0 se había registrado erróneamente que usaba distancia 2D XY; esa nota queda corregida arriba tras verificar `inference_thread.cpp`.)*
 4. **`expresat/models/inference.py` (Python Legacy):**
    - **Discrepancia crítica:** Concatena coordenadas crudas $[0, 1]$. **No normaliza a los hombros en absoluto.**
 5. **`expresat/frontend/src/recognition/geometry.js` (Demo React en Navegador):**
@@ -151,17 +153,17 @@ Se ejecutó un benchmark de medición de RSS (`/proc/self/statm`, páginas de 40
 
 De acuerdo con las instrucciones de la especificación, se evalúan las tres condiciones bloqueantes:
 
-### 🔴 CONDICIÓN BLOQUEANTE (a) — SE CUMPLE
+### [BLOQUEANTE (a)] — SE CUMPLE EN CONFIGURACIÓN DE PRODUCCIÓN
 > *"Las 178 features requieren datos que el rastreo de la demo no produce (ej. pose, si la demo solo usa manos)."*
 
 - **Evidencia técnica:**  
   1. El modelo existente `expresat_gru_int8.onnx` exige de forma invariable el tensor `(1, 15, 178)`.
   2. Las primeras 52 features provienen obligatoriamente de **MediaPipe Pose** (13 landmarks del torso superior).
   3. La normalización del tensor requiere las coordenadas de los hombros (landmarks 11 y 12 de Pose) para centrar y escalar tanto la pose como ambas manos.
-  4. En la demo (`frontend/src/config.js` línea 65 y `signEngine.js` línea 142), **`enablePose` está configurado en `false` por defecto**.
-  5. En consecuencia, el rastreo de la demo **NO genera datos de pose** (`pose = null`), por lo que no puede construir el vector 178D ni normalizar las manos respecto a los hombros en su configuración estándar.
+  4. En la demo (`expresat/frontend/src/config.js`), **`enablePose` es `false` por defecto** en producción *(aunque `Translator.jsx` pasó a activarlo automáticamente en `import.meta.env.DEV` para captura/telemetría)*.
+  5. En consecuencia, en su configuración estándar de producción la demo **NO genera datos de pose** (`pose = null`), por lo que no puede construir el vector 178D ni normalizar manos respecto a hombros.
 
-### 🔴 CONDICIÓN BLOQUEANTE (b) — SE CUMPLE
+### [BLOQUEANTE (b)] — SE CUMPLE
 > *"El modelo `.task` o la versión del generador no son equivalentes y no hay forma de igualarlos."*
 
 - **Evidencia técnica:**  
@@ -169,12 +171,12 @@ De acuerdo con las instrucciones de la especificación, se evalúan las tres con
   2. El generador `expresat-dataset-generator/` está programado en C++ pero **no tiene compilado ni enlazado MediaPipe C++** (está en `#if EXPRESAT_STUB_EXTRACTOR`).
   3. Vincular MediaPipe Tasks C++ nativo requeriría compilar el repositorio MediaPipe con Bazel, lo cual es inviable en el hardware de desarrollo (AMD Ryzen 3 7320U, ~7 GiB RAM con swap activo) y provocaría fallos de Out-Of-Memory (OOM).
 
-### 🔴 CONDICIÓN BLOQUEANTE (c) — SE CUMPLE
+### [BLOQUEANTE (c)] — SE CUMPLE EN PASO 0 (PARCIALMENTE RESUELTO POSTERIORMENTE PARA PYTHON/JS)
 > *"El constructor de features está duplicado con resultados distintos."*
 
-- **Evidencia técnica:**  
-  1. `inference_engine.py` (Python): Normalización 3D respecto a hombros ($D_{3D} = \sqrt{dx^2 + dy^2 + dz^2}$). Coordenadas crudas si no hay pose.
-  2. `expresat-native/core/src/inference_thread.cpp` (C++): Normalización 2D respecto a hombros ($D_{2D} = \sqrt{dx^2 + dy^2}$). Ignora $z$.
-  3. `inference.py` (Python legacy): Cero normalización a hombros (concatena coordenadas crudas).
-  4. `geometry.js` (Frontend JS): Normalización por muñeca y `palmScale`, rotación en XY hacia $-Y$. Ignora hombros por completo.
-  5. Ninguno de estos constructores está unificado; producen distribuciones numéricas diferentes sobre el mismo sujeto.
+- **Evidencia técnica en Paso 0 (y estado posterior):**  
+  1. `inference_engine.py` (Python): Normalización 3D respecto a hombros ($D_{3D} = \sqrt{dx^2 + dy^2 + dz^2}$), integrada posteriormente con `feature_extractor.py` (`v1.3.0`).
+  2. `expresat-native/core/src/inference_thread.cpp` (C++): Aunque `normalize_to_shoulders()` sí calcula la distancia 3D ($\sqrt{dx^2 + dy^2 + dz^2}$), carece de `ExtractWindow` (`v1.3.0`) y permanece bloqueado retornando `ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0`.
+  3. `inference.py` (Python legacy): Obsoleto desde `FEATURE_SPEC v1.2.2`; sin normalización a hombros.
+  4. `geometry.js` (Frontend JS): Normalización por muñeca y `palmScale`, rotación en XY hacia $-Y$ (propósito distinto: reconocimiento geométrico local; posteriormente se añadió `expresat/frontend/src/engine/featureExtractor.js` unificado con Python bajo $L_\infty \le 10^{-6}$).
+  5. Antes de [FEATURE_SPEC.md](./FEATURE_SPEC.md), ningún constructor compartía contrato unificado ni suite matemática común.

@@ -1,24 +1,22 @@
 /**
- * landmarkTracker.js — Sistema Experimental de Seguimiento y Visualización de Landmarks MediaPipe
+ * Experimental MediaPipe landmark tracking and visualization system.
  *
- * Responsabilidades:
- *  1. Identificación y clasificación anatómica de cada punto de MediaPipe (Pose y Manos).
- *  2. Paleta de colores diferenciada por cada parte del cuerpo y cada dedo:
- *     - Pose: Rostro (amarillo), Torso (cian), Brazo Izq (verde), Brazo Der (azul).
- *     - Manos: Muñeca/Palma (rosa/fucsia), Pulgar (rojo), Índice (ámbar/oro),
- *              Medio (verde/esmeralda), Anular (cian/azul cielo), Meñique (violeta/púrpura).
- *  3. Sistema de seguimiento temporal de trayectoria (motion trails / estelas de movimiento).
- *  4. Identificación visual con etiquetas de ID numérico y halos en articulaciones clave.
- *  5. Telemetría en tiempo real: coordenadas 3D (X, Y, Z, visibilidad), velocidad y normalización.
+ * Responsibilities:
+ *  1. Anatomical grouping for MediaPipe Pose and Hand landmarks.
+ *  2. Color coding per body part and finger (pose: face, torso, arms;
+ *     hands: palm/wrist, thumb, index, middle, ring, pinky).
+ *  3. Motion trails over recent frames.
+ *  4. Visual ID badges and halos on key joints.
+ *  5. Real-time telemetry (3D coordinates, visibility, speed, normalization).
  */
 
-// ─── Topologías y Conexiones Anatómicas ───────────────────────────────────────
+// Topologies and anatomical connections
 
-/** Conexiones de Pose agrupadas por parte */
+/** Pose connections grouped by body region */
 export const POSE_SEGMENTS = {
     face: {
         name: 'Rostro / Cabeza',
-        color: '#FACC15', // Amarillo oro
+        color: '#FACC15',
         glow: 'rgba(250, 204, 21, 0.45)',
         indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         connections: [
@@ -29,7 +27,7 @@ export const POSE_SEGMENTS = {
     },
     torso: {
         name: 'Torso / Pecho',
-        color: '#06B6D4', // Cian eléctrico
+        color: '#06B6D4',
         glow: 'rgba(6, 182, 212, 0.45)',
         indices: [11, 12, 23, 24],
         connections: [
@@ -38,7 +36,7 @@ export const POSE_SEGMENTS = {
     },
     leftArm: {
         name: 'Brazo Izquierdo',
-        color: '#10B981', // Verde esmeralda
+        color: '#10B981',
         glow: 'rgba(16, 185, 129, 0.45)',
         indices: [11, 13, 15, 17, 19, 21],
         connections: [
@@ -47,7 +45,7 @@ export const POSE_SEGMENTS = {
     },
     rightArm: {
         name: 'Brazo Derecho',
-        color: '#3B82F6', // Azul zafiro
+        color: '#3B82F6',
         glow: 'rgba(59, 130, 246, 0.45)',
         indices: [12, 14, 16, 18, 20, 22],
         connections: [
@@ -56,7 +54,7 @@ export const POSE_SEGMENTS = {
     }
 };
 
-/** Conexiones y colores de Manos agrupados por dedo y palma */
+/** Hand connections and colors grouped by finger and palm */
 export const HAND_SEGMENTS = {
     palm: {
         name: 'Palma / Muñeca',
@@ -65,8 +63,8 @@ export const HAND_SEGMENTS = {
             [0, 1], [0, 5], [5, 9], [9, 13], [13, 17], [0, 17]
         ],
         colors: {
-            Left:  { color: '#EC4899', glow: 'rgba(236, 72, 153, 0.45)' }, // Rosa intenso
-            Right: { color: '#D946EF', glow: 'rgba(217, 70, 239, 0.45)' }  // Fucsia neón
+            Left:  { color: '#EC4899', glow: 'rgba(236, 72, 153, 0.45)' },
+            Right: { color: '#D946EF', glow: 'rgba(217, 70, 239, 0.45)' }
         }
     },
     thumb: {
@@ -75,8 +73,8 @@ export const HAND_SEGMENTS = {
         tipIndex: 4,
         connections: [[1, 2], [2, 3], [3, 4]],
         colors: {
-            Left:  { color: '#EF4444', glow: 'rgba(239, 68, 68, 0.45)' },  // Rojo carmesí
-            Right: { color: '#FF5722', glow: 'rgba(255, 87, 34, 0.45)' }  // Rojo coral
+            Left:  { color: '#EF4444', glow: 'rgba(239, 68, 68, 0.45)' },
+            Right: { color: '#FF5722', glow: 'rgba(255, 87, 34, 0.45)' }
         }
     },
     index: {
@@ -85,8 +83,8 @@ export const HAND_SEGMENTS = {
         tipIndex: 8,
         connections: [[5, 6], [6, 7], [7, 8]],
         colors: {
-            Left:  { color: '#F59E0B', glow: 'rgba(245, 158, 11, 0.45)' }, // Ámbar
-            Right: { color: '#EAB308', glow: 'rgba(234, 179, 8, 0.45)' }  // Oro brillante
+            Left:  { color: '#F59E0B', glow: 'rgba(245, 158, 11, 0.45)' },
+            Right: { color: '#EAB308', glow: 'rgba(234, 179, 8, 0.45)' }
         }
     },
     middle: {
@@ -95,8 +93,8 @@ export const HAND_SEGMENTS = {
         tipIndex: 12,
         connections: [[9, 10], [10, 11], [11, 12]],
         colors: {
-            Left:  { color: '#10B981', glow: 'rgba(16, 185, 129, 0.45)' }, // Verde esmeralda
-            Right: { color: '#00E676', glow: 'rgba(0, 230, 118, 0.45)' }  // Verde neón
+            Left:  { color: '#10B981', glow: 'rgba(16, 185, 129, 0.45)' },
+            Right: { color: '#00E676', glow: 'rgba(0, 230, 118, 0.45)' }
         }
     },
     ring: {
@@ -105,8 +103,8 @@ export const HAND_SEGMENTS = {
         tipIndex: 16,
         connections: [[13, 14], [14, 15], [15, 16]],
         colors: {
-            Left:  { color: '#0EA5E9', glow: 'rgba(14, 165, 233, 0.45)' }, // Cian cielo
-            Right: { color: '#38BDF8', glow: 'rgba(56, 189, 248, 0.45)' }  // Azul celeste
+            Left:  { color: '#0EA5E9', glow: 'rgba(14, 165, 233, 0.45)' },
+            Right: { color: '#38BDF8', glow: 'rgba(56, 189, 248, 0.45)' }
         }
     },
     pinky: {
@@ -115,13 +113,13 @@ export const HAND_SEGMENTS = {
         tipIndex: 20,
         connections: [[17, 18], [18, 19], [19, 20]],
         colors: {
-            Left:  { color: '#8B5CF6', glow: 'rgba(139, 92, 246, 0.45)' }, // Violeta
-            Right: { color: '#A855F7', glow: 'rgba(168, 85, 247, 0.45)' }  // Púrpura neón
+            Left:  { color: '#8B5CF6', glow: 'rgba(139, 92, 246, 0.45)' },
+            Right: { color: '#A855F7', glow: 'rgba(168, 85, 247, 0.45)' }
         }
     }
 };
 
-/** Nombres descriptivos de landmarks individuales en español */
+/** Human-readable anatomical landmark labels for the overlay UI */
 export const LANDMARK_NAMES = {
     pose: {
         0: 'Nariz',
@@ -147,7 +145,7 @@ export const LANDMARK_NAMES = {
     }
 };
 
-/** Elementos de la guía de colores para la interfaz de usuario */
+/** Color legend items rendered in the UI */
 export const COLOR_LEGEND_ITEMS = [
     { label: 'Rostro', color: '#FACC15', group: 'Pose' },
     { label: 'Torso', color: '#06B6D4', group: 'Pose' },
@@ -161,46 +159,43 @@ export const COLOR_LEGEND_ITEMS = [
     { label: 'Meñique', color: '#8B5CF6', group: 'Mano' }
 ];
 
-// ─── Clase LandmarkTracker ───────────────────────────────────────────────────
-
 export class LandmarkTracker {
     /**
      * @param {object} [options]
-     * @param {number} [options.maxTrailLength=8] Máximo número de frames históricos en estela
-     * @param {number} [options.maxTelemetryPoints=50] Máximo número de muestras de estela para evitar fugas de memoria
+     * @param {number} [options.maxTrailLength=8] Max historical frames kept per motion trail
+     * @param {number} [options.maxTelemetryPoints=50] Max tracked keys to cap memory usage
      */
     constructor(options = {}) {
         this.maxTrailLength = options.maxTrailLength ?? 8;
         this.maxTelemetryPoints = options.maxTelemetryPoints ?? 50;
 
-        // Historial temporal de puntos: Map<pointKey, Array<{ px, py, time }>>
+        // Per-key trail history: Map<pointKey, Array<{ px, py, time }>>
         this.pointHistory = new Map();
 
-        // Última telemetría calculada
         this.lastTelemetry = null;
     }
 
     /**
-     * Proyecta un landmark normalizado a coordenadas de píxeles del canvas.
+     * Projects a normalized landmark into canvas pixel coordinates.
      */
     project(lm, w, h) {
         return { px: lm.x * w, py: lm.y * h };
     }
 
     /**
-     * Actualiza el buffer de seguimiento histórico de cada punto y calcula la telemetría.
+     * Updates historical tracking buffers and computes structured telemetry.
      *
-     * @param {object} results - Resultados suavizados { pose, hands, handedness }
-     * @param {number} width - Ancho del canvas
-     * @param {number} height - Alto del canvas
-     * @returns {object} Telemetría estructurada con conteos, coordenadas y velocidades
+     * @param {object} results - Smoothed landmarks `{ pose, hands, handedness }`
+     * @param {number} width - Canvas width
+     * @param {number} height - Canvas height
+     * @returns {object} Telemetry snapshot with counts, coordinates, and velocities
      */
     update(results, width, height) {
         const now = performance.now();
         const activeKeys = new Set();
         const trackedPointsList = [];
 
-        // 1. Seguimiento de puntos de Pose
+        // Track pose landmarks
         let poseCount = 0;
         if (results?.pose && results.pose.length > 0) {
             results.pose.forEach((lm, idx) => {
@@ -212,7 +207,7 @@ export class LandmarkTracker {
                 const { px, py } = this.project(lm, width, height);
                 this._recordPointHistory(key, px, py, now);
 
-                // Determinar parte anatómica de pose
+                // Resolve anatomical pose body region
                 let partName = 'Pose';
                 let partColor = '#06B6D4';
                 if (idx <= 10) {
@@ -245,7 +240,7 @@ export class LandmarkTracker {
             });
         }
 
-        // 2. Seguimiento de puntos de Manos
+        // Track hand landmarks
         let leftHandCount = 0;
         let rightHandCount = 0;
 
@@ -266,7 +261,6 @@ export class LandmarkTracker {
                     const { px, py } = this.project(lm, width, height);
                     this._recordPointHistory(key, px, py, now);
 
-                    // Identificar dedo
                     const { fingerName, fingerColor } = this._getHandSegmentMeta(lmIdx, side);
 
                     trackedPointsList.push({
@@ -287,17 +281,15 @@ export class LandmarkTracker {
             });
         }
 
-        // 3. Limpiar puntos inactivos del buffer y garantizar límite máximo de puntos
-        //    para evitar fugas de memoria en sesiones prolongadas (H4)
+        // Evict inactive keys and enforce maxTelemetryPoints to prevent unbounded growth
         for (const storedKey of this.pointHistory.keys()) {
             if (!activeKeys.has(storedKey)) {
                 this.pointHistory.delete(storedKey);
             }
         }
-        // Mantener solo el máximo de puntos de telemetry para evitar memoria infinita
         const currentPointCount = this.pointHistory.size;
         if (currentPointCount > this.maxTelemetryPoints) {
-            // Eliminar los puntos más antiguos hasta reducir al límite
+            // Drop oldest entries until within limit
             const keysToRemove = currentPointCount - this.maxTelemetryPoints;
             let removed = 0;
             for (const key of this.pointHistory.keys()) {
@@ -307,7 +299,7 @@ export class LandmarkTracker {
             }
         }
 
-        // 4. Métricas de normalización según invariantes de ExpresaT
+        // Normalization metrics matching ExpresaT shoulder-scale invariants
         let normalization = null;
         if (results?.pose && results.pose[11] && results.pose[12]) {
             const p11 = results.pose[11];
@@ -341,17 +333,17 @@ export class LandmarkTracker {
     }
 
     /**
-     * Dibuja en el canvas el sistema completo de seguimiento:
-     *  - Estelas de trayectoria (motion trails).
-     *  - Esqueleto segmentado por partes en colores vibrantes.
-     *  - Nodos de landmarks con anillos de contraste y halos en articulaciones clave.
-     *  - Etiquetas numéricas de ID sobre cada punto.
+     * Renders the full landmark tracking overlay on canvas:
+     *  - Motion trails.
+     *  - Body/finger color-coded skeleton segments.
+     *  - Landmark nodes with contrast rings and key-joint halos.
+     *  - Optional numeric ID badges.
      *
-     * @param {CanvasRenderingContext2D} ctx - Contexto 2D del canvas
-     * @param {object} results - Landmarks suavizados
-     * @param {number} width - Ancho del canvas
-     * @param {number} height - Alto del canvas
-     * @param {object} config - Opciones visuales
+     * @param {CanvasRenderingContext2D} ctx - 2D canvas context
+     * @param {object} results - Smoothed landmarks
+     * @param {number} width - Canvas width
+     * @param {number} height - Canvas height
+     * @param {object} config - Rendering options
      */
     render(ctx, results, width, height, config = {}) {
         if (!results) return;
@@ -366,17 +358,17 @@ export class LandmarkTracker {
             lineWidth = 2.5
         } = config;
 
-        // Actualizar longitud de estelas según configuración
+        // Clamp trail history length to configured bounds
         this.maxTrailLength = Math.max(2, Math.min(trailLength, 20));
 
         ctx.save();
 
-        // ── A. Dibujar Estelas de Movimiento (Motion Trails) ──────────────────
+        // A. Motion trails
         if (showTrails) {
             this._drawMotionTrails(ctx, results, width, height, colorByPart);
         }
 
-        // ── B. Dibujar Pose con colores por parte ─────────────────────────────
+        // B. Color-coded Pose skeleton
         if (results.pose && results.pose.length > 0) {
             this._drawPoseSegments(ctx, results.pose, width, height, {
                 colorByPart,
@@ -387,7 +379,7 @@ export class LandmarkTracker {
             });
         }
 
-        // ── C. Dibujar Manos con colores por dedo y palma ─────────────────────
+        // C. Color-coded Hand skeletons
         if (results.hands && results.hands.length > 0) {
             results.hands.forEach((handLandmarks, i) => {
                 const side = results.handedness?.[i]?.[0]?.categoryName ?? (i === 0 ? 'Left' : 'Right');
@@ -405,17 +397,17 @@ export class LandmarkTracker {
     }
 
     /**
-     * Reinicia historiales de seguimiento.
+     * Clears tracking history buffers and last telemetry snapshot.
      */
     reset() {
         this.pointHistory.clear();
         this.lastTelemetry = null;
     }
 
-    // ─── Métodos Internos de Dibujo ──────────────────────────────────────────
+    // Internal drawing helpers
 
     /**
-     * Registra una nueva muestra en el historial de un punto.
+     * Appends a new coordinate sample to a landmark's trail history.
      */
     _recordPointHistory(key, px, py, time) {
         let history = this.pointHistory.get(key);
@@ -430,7 +422,7 @@ export class LandmarkTracker {
     }
 
     /**
-     * Calcula la velocidad estimada de un punto en píxeles/segundo.
+     * Estimates a point's velocity in pixels per second.
      */
     _getPointSpeed(key) {
         const history = this.pointHistory.get(key);
@@ -444,7 +436,7 @@ export class LandmarkTracker {
     }
 
     /**
-     * Obtiene nombre y color para un punto de la mano según el dedo al que pertenece.
+     * Returns name and color metadata for a hand landmark based on its finger segment.
      */
     _getHandSegmentMeta(lmIdx, side) {
         const sideKey = side === 'Right' ? 'Right' : 'Left';
@@ -467,13 +459,13 @@ export class LandmarkTracker {
     }
 
     /**
-     * Dibuja las estelas temporales (motion trails) de todos los puntos activos.
+     * Renders fading motion trails for all active tracked landmarks.
      */
     _drawMotionTrails(ctx, results, width, height, colorByPart) {
         for (const [key, history] of this.pointHistory.entries()) {
             if (history.length < 2) continue;
 
-            // Determinar color de la estela según la clave del punto
+            // Resolve trail color by tracked key
             let trailColor = '#00F3FF';
             if (colorByPart) {
                 if (key.startsWith('pose_')) {
@@ -490,7 +482,7 @@ export class LandmarkTracker {
                 }
             }
 
-            // Trazar línea continua atenuada
+            // Draw attenuated segmented trail
             ctx.beginPath();
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
@@ -513,12 +505,12 @@ export class LandmarkTracker {
     }
 
     /**
-     * Dibuja los segmentos y landmarks de la Pose agrupados por parte anatómica.
+     * Renders pose skeleton segments and landmarks grouped by body region.
      */
     _drawPoseSegments(ctx, pose, width, height, opts) {
         const { colorByPart, lineWidth, pointRadius, showLabels, showHalos } = opts;
 
-        // 1. Dibujar conexiones segmentadas
+        // 1. Segmented bone connections
         for (const segment of Object.values(POSE_SEGMENTS)) {
             const segColor = colorByPart ? segment.color : '#00F3FF';
             ctx.strokeStyle = segColor;
@@ -536,12 +528,12 @@ export class LandmarkTracker {
             ctx.stroke();
         }
 
-        // 2. Dibujar nodos de landmark
+        // 2. Landmark nodes
         pose.forEach((lm, idx) => {
             if (!lm || (lm.visibility ?? 1) < 0.25) return;
             const { px, py } = this.project(lm, width, height);
 
-            // Obtener color según segmento
+            // Resolve segment color
             let nodeColor = '#06B6D4';
             let haloGlow = 'rgba(6, 182, 212, 0.45)';
             if (colorByPart) {
@@ -560,7 +552,7 @@ export class LandmarkTracker {
                 }
             }
 
-            // Halo en articulaciones clave (hombros, codos, muñecas)
+            // Highlight halo on key joints (shoulders, elbows, wrists)
             const isKeyJoint = [11, 12, 13, 14, 15, 16].includes(idx);
             if (showHalos && isKeyJoint) {
                 ctx.beginPath();
@@ -569,7 +561,7 @@ export class LandmarkTracker {
                 ctx.fill();
             }
 
-            // Punto principal
+            // Primary landmark node
             ctx.beginPath();
             ctx.arc(px, py, isKeyJoint ? pointRadius + 1 : pointRadius, 0, Math.PI * 2);
             ctx.fillStyle = nodeColor;
@@ -578,7 +570,7 @@ export class LandmarkTracker {
             ctx.lineWidth = 1.5;
             ctx.stroke();
 
-            // Etiqueta de ID
+            // ID badge
             if (showLabels) {
                 this._drawLabel(ctx, String(idx), px, py, nodeColor);
             }
@@ -586,13 +578,13 @@ export class LandmarkTracker {
     }
 
     /**
-     * Dibuja los segmentos y landmarks de una Mano agrupados por cada dedo y palma.
+     * Renders hand skeleton segments and landmarks grouped by finger and palm.
      */
     _drawHandSegments(ctx, handLandmarks, side, width, height, opts) {
         const { colorByPart, lineWidth, pointRadius, showLabels, showHalos } = opts;
         const sideKey = side === 'Right' ? 'Right' : 'Left';
 
-        // 1. Conexiones agrupadas por dedo
+        // 1. Per-finger connections
         for (const segment of Object.values(HAND_SEGMENTS)) {
             const segColor = colorByPart
                 ? segment.colors[sideKey].color
@@ -612,14 +604,14 @@ export class LandmarkTracker {
             ctx.stroke();
         }
 
-        // 2. Nodos de landmarks con halos en las puntas de los dedos
+        // 2. Landmark nodes with fingertip and wrist halos
         handLandmarks.forEach((lm, idx) => {
             if (!lm) return;
             const { px, py } = this.project(lm, width, height);
             const { fingerColor, fingerGlow, isTip } = this._getHandSegmentMeta(idx, side);
             const nodeColor = colorByPart ? fingerColor : '#FFFFFF';
 
-            // Halo en puntas de dedos y muñeca
+            // Halo on fingertips and wrist
             if (showHalos && (isTip || idx === 0)) {
                 ctx.beginPath();
                 ctx.arc(px, py, pointRadius + 4.5, 0, Math.PI * 2);
@@ -627,7 +619,7 @@ export class LandmarkTracker {
                 ctx.fill();
             }
 
-            // Punto principal
+            // Primary node
             ctx.beginPath();
             ctx.arc(px, py, isTip ? pointRadius + 1.2 : pointRadius, 0, Math.PI * 2);
             ctx.fillStyle = nodeColor;
@@ -636,7 +628,7 @@ export class LandmarkTracker {
             ctx.lineWidth = 1.2;
             ctx.stroke();
 
-            // Etiqueta de ID
+            // ID badge
             if (showLabels) {
                 this._drawLabel(ctx, String(idx), px, py, nodeColor);
             }
@@ -644,7 +636,7 @@ export class LandmarkTracker {
     }
 
     /**
-     * Dibuja una micro-etiqueta con el número de ID de un punto.
+     * Draws a small numeric ID badge next to a landmark.
      */
     _drawLabel(ctx, text, x, y, color) {
         ctx.save();
@@ -656,18 +648,18 @@ export class LandmarkTracker {
         const boxX = x + 4;
         const boxY = y - 14;
 
-        // Fondo oscuro de alto contraste
+        // High-contrast dark background
         ctx.fillStyle = 'rgba(10, 10, 18, 0.85)';
         ctx.beginPath();
         ctx.roundRect(boxX, boxY, boxW, boxH, 3);
         ctx.fill();
 
-        // Borde en el color de la parte
+        // Part-colored border
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // Texto
+        // Text
         ctx.fillStyle = '#FFFFFF';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -677,20 +669,19 @@ export class LandmarkTracker {
     }
 
     /**
-     * Convierte código HEX a formato rgba string.
-     * L7: Normaliza y valida strings hexadecimales para prevenir resultados inesperados.
+     * Converts a HEX color string to an `rgba(...)` string, normalizing shorthand forms.
      */
     _hexToRgba(hex, alpha) {
-        // Normalizar: quitar # si existe y asegurar formato válido
+        // Strip leading '#' and whitespace
         let cleaned = hex.replace('#', '').trim();
         
-        // Validar que solo contiene caracteres hexadecimales
+        // Reject invalid hex strings to prevent NaN channels
         if (!/^[0-9A-Fa-f]{3}(?:[0-9A-Fa-f]{3})?$/.test(cleaned)) {
             console.warn('[landmarkTracker] _hexToRgba: Código HEX inválido, usando transparente', hex);
             return 'rgba(0, 0, 0, 0)';
         }
         
-        // Expandir formato de 3 a 6 caracteres si es necesario
+        // Expand 3-digit shorthand to 6 digits
         if (cleaned.length === 3) {
             cleaned = cleaned[0] + cleaned[0] + cleaned[1] + cleaned[1] + cleaned[2] + cleaned[2];
         }

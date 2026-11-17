@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-validate_dataset.py - Validación exhaustiva de invariantes del dataset ExpresaT.
-Comprueba dimensiones (15 frames, 178 features), rangos de normalización,
-detección de NaNs/Infs y completitud de datos sin gastar tokens de contexto.
+validate_dataset.py - Exhaustive invariant validation for ExpresaT dataset JSON files.
+Verifies tensor dimensions (15 frames, 178 features), normalization bounds,
+NaN/Inf counts, and sample completeness.
 """
 
 import argparse
@@ -50,7 +50,7 @@ def validate_file(file_path: Path, strict: bool = False, min_samples: int = 100)
     invalid_feats = 0
     out_of_bounds = 0
 
-    # Validar dimensiones e invariantes
+    # Validate dimensions and numeric invariants
     for sample_idx, sample in enumerate(data):
         if not isinstance(sample, list) or len(sample) != 15:
             invalid_frames += 1
@@ -152,12 +152,12 @@ def main():
     else:
         print(f"Validando {len(results)} archivos...")
         for r in results:
-            icon = "✅" if r["status"] == "OK" else ("⚠️ " if r["status"] == "WARNING" else "❌")
+            icon = "[OK]" if r["status"] == "OK" else ("[WARN]" if r["status"] == "WARNING" else "[FAIL]")
             print(f"  {icon} {r['file']:<20} ({r.get('samples', 0)} muestras)")
             for issue in r["issues"]:
-                print(f"     ❌ {issue}")
+                print(f"     [FAIL] {issue}")
             for warn in r["warnings"]:
-                print(f"     ⚠️  {warn}")
+                print(f"     [WARN] {warn}")
 
         print(f"\nRESUMEN: {ok_count} OK | {warn_count} WARNING | {err_count} ERROR")
 

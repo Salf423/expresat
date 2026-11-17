@@ -1,9 +1,9 @@
 /**
- * src/recognition/geometry.js — Funciones geométricas y matemáticas puras para manos MediaPipe (21 puntos)
+ * Pure geometric and mathematical helpers for 21-point MediaPipe hand landmarks.
  *
- * Sin dependencias de DOM, cámara ni React.
- * Todas las funciones operan sobre coordenadas 3D { x, y, z } e implementan
- * normalización por tamaño de mano (palmScale) y alineación rotacional en el plano XY.
+ * Zero DOM, camera, or React dependencies.
+ * All functions operate on 3D `{ x, y, z }` coordinates with palm-scale
+ * normalization and XY-plane rotational alignment.
  */
 
 export const HAND_LANDMARKS = Object.freeze({
@@ -31,7 +31,7 @@ export const HAND_LANDMARKS = Object.freeze({
 });
 
 /**
- * Valida que un punto tenga coordenadas numéricas finitas.
+ * Checks whether a point has finite numeric coordinates.
  * @param {any} pt
  * @returns {boolean}
  */
@@ -41,8 +41,8 @@ export function isValidPoint(pt) {
 }
 
 /**
- * Valida que el arreglo de landmarks de mano tenga exactamente 21 puntos válidos
- * y que no sea ruido degenerado (puntos colapsados o dispersión absurda).
+ * Checks that the hand landmark array has 21 valid points and is not
+ * degenerate noise (collapsed points or implausible spatial spread).
  * @param {Array<{x:number, y:number, z?:number}>} landmarks
  * @returns {boolean}
  */
@@ -54,8 +54,7 @@ export function isValidHandLandmarks(landmarks) {
   const scale = palmScale(landmarks);
   if (!Number.isFinite(scale) || scale < 0.015 || scale > 5.0) return false;
 
-  // Verificar coherencia anatómica: ningún punto de la mano puede estar a > 4.5 veces palmScale de la muñeca
-  // (rechaza ruido aleatorio uniforme o picos espurios)
+  // Verify anatomical coherence relative to wrist (rejects uniform noise or spikes)
   const wrist = landmarks[HAND_LANDMARKS.WRIST];
   for (let i = 1; i < 21; i++) {
     const d = distance3D(wrist, landmarks[i]) / scale;
@@ -64,7 +63,7 @@ export function isValidHandLandmarks(landmarks) {
     }
   }
 
-  // Verificar que los nudillos MCP (5, 9, 13, 17) guarden una progresión anatómica razonable
+  // Ensure MCP knuckles (5, 9, 13, 17) stay within plausible anatomical spacing
   const dIndexMiddleMcp =
     distance3D(landmarks[HAND_LANDMARKS.INDEX_MCP], landmarks[HAND_LANDMARKS.MIDDLE_MCP]) / scale;
   const dMiddleRingMcp =
@@ -80,7 +79,7 @@ export function isValidHandLandmarks(landmarks) {
 }
 
 /**
- * Distancia euclidiana 3D entre dos puntos.
+ * 3D Euclidean distance between two points.
  */
 export function distance3D(a, b) {
   const dx = a.x - b.x;
@@ -90,7 +89,7 @@ export function distance3D(a, b) {
 }
 
 /**
- * Distancia euclidiana 2D en el plano XY.
+ * 2D Euclidean distance in the XY plane.
  */
 export function distance2D(a, b) {
   const dx = a.x - b.x;
@@ -99,7 +98,7 @@ export function distance2D(a, b) {
 }
 
 /**
- * Escala de referencia de la palma: distancia 3D entre WRIST (0) y MIDDLE_MCP (9).
+ * Reference palm scale: 3D distance between WRIST (0) and MIDDLE_MCP (9).
  */
 export function palmScale(landmarks) {
   if (!Array.isArray(landmarks) || landmarks.length <= HAND_LANDMARKS.MIDDLE_MCP) return 0;
@@ -110,7 +109,7 @@ export function palmScale(landmarks) {
 }
 
 /**
- * Ángulo en grados [0, 180] entre dos vectores 3D.
+ * Angle in degrees [0, 180] between two 3D vectors.
  */
 export function angleBetweenVectorsDeg(v1, v2) {
   const dot = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
@@ -122,8 +121,8 @@ export function angleBetweenVectorsDeg(v1, v2) {
 }
 
 /**
- * Calcula el ángulo de articulación en grados en el vértice B formado por los segmentos BA y BC.
- * Un dedo completamente recto tiene un ángulo cercano a 180°; doblado tiene < 130°.
+ * Joint angle in degrees at vertex B formed by segments BA and BC.
+ * A straight finger approaches 180 degrees; a curled finger is below 130 degrees.
  */
 export function jointAngleDeg(a, b, c) {
   const v1 = { x: a.x - b.x, y: a.y - b.y, z: (a.z ?? 0) - (b.z ?? 0) };
@@ -132,12 +131,12 @@ export function jointAngleDeg(a, b, c) {
 }
 
 /**
- * Normaliza los 21 landmarks de una mano:
- * 1. Traslada el origen a WRIST (0).
- * 2. Escala todas las coordenadas dividiendo por `palmScale` (distancia WRIST -> MIDDLE_MCP = 1.0).
- * 3. Rota en el plano XY para que el vector WRIST (0) -> MIDDLE_MCP (9) apunte hacia (0, -1).
+ * Normalizes 21 hand landmarks:
+ * 1. Translates the origin to WRIST (0).
+ * 2. Scales coordinates by `palmScale` (WRIST -> MIDDLE_MCP = 1.0).
+ * 3. Rotates in the XY plane so WRIST (0) -> MIDDLE_MCP (9) points toward (0, -1).
  *
- * Esto garantiza invariancia a traslación, escala (distancia a cámara) y rotación en el plano XY.
+ * Ensures invariance to translation, scale (camera distance), and XY-plane rotation.
  *
  * @param {Array<{x:number, y:number, z?:number}>} landmarks
  * @returns {Array<{x:number, y:number, z:number}>|null}
@@ -148,15 +147,14 @@ export function normalizeHand(landmarks) {
   const wrist = landmarks[HAND_LANDMARKS.WRIST];
   const scale = palmScale(landmarks);
 
-  // Trasladar y escalar
+  // Translate and scale
   const scaled = landmarks.slice(0, 21).map((lm) => ({
     x: (lm.x - wrist.x) / scale,
     y: (lm.y - wrist.y) / scale,
     z: ((lm.z ?? 0) - (wrist.z ?? 0)) / scale,
   }));
 
-  // Ángulo actual del eje de la palma (WRIST -> MIDDLE_MCP) en el plano XY
-  // Queremos rotarlo para que quede alineado con el eje -Y (x = 0, y = -1), cuyo ángulo es -PI/2.
+  // Current XY palm axis angle (WRIST -> MIDDLE_MCP); rotate to align with -Y (-PI/2)
   const midMcp = scaled[HAND_LANDMARKS.MIDDLE_MCP];
   const currentAngle = Math.atan2(midMcp.y, midMcp.x);
   const targetAngle = -Math.PI / 2;
@@ -172,10 +170,9 @@ export function normalizeHand(landmarks) {
 }
 
 /**
- * Evalúa si un dedo no-pulgar está extendido combinando:
- * - Razón de distancias radiales a la muñeca (`tipDist / pipDist` y `tipDist / mcpDist`)
- * - Ángulo articular en PIP (`jointAngleDeg(MCP, PIP, DIP)`) y DIP (`jointAngleDeg(PIP, DIP, TIP)`)
- * Completamente invariante a escala y rotación 3D.
+ * Evaluates whether a non-thumb finger is extended using radial distance ratios
+ * from the wrist (`tipDist / pipDist` and `tipDist / mcpDist`) and joint angles
+ * at PIP and DIP. Scale and 3D-rotation invariant.
  */
 function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx) {
   const wrist = normLandmarks[HAND_LANDMARKS.WRIST];
@@ -191,7 +188,7 @@ function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx) {
   const pipAngle = jointAngleDeg(mcp, pip, dip);
   const dipAngle = jointAngleDeg(pip, dip, tip);
 
-  // Un dedo extendido tiene articulación PIP abierta (> 135°) y su punta más lejos de la muñeca que PIP y MCP
+  // An extended finger has an open PIP joint (>= 135 deg) and its tip farther from wrist than PIP and MCP
   const extended =
     pipAngle >= 135 &&
     dipAngle >= 130 &&
@@ -210,8 +207,8 @@ function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx) {
 }
 
 /**
- * Calcula el estado geométrico detallado de los 5 dedos y relaciones inter-digitales.
- * Es invariante a escala, traslación y rotación en el plano XY.
+ * Computes detailed geometric states for all 5 fingers and inter-finger relations.
+ * Invariant to scale, translation, and XY-plane rotation.
  *
  * @param {Array<{x:number, y:number, z?:number}>} landmarks
  * @returns {Object|null}
@@ -223,7 +220,7 @@ export function fingerStates(landmarks) {
   const scale = palmScale(landmarks);
   const wrist = norm[HAND_LANDMARKS.WRIST];
 
-  // Evaluar los 4 dedos largos sobre las coordenadas normalizadas
+  // Evaluate the four long fingers in normalized coordinates
   const indexInfo = evaluateFinger(
     norm,
     HAND_LANDMARKS.INDEX_MCP,
@@ -253,10 +250,7 @@ export function fingerStates(landmarks) {
     HAND_LANDMARKS.PINKY_TIP
   );
 
-  // Evaluar el pulgar:
-  // En coordenadas normalizadas, el pulgar está extendido cuando:
-  // 1. La articulación MCP/IP está recta (ángulo > 135°)
-  // 2. La punta del pulgar (4) está alejada del nudillo del meñique (17) y del nudillo medio (9)
+  // Evaluate thumb extension: straight MCP/IP joints and thumb tip separated from pinky and middle MCPs
   const thumbCmc = norm[HAND_LANDMARKS.THUMB_CMC];
   const thumbMcp = norm[HAND_LANDMARKS.THUMB_MCP];
   const thumbIp = norm[HAND_LANDMARKS.THUMB_IP];
@@ -272,10 +266,10 @@ export function fingerStates(landmarks) {
   const thumbToIndexMcp = distance3D(thumbTip, indexMcp);
   const thumbToWrist = distance3D(thumbTip, wrist);
 
-  // Distancia entre la punta del pulgar (4) y la punta del índice (8) (para gesto OK / Pinza)
+  // Distance between thumb tip (4) and index tip (8) for OK / Pinch detection
   const thumbIndexTipDist = distance3D(thumbTip, norm[HAND_LANDMARKS.INDEX_TIP]);
 
-  // Si está haciendo pinza con el índice, el pulgar converge hacia el índice, no está "abierto libre"
+  // Pinching pulls the thumb toward the index finger rather than leaving it freely abducted
   const isPinching = thumbIndexTipDist < 0.36;
 
   const thumbExtended =
@@ -289,7 +283,7 @@ export function fingerStates(landmarks) {
 
   const thumbCurled = !thumbExtended && !isPinching;
 
-  // Ángulo entre el vector del pulgar (CMC -> TIP) y el vector del índice (MCP -> TIP)
+  // Angle between thumb vector (CMC -> TIP) and index vector (MCP -> TIP)
   const vThumb = {
     x: thumbTip.x - thumbCmc.x,
     y: thumbTip.y - thumbCmc.y,
@@ -303,7 +297,7 @@ export function fingerStates(landmarks) {
   };
   const thumbIndexAngleDeg = angleBetweenVectorsDeg(vThumb, vIndex);
 
-  // Separación entre puntas de índice y medio (normalizada por palmScale)
+  // Separation between index and middle fingertips (normalized by palmScale)
   const indexMiddleSpread = distance3D(
     norm[HAND_LANDMARKS.INDEX_TIP],
     norm[HAND_LANDMARKS.MIDDLE_TIP]

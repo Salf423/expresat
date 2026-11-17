@@ -1,8 +1,11 @@
 # Reporte de Rearquitectura y Verificación — ExpresaT (`rearquitectura-demo`)
 
-**Fecha:** 2026-11-09  
-**Rama:** `rearquitectura-demo`  
-**Estado:** ✅ 100% En Verde (ESLint, Vitest 24/24, Backend Unittest 22/22, Vite Build, Playwright E2E 2/2)
+- **Fecha:** 2026-11-09
+- **Rama:** `rearquitectura-demo`
+- **Estado:** **Histórico — Hito cerrado 100% en verde en esa rama** (ESLint, Vitest 24/24, Backend Unittest 22/22, Vite Build, Playwright E2E 2/2)
+
+> [!NOTE]
+> Este reporte conserva la bitácora verificada al cierre de la rama `rearquitectura-demo`. Para la arquitectura y parámetros vigentes tras los cambios posteriores (`featureExtractor.js`, `devTelemetry`, `delegate: 'GPU'` por defecto, etc.), consulta [ARQUITECTURA.md](./ARQUITECTURA.md) y el [índice general](./README.md).
 
 ---
 

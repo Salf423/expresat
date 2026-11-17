@@ -5,7 +5,7 @@
 
 namespace expresat {
 
-// ─── Feature layout constants (must match train_and_export.py) ──────────────
+// Feature layout constants (must match train_and_export.py)
 // Upper Pose: landmarks {0,11,12,13,14,15,16,17,18,19,20,21,22} = 13 pts × 4D
 constexpr int POSE_UPPER_COUNT     = 13;
 constexpr int POSE_COORDS          = 4;   // x, y, z, visibility
@@ -26,14 +26,14 @@ constexpr std::array<int,13> POSE_UPPER_INDICES = {0,11,12,13,14,15,16,17,18,19,
 constexpr int SHOULDER_LEFT  = 11;
 constexpr int SHOULDER_RIGHT = 12;
 
-// ─── Raw landmark from MediaPipe ────────────────────────────────────────────
+// Raw landmark from MediaPipe
 struct Landmark {
     Landmark() = default;
     float x = 0.f, y = 0.f, z = 0.f;
     float visibility = 1.f; // only meaningful for Pose
 };
 
-// ─── Per-frame extracted data (before flattening) ───────────────────────────
+// Per-frame extracted data (before flattening)
 struct FrameLandmarks {
     FrameLandmarks() = default;
     std::vector<Landmark> pose;      // 33 pose landmarks (full)
@@ -44,14 +44,12 @@ struct FrameLandmarks {
     bool rightValid    = false;
 };
 
-// ─── Flattened feature vector (one frame) ───────────────────────────────────
-// Layout: [pose_upper(52), left_hand(63), right_hand(63)]
+// Flattened feature vector: [pose_upper(52), left_hand(63), right_hand(63)]
 using FeatureVector = std::vector<float>;
 
-// ─── A sequence of frames ───────────────────────────────────────────────────
 using Sequence = std::vector<FeatureVector>;
 
-// ─── GUI-configurable body parts ────────────────────────────────────────────
+// GUI-configurable body parts
 struct BodyPartConfig {
     BodyPartConfig() = default;
     bool upperPose  = true;
@@ -61,7 +59,7 @@ struct BodyPartConfig {
     bool showSkeleton = true;
 };
 
-// ─── Recording session config ────────────────────────────────────────────────
+// Recording session config
 struct RecordingConfig {
     RecordingConfig() = default;
     std::string label         = "hola";
@@ -69,7 +67,6 @@ struct RecordingConfig {
     int         sequenceLen   = DEFAULT_SEQUENCE_LEN;
 };
 
-// ─── App state machine ───────────────────────────────────────────────────────
 enum class AppState {
     Idle,
     CountingDown,   // 3-2-1 countdown before recording

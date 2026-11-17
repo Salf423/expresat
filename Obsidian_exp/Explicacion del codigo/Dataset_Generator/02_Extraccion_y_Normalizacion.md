@@ -1,7 +1,7 @@
 ---
-title: "Dataset Generator: Extracción de Características y Normalización (v1 vs v1.2.1)"
-description: "Empaquetado del vector plano de 178D, evolución matemática de la normalización, causa de cuarentena de letra_a_derecha_2.json y contrato FEATURE_SPEC v1.2.1."
-version: "2.2.1"
+title: "Dataset Generator: Extracción de Características y Normalización (v1 vs v1.3.0)"
+description: "Empaquetado del vector plano de 178D, evolución matemática de la normalización, causa de cuarentena de letra_a_derecha_2.json y contrato canónico FEATURE_SPEC v1.3.0."
+version: "2.3.0"
 category: "Código / Dataset Generator"
 target_agents: ["cpp-pro", "ml-engineer", "data-engineering-data-pipeline"]
 recommended_skills:
@@ -9,7 +9,7 @@ recommended_skills:
   - "[[../../Skills/Backend_APIs_y_Sistemas|Backend_APIs_y_Sistemas]] (`cpp-pro`)"
 related_docs:
   - "[[../../00_INDICE_MAESTRO]]"
-  - "[[../../Especificacion_Feature_Spec_v1_2_1]]"
+  - "[[../../Especificacion_Feature_Spec_v1_3_0]]"
   - "[[Cpp_Generator]]"
   - "[[06_Arquitectura_Dataset_Generator_v2]]"
   - "[[01_Arquitectura_y_Compilacion]]"
@@ -65,11 +65,11 @@ Para que el dataset generado sea 100% compatible con el modelo neuronal `SignLan
 
 > [!WARNING] Causa de Cuarentena de `letra_a_derecha_2.json`
 > La implementación temprana en C++ de `MediapipeExtractor::normalizePose` únicamente restaba el centroide $C_{\text{shoulder}}$ **sin dividir por la distancia inter-humeral $D$**. Sumado a una aumentación estocástica lineal que multiplicó la visibilidad superando $1.0$, los datos producidos tenían anomalías geométricas ($D \approx 0.0459$ en vez del estándar $D = 1.0$).
-> Por este motivo, el archivo fue aislado en `dataset/quarantine/letra_a_derecha_2.json` y se promulgó la [[../../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]].
+> Por este motivo, el archivo fue aislado en `dataset/quarantine/letra_a_derecha_2.json` y se promulgó la [[../../Especificacion_Feature_Spec_v1_3_0|FEATURE_SPEC v1.3.0]].
 
 ---
 
-## 3. Algoritmo Canónico de Normalización (FEATURE_SPEC v1.2.1)
+## 3. Algoritmo Canónico de Normalización (FEATURE_SPEC v1.3.0)
 
 Para garantizar invarianza estricta ante distancia, traslación 3D y ángulo:
 
@@ -86,9 +86,9 @@ $$x' = \frac{x - C_x}{D}, \quad y' = \frac{y - C_y}{D}, \quad z' = \frac{z - C_z
 
 ### C. Desacoplamiento Fundamental del Eje Z en Manos (`[52..114]` y `[115..177]`)
 - **Plano $XY$ (Espacio Torácico):**
-  $$x' = \frac{x_{\text{hand}, i} - C_x}{D}, \quad y' = \frac{y_{\text{hand}, i} - C_y}{D}$$
+   $$x' = \frac{x_{\text{hand}, i} - C_x}{D}, \quad y' = \frac{y_{\text{hand}, i} - C_y}{D}$$
 - **Eje $Z$ (Relativo a la Muñeca):** Se resta la coordenada $Z$ del Landmark 0 (muñeca) de esa mano y se escala por $D$:
-  $$z'_i = \frac{z_{\text{hand}, i} - z_{\text{hand}, \text{wrist}}}{D}$$
+   $$z'_i = \frac{z_{\text{hand}, i} - z_{\text{hand}, \text{wrist}}}{D}$$
 - **Mano Ausente:** Se emiten **63 ceros exactos (`0.0f`)** (`OK_HAND_MISSING`).
 
 ---
@@ -96,7 +96,6 @@ $$x' = \frac{x - C_x}{D}, \quad y' = \frac{y - C_y}{D}, \quad z' = \frac{z - C_z
 ## 4. Modo Extractor STUB y Renderizado de Skeleton
 
 ### Modo STUB Senoidal (`EXPRESAT_STUB_EXTRACTOR`)
-Para posibilitar pruebas sin cámara web:
 - Genera ondas senoidales temporales $0.5 + 0.15 \cos(t + 0.3i)$.
 - **Precaución:** Este modo sintético no debe utilizarse para compilar datasets de producción. Los datasets reales deben capturarse mediante la Etapa 1 del [[06_Arquitectura_Dataset_Generator_v2|Dataset Generator v2]].
 
@@ -109,8 +108,8 @@ Proyecta las conexiones anatómicas sobre la imagen capturada para retroalimenta
 
 ---
 
-## 🤖 Asignación de Agentes y Skills Recomendadas
+## 🤖 Guía de Operación para Agentes
 
-- **Para Especificación Matemática Canónica:** Consultar [[../../Especificacion_Feature_Spec_v1_2_1]].
+- **Para la Especificación Matemática Canónica:** Consultar [[../../Especificacion_Feature_Spec_v1_3_0]].
 - **Para la Nueva Arquitectura de Datasets v2:** Consultar [[06_Arquitectura_Dataset_Generator_v2]].
 - **Para Auditoría y Calidad de Datasets:** Invocar **`data-engineering-data-pipeline`** (ver [[../../Skills/MachineLearning_y_Vision]]).

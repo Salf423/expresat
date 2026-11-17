@@ -1,15 +1,14 @@
 /**
- * src/ui/drawLandmarks.js — Renderizado rápido en Canvas 2D del video y landmarks de manos/pose
+ * Fast 2D Canvas rendering for camera video and hand/pose landmarks.
  *
- * [CONTRATO DE ENTRADA Y TRANSFORMACIÓN DE COORDENADAS]
- * - El detector `HandLandmarker.detectForVideo(video, timestamp)` recibe DIRECTAMENTE el elemento
- *   HTMLVideoElement (imagen nativa del sensor, sin transformaciones ni espejo).
- * - En cámara frontal (selfie), la mano derecha física del firmante aparece a la izquierda de la
- *   imagen capturada por el sensor, por lo que MediaPipe le asigna `categoryName: 'Left'`.
- * - El espejo horizontal se realiza EXCLUSIVAMENTE en este canvas de renderizado mediante
- *   `ctx.translate(w, 0); ctx.scale(-1, 1)` para que el usuario se vea reflejado naturalmente.
- * - Los diagnósticos de texto (Punto 5) se renderizan en espacio de pantalla des-espejado
- *   para garantizar perfecta legibilidad visual.
+ * Input and coordinate contract:
+ * - `HandLandmarker.detectForVideo(video, timestamp)` receives the raw HTMLVideoElement
+ *   directly (native unmirrored sensor frames).
+ * - On front-facing (selfie) cameras, the signer's physical right hand appears on the
+ *   left of the raw image, so MediaPipe assigns `categoryName: 'Left'`.
+ * - Horizontal mirroring happens exclusively on this rendering canvas via
+ *   `ctx.translate(w, 0); ctx.scale(-1, 1)` for a natural mirror preview.
+ * - Diagnostic badges are drawn after restoring unmirrored screen coordinates for legibility.
  */
 
 export const HAND_CONNECTIONS = Object.freeze([
@@ -46,7 +45,7 @@ export const UPPER_POSE_CONNECTIONS = Object.freeze([
 ]);
 
 /**
- * Dibuja un badge de texto diagnóstico legible (Punto 5).
+ * Draws a legible diagnostic badge in unmirrored screen coordinates.
  */
 function drawDiagnosticBadge(ctx, text, x, y, bgColor = 'rgba(15, 23, 42, 0.90)', borderColor = '#38bdf8') {
   ctx.save();
@@ -80,14 +79,14 @@ function drawDiagnosticBadge(ctx, text, x, y, bgColor = 'rgba(15, 23, 42, 0.90)'
 }
 
 /**
- * Dibuja el frame de video espejado horizontalmente y superpone los landmarks o el LandmarkTracker.
+ * Renders a horizontally mirrored video frame with overlaid landmarks or LandmarkTracker trails.
  *
  * @param {Object} params
  * @param {HTMLCanvasElement} params.canvas
  * @param {HTMLVideoElement} params.video
  * @param {Object|null} params.frameData `{ hands, handedness, pose }`
- * @param {Object|null} params.tracker Instancia opcional de LandmarkTracker
- * @param {Object|null} params.trackingConfig Configuración visual opcional
+ * @param {Object|null} params.tracker Optional LandmarkTracker instance
+ * @param {Object|null} params.trackingConfig Optional visual overlay config
  */
 export function renderCanvasFrame({
   canvas,
@@ -106,7 +105,7 @@ export function renderCanvasFrame({
   ctx.save();
   ctx.clearRect(0, 0, w, h);
 
-  // Espejar horizontalmente para el usuario (modo selfie)
+  // Mirror horizontally for selfie view
   ctx.translate(w, 0);
   ctx.scale(-1, 1);
 
@@ -118,7 +117,7 @@ export function renderCanvasFrame({
     if (trackingConfig?.enabled && tracker) {
       tracker.render(ctx, frameData, w, h, trackingConfig);
     } else {
-      // Renderizado directo ultraligero de manos y pose superior
+      // Lightweight direct rendering of hands and upper pose
       if (Array.isArray(frameData.pose) && frameData.pose.length > 16) {
         ctx.strokeStyle = '#06B6D4';
         ctx.lineWidth = 3;
@@ -165,13 +164,12 @@ export function renderCanvasFrame({
     }
   }
 
-  // Restaurar el contexto espejado para dibujar los textos diagnósticos sin invertir
+  // Restore unmirrored transform so diagnostic labels remain legible
   ctx.restore();
 
-  // ─── Superposición de Diagnóstico Visual (Punto 5) ────────────────────────
-  // Se proyecta a espacio de pantalla: x_screen = (1 - x_norm) * w
+  // Visual diagnostic overlay projected into screen coordinates: x_screen = (1 - x_norm) * w
   if (frameData) {
-    // 1. Rótulos de muñecas de pose P15 y P16
+    // 1. Pose wrist labels P15 and P16
     if (Array.isArray(frameData.pose) && frameData.pose.length > 16) {
       const p15 = frameData.pose[15];
       const p16 = frameData.pose[16];
@@ -187,7 +185,7 @@ export function renderCanvasFrame({
       }
     }
 
-    // 2. Rótulos de manos: categoryName y bloque anatómico asignado
+    // 2. Hand labels: categoryName and assigned anatomical slot
     if (Array.isArray(frameData.hands)) {
       for (let hIdx = 0; hIdx < frameData.hands.length; hIdx++) {
         const hand = frameData.hands[hIdx];

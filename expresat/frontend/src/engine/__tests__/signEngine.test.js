@@ -7,11 +7,11 @@ describe('engine/SignEngine — Ciclo de vida, cleanup idempotente y FPS reales'
     const errors = [];
     engine.onError((err) => errors.push(err));
 
-    // Llamar stop() antes de start() no debe lanzar error
+    // Calling stop() before start() must not throw
     expect(() => engine.stop()).not.toThrow();
     expect(() => engine.stop()).not.toThrow();
 
-    // Si se llama start(null), emite error tipado sin crashear
+    // start(null) emits a typed error without throwing
     const started = await engine.start(null);
     expect(started).toBe(false);
     expect(errors.length).toBe(1);
@@ -44,7 +44,7 @@ describe('engine/SignEngine — Ciclo de vida, cleanup idempotente y FPS reales'
       };
 
       const startPromise = engine.start(fakeVideo);
-      // Simular cleanup de React StrictMode antes de que getUserMedia resuelva
+      // Simulate React StrictMode cleanup before getUserMedia resolves
       engine.stop();
 
       resolveMedia({
@@ -153,11 +153,11 @@ describe('engine/SignEngine — Ciclo de vida, cleanup idempotente y FPS reales'
     });
 
     expect(emitted).not.toBeNull();
-    // smoothLandmarks: false => hands coincide exactamente con las crudas
+    // smoothLandmarks: false passes raw coordinates unchanged
     expect(emitted.hands[0][0].x).toBe(0.6);
     expect(emitted.hands[0][0].y).toBe(0.7);
 
-    // framePayload.raw expone las detecciones crudas
+    // framePayload.raw preserves original unsmoothed detections
     expect(emitted.raw).toBeDefined();
     expect(emitted.raw.hands[0][0].x).toBe(0.6);
     expect(emitted.raw.pose[0].x).toBe(0.5);

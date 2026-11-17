@@ -1,10 +1,11 @@
 ---
 title: "Skills Especializadas: Backend, APIs y Sistemas de Alto Rendimiento"
-description: "Habilidades para desarrollo de APIs asíncronas con FastAPI, concurrencia en C++17, WebSockets en tiempo real, estructuras lock-free y seguridad de memoria."
-version: "2.0.0"
+description: "Habilidades para desarrollo de APIs asíncronas con FastAPI, concurrencia en C++17, WebSockets en tiempo real, colas circulares lock-free SPSC y seguridad de memoria."
+version: "2.3.0"
 category: "Skills / Backend & Sistemas"
+status: "Producción"
 target_agents: ["backend-architect", "fastapi-pro", "cpp-pro", "systems-engineer"]
-related_docs:
+recommended_skills:
   - "[[00_Matriz_General_Skills]]"
   - "[[../Websocket]]"
   - "[[../Explicacion del codigo/Backend/Python_FastAPI]]"
@@ -28,7 +29,7 @@ En **ExpresaT**, el subsistema de backend y ejecución de inferencia opera en do
 - **Ubicación:**
   - `~/.gemini/config/skills/fastapi-pro/SKILL.md`
   - `~/.gemini/config/skills/fastapi-templates/SKILL.md`
-- **Objetivo:** Creación y mantenimiento de microservicios FastAPI de alto rendimiento, validación con Pydantic v2, gestión del ciclo de vida (`@asynccontextmanager lifespan`) y manejo de excepciones asíncronas.
+- **Objetivo:** Creación y mantenimiento de microservicios FastAPI de alto rendimiento, validación con Pydantic v2, ciclo de vida (`lifespan`) y manejo de excepciones asíncronas.
 - **Cuándo invocar:**
   - Optimizar `expresat/backend/main.py`.
   - Configurar endpoints de healthcheck (`/health`), etiquetas soportadas (`/labels`) y streaming `/ws/translate`.
@@ -53,21 +54,30 @@ En **ExpresaT**, el subsistema de backend y ejecución de inferencia opera en do
 - **Ubicación:**
   - `~/.gemini/config/skills/async-python-patterns/SKILL.md`
   - `~/.gemini/config/skills/python-performance-optimization/SKILL.md`
-- **Objetivo:** Dominio de `asyncio`, tareas en segundo plano (*background tasks*), offloading de inferencia síncrona mediante `asyncio.to_thread` o `ThreadPoolExecutor` para evitar el bloqueo del bucle de eventos.
+- **Objetivo:** Dominio de `asyncio`, tareas en segundo plano (*background tasks*), offloading de inferencia síncrona mediante `asyncio.to_thread` para evitar el bloqueo del bucle de eventos.
 - **Cuándo invocar:**
   - Optimizar la función `run_inference_async` en el backend para admitir múltiples clientes concurrentes.
-
-### 5. `api-design-principles` & `api-testing-observability-api-mock`
-- **Ubicación:**
-  - `~/.gemini/config/skills/api-design-principles/SKILL.md`
-  - `~/.gemini/config/skills/api-testing-observability-api-mock/SKILL.md`
-- **Objetivo:** Especificación rigurosa de contratos REST y WebSocket, esquemas OpenAPI 3.1, códigos de estado HTTP y simulación (*mocking*) de streams para pruebas de carga.
 
 ---
 
 ## 📋 Reglas Arquitectónicas Invariables para Agentes Backend
 
-1. **No Bloquear el Event Loop en FastAPI:** La llamada `session.run()` de ONNX Runtime es intensiva en CPU. Debe invocarse siempre a través de un ejecutor desacoplado o thread pool, nunca directamente en la corrutina asíncrona del WebSocket.
+1. **No Bloquear el Event Loop en FastAPI:** La llamada `session.run()` de ONNX Runtime es intensiva en CPU. Debe invocarse siempre a través de `await asyncio.to_thread(...)`, nunca directamente en la corrutina asíncrona del WebSocket.
 2. **Buffer Circular Estricto:** La ventana de inferencia requiere exactamente **15 frames**. Los agentes no deben modificar este tamaño sin actualizar sincronizadamente la arquitectura en `SignLanguageGRU` y en los exportadores ONNX.
 3. **Manejo de Desconexiones:** Siempre capturar `WebSocketDisconnect` para liberar descriptores de conexión en el `ConnectionManager`.
-4. **Normalización y Contrato Canónico (FEATURE_SPEC v1.2.1):** Toda función de inferencia nativa C++ (`normalize_to_shoulders`) o Python (`InferenceEngine`) debe adherirse a [[../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]]: escala euclidiana 3D, validación de hombros ($D \ge 0.08$, visibilidad $\ge 0.40$), desacoplamiento de muñeca en $Z$ para manos y relleno de ceros para manos ausentes.
+4. **Estado C++ v1.3.0:** El motor C++ actual no implementa el remuestreo por bloques de `ExtractWindow` v1.3.0. Debe rechazar ejecuciones que carezcan de preprocesamiento canónico con `ERR_CPP_NOT_CONFORMANT` o `ERR_SHOULDERS_TOO_SMALL`.
+
+---
+
+## 🧪 Comandos de Prueba para Backend
+
+```bash
+# Tests de integración de backend FastAPI:
+pytest expresat/backend/test_api_integration.py -v
+
+# Tests de paridad matemática de extractores:
+pytest tests/test_feature_spec.py -v
+
+# Benchmark de inferencia nativa:
+python scripts/bench_native.py
+```

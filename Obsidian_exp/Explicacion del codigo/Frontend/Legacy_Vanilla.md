@@ -1,9 +1,9 @@
 ---
 title: "Explicación del Código: Frontend Clásico de Referencia (Vanilla JS)"
-description: "Arquitectura del frontend original implementado en JavaScript puro sin dependencias de compilación: mediapipe_engine.js, ventana deslizante y manipulación directa del DOM."
-version: "2.0.0"
+description: "Arquitectura del frontend original implementado en JavaScript puro sin dependencias de compilación: mediapipe_engine.js, ventana deslizante, comparativa técnica con React 19 y valor como referencia histórica."
+version: "2.3.0"
 category: "Código / Frontend Legacy"
-status: "Mantenimiento / Referencia"
+status: "Mantenimiento / Referencia Histórica"
 target_agents: ["frontend-developer", "javascript-pro"]
 recommended_skills:
   - "[[../../Skills/UI_UX_y_Frontend|UI_UX_y_Frontend]] (`javascript-pro`, `wcag-audit-patterns`)"
@@ -19,15 +19,20 @@ related_docs:
 
 > **Navegación:** [[../../00_INDICE_MAESTRO|🏠 Índice Maestro]] > **Explicación del Código** > **Frontend** > **Legacy Vanilla**
 
-Esta versión (`expresat/frontend-legacy/`) constituye la implementación fundacional del cliente web. Sirve como referencia técnica transparente para entender la integración de MediaPipe Holistic en el navegador sin las capas de abstracción de un framework.
+Esta versión (`expresat/frontend-legacy/`) constituye la implementación fundacional del cliente web. Sirve como referencia técnica transparente para entender la integración de MediaPipe Holistic en el navegador sin las capas de abstracción de un framework moderno.
 
 ---
 
-## 1. Conceptos Clave
+## 1. Tabla Comparativa: Vanilla JS vs React 19 + Tasks Vision
 
-- **JavaScript ES6 Nativo:** Sin herramientas de empaquetado (sin Vite ni Webpack), ejecutable de forma instantánea abriendo `index.html`.
-- **MediaPipe Holistic en Cliente:** Extracción directa de los 178 puntos geométricos utilizando la librería CDN de Google MediaPipe.
-- **Técnica de Ventana Deslizante (*Sliding Window*):** Almacenamiento temporal de fotogramas donde los datos entran por el extremo frontal y salen por el trasero (`push` / `shift`), permitiendo un flujo ininterrumpido de inferencia.
+| Dimensión Técnica | Frontend Legacy (Vanilla JS) | Frontend Moderno (`expresat/frontend`) |
+|---|---|---|
+| **Framework y Build** | ES6 nativo, sin bundler (abrible directamente en navegador) | React 19.2 + Vite 8.1 con HMR instantáneo |
+| **Librería de Visión** | `window.Holistic` + `window.Camera` vía CDN | `@mediapipe/tasks-vision` 1.0.1 con WASM local (`/wasm`) |
+| **Entorno de Detección** | Main Thread básico a 15 FPS | `SignEngine` en Main Thread optimizado con FPS reales |
+| **Manejo de Estados** | Variables globales en `mediapipe_engine.js` | Hooks reactivos (`useSignEngine.js`) y contextos |
+| **Transporte de Red** | WebSocket elemental sin reconexión | `WSClient` con máquina de estados y fallback a demo mode |
+| **Accesibilidad** | Básica en etiquetas HTML | WCAG 2.2 nivel AA/AAA con regiones vivas `aria-live="polite"` |
 
 ---
 
@@ -48,7 +53,7 @@ const SEQUENCE_LENGTH = 15;
 const frameBuffer = [];
 
 function onResults(results) {
-    // 1. Extraer landmarks normalizados de pose y manos (178D)
+    // 1. Extraer landmarks de pose y manos
     const frameData = extractLandmarks(results);
 
     if (frameData) {
@@ -67,7 +72,7 @@ function onResults(results) {
 
 ---
 
-## 🤖 Asignación de Agentes y Skills Recomendadas
+## 🤖 Guía de Operación para Agentes
 
-- **Para Mantenimiento y Compatibilidad JS:** Invocar **`javascript-pro`** (ver [[../../Skills/UI_UX_y_Frontend]]).
-- **Para Migración hacia React:** Invocar **`framework-migration-code-migrate`** o consultar [[Vite_React]].
+- **Regla Inmutable:** `expresat/frontend-legacy/` se preserva intacto como banco de pruebas y referencia de compatibilidad. No refactorizar ni eliminar sus archivos.
+- Para el desarrollo de nuevas características de usuario, operar exclusivamente sobre `expresat/frontend` (React 19).

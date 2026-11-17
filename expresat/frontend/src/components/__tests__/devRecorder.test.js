@@ -56,10 +56,8 @@ describe('components/devRecorderUtils — Contrato de metadatos obligatorios en 
       recordedAt: '2026-11-16T10:00:18.000Z',
     });
 
-    // delegate activo real en SignEngine
     expect(payload.delegate).toBe('GPU');
 
-    // track_settings real con getSettings() y dimensiones efectivas
     expect(payload.track_settings).toEqual({
       width: 640,
       height: 480,
@@ -71,7 +69,6 @@ describe('components/devRecorderUtils — Contrato de metadatos obligatorios en 
       effective_resolution: '640x480',
     });
 
-    // interval_metrics completo (count, p50_ms, p95_ms, p99_ms, max_ms, gaps_over_100ms)
     expect(payload.interval_metrics).toEqual({
       count: 3,
       p50_ms: 50,
@@ -84,7 +81,6 @@ describe('components/devRecorderUtils — Contrato de metadatos obligatorios en 
     });
     expect(payload.error).toBe('ERR_CAPTURE_FPS_TOO_LOW');
 
-    // prompt_timeline con transiciones ejecutadas y último cierre a finalDurationMs
     expect(payload.prompt_timeline).toHaveLength(5);
     expect(payload.prompt_timeline.map((p) => p.label)).toEqual([
       'reposo',
@@ -98,7 +94,7 @@ describe('components/devRecorderUtils — Contrato de metadatos obligatorios en 
     expect(payload.prompt_timeline[4].actual_start_ms).toBe(15005.2);
     expect(payload.prompt_timeline[4].actual_end_ms).toBe(18000);
 
-    // No modifica ni altera los arreglos de landmarks
+    // Input frame references must remain unmodified
     expect(payload.frames).toBe(sampleFrames);
     expect(payload.frames[0].hands).toEqual([[0.1, 0.2, 0.3]]);
   });
@@ -162,7 +158,7 @@ describe('components/devRecorderUtils — Contrato de metadatos obligatorios en 
       gaps_over_100ms_count: 0,
     });
 
-    // 101 frames con Δt de 1..100 + un salto de 120ms
+    // 101 frames with 1..99 ms deltas plus one 120 ms gap
     const denseFrames = [{ t_ms: 0 }];
     let acc = 0;
     for (let i = 1; i <= 99; i++) {

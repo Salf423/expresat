@@ -6,11 +6,9 @@
 
 namespace expresat {
 
-// ─── Constants ────────────────────────────────────────────────────────────────
 static constexpr float PI = 3.14159265358979f;
 static constexpr float DEG2RAD = PI / 180.f;
 
-// ─── Constructor ──────────────────────────────────────────────────────────────
 DataAugmenter::DataAugmenter()
     : DataAugmenter(Config{})
 {}
@@ -22,7 +20,6 @@ DataAugmenter::DataAugmenter(Config cfg)
     rng_.seed(rd());
 }
 
-// ─── generate() — main entry point ───────────────────────────────────────────
 std::vector<Sequence> DataAugmenter::generate(const Sequence& base,
                                                int count,
                                                int featureDim) {
@@ -46,7 +43,7 @@ std::vector<Sequence> DataAugmenter::generate(const Sequence& base,
         float angleDeg = rotDist(rng_);
         float warp     = warpDist(rng_);
 
-        // Apply transforms in order: noise → scale → rotation → temporal warp
+        // Apply transforms in order: noise -> scale -> rotation -> temporal warp
         Sequence s = applyNoise(base, sigma);
         s = applyScale(s, scale);
         s = applyRotation(s, angleDeg, featureDim);
@@ -61,10 +58,7 @@ std::vector<Sequence> DataAugmenter::generate(const Sequence& base,
     return results;
 }
 
-// ─── applyNoise() — Gaussian per-coordinate jitter ───────────────────────────
-// Adds noise to spatial coordinates only (x,y,z), preserving visibility values.
-// Pose block: 13 pts × 4 (x,y,z,vis) → only x,y,z get noise (every 4th skipped).
-// Hand blocks: pure x,y,z triplets → all values get noise.
+// Gaussian per-coordinate jitter on spatial coordinates only (preserves pose visibility).
 Sequence DataAugmenter::applyNoise(const Sequence& seq, float sigma) {
     std::normal_distribution<float> noise(0.f, sigma);
     Sequence out;
@@ -72,14 +66,12 @@ Sequence DataAugmenter::applyNoise(const Sequence& seq, float sigma) {
     for (const auto& frame : seq) {
         FeatureVector fv = frame;
 
-        // Upper pose block: 13 landmarks × 4 (x,y,z,visibility)
-        // Skip every 4th element (visibility channel)
+        // Upper pose block: 13 landmarks x 4 (x,y,z,visibility); leave visibility untouched
         for (int pt = 0; pt < POSE_UPPER_COUNT; ++pt) {
             int b = pt * POSE_COORDS;
-            fv[b + 0] += noise(rng_);  // x
-            fv[b + 1] += noise(rng_);  // y
-            fv[b + 2] += noise(rng_);  // z
-            // fv[b + 3] — visibility: unchanged
+            fv[b + 0] += noise(rng_);
+            fv[b + 1] += noise(rng_);
+            fv[b + 2] += noise(rng_);
         }
 
         // Left hand block: 63 floats starting at POSE_FEATURE_DIM (pure x,y,z)
@@ -96,23 +88,19 @@ Sequence DataAugmenter::applyNoise(const Sequence& seq, float sigma) {
     return out;
 }
 
-// ─── applyScale() — uniform XYZ scale ────────────────────────────────────────
-// Scales x,y,z but NOT the visibility channel (every 4th value in pose block).
-// For hand blocks (pure x,y,z triplets) all values are scaled.
-// Simple heuristic: scale every value uniformly (visibility clamped to [0,1]).
+// Uniform XYZ scaling; leaves pose visibility unchanged.
 Sequence DataAugmenter::applyScale(const Sequence& seq, float scale) {
     Sequence out;
     out.reserve(seq.size());
     for (const auto& frame : seq) {
         FeatureVector fv = frame;
 
-        // Pose block: 52 values (13 × 4: x,y,z,vis)
+        // Pose block: 52 values (13 x 4: x,y,z,vis)
         for (int pt = 0; pt < POSE_UPPER_COUNT; ++pt) {
             int base = pt * POSE_COORDS;
             fv[base + 0] *= scale;
             fv[base + 1] *= scale;
             fv[base + 2] *= scale;
-            // visibility (index base+3) — untouched
         }
 
         // Left hand block: starts at POSE_FEATURE_DIM
@@ -130,9 +118,7 @@ Sequence DataAugmenter::applyScale(const Sequence& seq, float scale) {
     return out;
 }
 
-// ─── applyRotation() — 2D XY rotation (sign plane) ───────────────────────────
-// Rotates x,y pairs across all spatial positions (skips visibility channel
-// in pose block; z is left unchanged — minimal out-of-plane movement).
+// 2D XY rotation in the sign plane (skips pose visibility; z stays unchanged).
 Sequence DataAugmenter::applyRotation(const Sequence& seq,
                                        float angleDeg,
                                        int /*featureDim*/) {
@@ -151,20 +137,17 @@ Sequence DataAugmenter::applyRotation(const Sequence& seq,
     for (const auto& frame : seq) {
         FeatureVector fv = frame;
 
-        // Pose block
         for (int pt = 0; pt < POSE_UPPER_COUNT; ++pt) {
             int b = pt * POSE_COORDS;
             rotateXY(fv[b + 0], fv[b + 1]);
         }
 
-        // Left hand
         int hs = POSE_FEATURE_DIM;
         for (int pt = 0; pt < HAND_LANDMARK_COUNT; ++pt) {
             int b = hs + pt * HAND_COORDS;
             rotateXY(fv[b + 0], fv[b + 1]);
         }
 
-        // Right hand
         int rhs = POSE_FEATURE_DIM + HAND_FEATURE_DIM;
         for (int pt = 0; pt < HAND_LANDMARK_COUNT; ++pt) {
             int b = rhs + pt * HAND_COORDS;
@@ -176,10 +159,7 @@ Sequence DataAugmenter::applyRotation(const Sequence& seq,
     return out;
 }
 
-// ─── applyTemporalWarp() — frame jittering ───────────────────────────────────
-// Re-samples the sequence maintaining the same length.
-// warpFactor ∈ [0, 1]: fraction of frames that may be dropped/duplicated.
-// Algorithm: build a warped index list and interpolate.
+// Temporal frame resampling while preserving sequence length.
 Sequence DataAugmenter::applyTemporalWarp(const Sequence& seq, float warpFactor) {
     int N = static_cast<int>(seq.size());
     if (N <= 1) return seq;

@@ -9,19 +9,13 @@ import {
 } from './devRecorderUtils.js';
 
 /**
- * DevRecorder.jsx — Grabador Mínimo Exclusivo de Desarrollo (import.meta.env.DEV)
+ * Development-only raw landmark recorder (guarded by `import.meta.env.DEV`).
  *
- * Mejoras v1.3.1 (Puntos 2, 3, 4, 5):
- *   - Compuerta de Calidad: Medición de FPS en vivo y rechazo si avg_fps < 15 (ERR_CAPTURE_FPS_TOO_LOW).
- *   - Etiquetas estrictas: categoryName ('Left'|'Right') y score guardados en cada mano y en frame.handedness.
- *   - Indicaciones en pantalla: cuenta regresiva, aviso sonoro (Web Audio API) y texto grande.
- *   - Línea de tiempo: prompt_timeline persistida en .raw.json con transiciones reales y ventana de gracia.
- *   - Captura PNG: Snapshot a los 5.0 s del frame exacto que ve el detector (cámara nativa sin espejo).
+ * Enforces >= 15 FPS capture quality gate, persists strict per-hand handedness,
+ * drives on-screen countdown/audio cues, and captures an unmirrored 5s PNG snapshot.
  */
 
-/**
- * Síntesis de beeps de aviso mediante Web Audio API (Punto 4).
- */
+/** Synthesize short notification tones via Web Audio API. */
 function playTone(freq = 660, durationSec = 0.2) {
   try {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -38,7 +32,7 @@ function playTone(freq = 660, durationSec = 0.2) {
     osc.start();
     osc.stop(ctx.currentTime + durationSec);
   } catch {
-    // Silencioso ante restricciones de autoplay
+    // Ignore browser autoplay restrictions
   }
 }
 
@@ -115,7 +109,6 @@ export function DevRecorder({ engineRef, videoRef }) {
       setRejectionError(null);
     }
 
-    // Descarga automática del .raw.json
     try {
       const blob = new Blob([JSON.stringify(payload, null, 2)], {
         type: 'application/json',
@@ -130,7 +123,6 @@ export function DevRecorder({ engineRef, videoRef }) {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      // Descarga de la captura PNG de 5s si se capturó (Punto 5)
       if (capturedPngDataUrlRef.current) {
         const linkPng = document.createElement('a');
         linkPng.href = capturedPngDataUrlRef.current;
@@ -186,10 +178,9 @@ export function DevRecorder({ engineRef, videoRef }) {
     setStatusMsg('Iniciando toma de 18s...');
     setIsRecording(true);
 
-    // Tono inicial
     playTone(PROMPT_TIMELINE[0].toneFreq, PROMPT_TIMELINE[0].toneDuration);
 
-    // Temporizador de UI a 50ms para cuenta regresiva suave y transiciones de audio
+    // 50 ms UI timer for countdown and phase audio cues
     timerIntervalRef.current = setInterval(() => {
       if (!startTimeRef.current) return;
       const now = performance.now();
@@ -197,14 +188,13 @@ export function DevRecorder({ engineRef, videoRef }) {
       const elapsedSeconds = elapsedMs / 1000.0;
       setElapsedSec(Number(elapsedSeconds.toFixed(1)));
 
-      // Identificar fase activa
       const promptIdx = PROMPT_TIMELINE.findIndex(
         (p) => elapsedMs >= p.start_ms && elapsedMs < p.end_ms
       );
       const safeIdx = promptIdx !== -1 ? promptIdx : PROMPT_TIMELINE.length - 1;
       setActivePromptIdx(safeIdx);
 
-      // Si cambió de fase, cerrar transición previa, registrar timestamp real y emitir aviso sonoro (Punto 4)
+      // Close previous phase entry and emit tone on prompt transition
       if (safeIdx !== lastPromptIdxRef.current) {
         lastPromptIdxRef.current = safeIdx;
         const prevEntry = executedTransitionsRef.current[executedTransitionsRef.current.length - 1];
@@ -218,7 +208,7 @@ export function DevRecorder({ engineRef, videoRef }) {
         playTone(currentPrompt.toneFreq, currentPrompt.toneDuration);
       }
 
-      // Cálculo de FPS en vivo en ventana rodante de 1000ms (Punto 2)
+      // Rolling 1000 ms live FPS window
       const cutoff = now - 1000.0;
       recentTimestampsRef.current = recentTimestampsRef.current.filter((t) => t >= cutoff);
       setLiveFps(recentTimestampsRef.current.length);
@@ -228,7 +218,6 @@ export function DevRecorder({ engineRef, videoRef }) {
       }
     }, 50);
 
-    // Suscribir listener de frames crudos
     const devTel = import.meta.env.DEV ? engine._devTelemetry : null;
     unsubRef.current = engine.onFrame((framePayload) => {
       if (!framePayload || !startTimeRef.current) return;
@@ -242,7 +231,7 @@ export function DevRecorder({ engineRef, videoRef }) {
       const rawHands = Array.isArray(raw.hands) ? raw.hands : [];
       const rawHandedness = Array.isArray(raw.handedness) ? raw.handedness : [];
 
-      // Garantizar que cada mano incluya categoryName y score sin perderlos (Punto 3)
+      // Preserve categoryName and score per hand entry
       const formattedHands = rawHands.map((h, i) => {
         const catItem = rawHandedness[i];
         const catObj = Array.isArray(catItem) ? catItem[0] : catItem;
@@ -269,14 +258,13 @@ export function DevRecorder({ engineRef, videoRef }) {
       const vWidth = videoEl?.videoWidth || 640;
       const vHeight = videoEl?.videoHeight || 480;
 
-      // Captura PNG exacta a los 5.0 s (Punto 5) de lo que ve el detector (cámara nativa sin espejo)
+      // Capture unmirrored raw frame seen by the detector at 5.0 s
       if (tMs >= 5000 && !capturedPngDataUrlRef.current && videoEl && videoEl.readyState >= 2) {
         try {
           const off = document.createElement('canvas');
           off.width = vWidth;
           off.height = vHeight;
           const octx = off.getContext('2d');
-          // Sin transformaciones: frame crudo directo de la cámara
           octx.drawImage(videoEl, 0, 0, vWidth, vHeight);
           capturedPngDataUrlRef.current = off.toDataURL('image/png');
         } catch (pngErr) {
@@ -314,7 +302,6 @@ export function DevRecorder({ engineRef, videoRef }) {
     });
   }, [engineRef, videoRef, stopAndDownload]);
 
-  // Limpieza al desmontar
   useEffect(() => {
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
@@ -349,7 +336,7 @@ export function DevRecorder({ engineRef, videoRef }) {
       }}
       data-testid="dev-recorder-panel"
     >
-      {/* Barra superior de controles */}
+      {/* Top controls bar */}
       <div
         style={{
           display: 'flex',
@@ -378,7 +365,7 @@ export function DevRecorder({ engineRef, videoRef }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-          {/* Selector de Delegado CPU / GPU (Punto 1) */}
+          {/* CPU / GPU delegate selector */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Delegado:</span>
             <select
@@ -413,7 +400,7 @@ export function DevRecorder({ engineRef, videoRef }) {
             </select>
           </div>
 
-          {/* Badge de FPS en Vivo (Punto 2) */}
+          {/* Live FPS badge */}
           {isRecording && (
             <div
               style={{
@@ -484,7 +471,7 @@ export function DevRecorder({ engineRef, videoRef }) {
         </div>
       </div>
 
-      {/* Banner Grande de Indicaciones en Pantalla (Punto 4) */}
+      {/* On-screen prompt instruction banner */}
       {isRecording && (
         <div
           style={{
@@ -521,7 +508,7 @@ export function DevRecorder({ engineRef, videoRef }) {
         </div>
       )}
 
-      {/* Métricas en vivo durante la grabación */}
+      {/* Live recording metrics */}
       {isRecording && (
         <div
           style={{
@@ -546,7 +533,7 @@ export function DevRecorder({ engineRef, videoRef }) {
         </div>
       )}
 
-      {/* Banner de Rechazo de Calidad (Punto 2) */}
+      {/* Quality gate rejection banner */}
       {rejectionError && !isRecording && (
         <div
           style={{
@@ -567,7 +554,7 @@ export function DevRecorder({ engineRef, videoRef }) {
         </div>
       )}
 
-      {/* Mensaje de estado final */}
+      {/* Final status message */}
       {statusMsg && !isRecording && (
         <div style={{ marginTop: '0.5rem', color: rejectionError ? '#f87171' : '#38bdf8', fontSize: '0.825rem' }}>
           {statusMsg}

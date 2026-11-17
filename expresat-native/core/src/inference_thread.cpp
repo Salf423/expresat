@@ -82,8 +82,7 @@ void InferenceThread::load_onnx_model(const std::string& path) {
 }
 
 void InferenceThread::run(const std::atomic<bool>& running) {
-    // RECHAZO CRÍTICO: Si la implementación nativa está declarada como no conforme,
-    // rechaza activamente la ejecución con retorno de error explícito y publicación en result_bus.
+    // Reject execution with an explicit error and publish to result_bus when flagged non-conformant.
     if (std::string(CPP_FEATURE_SPEC_CONFORMANCE) != "CONFORME") {
         std::cerr << "[InferenceThread] RECHAZO: Implementación C++ no conforme con FEATURE_SPEC ("
                   << CPP_FEATURE_SPEC_CONFORMANCE << "). Abortando ejecución.\n";
@@ -221,7 +220,7 @@ InferenceThread::preprocess_sequence() const {
                 frame.left_hand, frame.right_hand
             );
             if (!valid) {
-                // Rechazo activo de la secuencia si los hombros son inválidos o D < 1e-4
+                // Reject sequence when shoulder landmarks are invalid or D < 1e-4
                 return {};
             }
         }
@@ -283,7 +282,7 @@ bool InferenceThread::normalize_to_shoulders(
     const float dz = ls.z - rs.z;
     const float scale = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-    // Rechazo estricto si hombros son demasiado pequeños o D < 1e-4
+    // Reject sequence when shoulder span falls below threshold
     if (scale < SHOULDERS_D_MIN || scale < 1e-4f) {
         return false;
     }

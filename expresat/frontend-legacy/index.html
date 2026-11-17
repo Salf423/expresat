@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,6 +9,7 @@
     <link rel="stylesheet" href="./styles/navbar.css">
     <link rel="stylesheet" href="./styles/footer.css">
 </head>
+
 <body>
     <canvas id="bg"></canvas>
 
@@ -25,7 +27,7 @@
         </ul>
         <div class="nav-controls">
             <a href="login.html" class="btn-neon" id="nav-login-btn">Iniciar Sesión</a>
-            
+
             <div id="nav-auth-wrapper" style="display: none;">
                 <div class="user-avatar" id="user-avatar">U</div>
                 <div class="dropdown-menu glass-panel" id="dropdown-menu">
@@ -41,26 +43,33 @@
         <section class="reveal" style="padding: 10vh 0;">
             <h1 style="font-size: 4rem; margin-bottom: 1rem;" class="gradient-text">El Futuro de la Inclusión</h1>
             <p style="font-size: 1.2rem; max-width: 600px; margin: 0 auto 2rem;">
-                ExpresaT traduce la Lengua de Señas Mexicana en tiempo real usando inteligencia artificial de última generación.
+                ExpresaT traduce la Lengua de Señas Mexicana en tiempo real usando inteligencia artificial de última
+                generación.
             </p>
             <div style="display: flex; gap: 1rem; justify-content: center;">
-                <a href="traductor.html" class="btn-primary" style="font-size: 1.2rem; padding: 1rem 2rem;">Probar Traductor</a>
-                <a href="informacion.html" class="btn-neon" style="font-size: 1.2rem; padding: 1rem 2rem;">Conoce Más</a>
+                <a href="traductor.html" class="btn-primary" style="font-size: 1.2rem; padding: 1rem 2rem;">Probar
+                    Traductor</a>
+                <a href="informacion.html" class="btn-neon" style="font-size: 1.2rem; padding: 1rem 2rem;">Conoce
+                    Más</a>
             </div>
         </section>
 
-        <section class="reveal" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-top: 4rem;">
+        <section class="reveal"
+            style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-top: 4rem;">
             <div class="glass-panel" style="padding: 2rem;">
                 <h3 style="color: var(--accent-cyan);">IA en Tiempo Real</h3>
-                <p style="margin-top: 1rem;">Nuestra red neuronal procesa 15 fotogramas por segundo garantizando traducciones inmediatas.</p>
+                <p style="margin-top: 1rem;">Nuestra red neuronal procesa 15 fotogramas por segundo garantizando
+                    traducciones inmediatas.</p>
             </div>
             <div class="glass-panel" style="padding: 2rem;">
                 <h3 style="color: var(--accent-purple);">Estética Glassmorphism</h3>
-                <p style="margin-top: 1rem;">Una interfaz fluida, inmersiva y totalmente responsiva diseñada para ti.</p>
+                <p style="margin-top: 1rem;">Una interfaz fluida, inmersiva y totalmente responsiva diseñada para ti.
+                </p>
             </div>
             <div class="glass-panel" style="padding: 2rem;">
                 <h3 style="color: var(--accent-cyan);">Aprendizaje Activo</h3>
-                <p style="margin-top: 1rem;">No solo traduces, también aprendes con nuestra galería interactiva de señas.</p>
+                <p style="margin-top: 1rem;">No solo traduces, también aprendes con nuestra galería interactiva de
+                    señas.</p>
             </div>
         </section>
     </main>
@@ -83,9 +92,12 @@
             <div class="footer-social">
                 <h4>Redes Sociales</h4>
                 <div class="social-icons">
-                    <a href="https://github.com/salf423" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">GitHub</a>
-                    <a href="#" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Facebook</a>
-                    <a href="#" target="_blank" class="btn-neon" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Instagram</a>
+                    <a href="https://github.com/salf423" target="_blank" class="btn-neon"
+                        style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">GitHub</a>
+                    <a href="#" target="_blank" class="btn-neon"
+                        style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Facebook</a>
+                    <a href="#" target="_blank" class="btn-neon"
+                        style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Instagram</a>
                 </div>
             </div>
         </div>
@@ -96,6 +108,7 @@
 
     <script src="./js/ui_controller.js"></script>
     <script src="./js/navbar.js"></script>
-    <!-- Opcional: Aquí se importaría el auth_service.js para validar estado y ejecutar window.updateNavbarAuthState() -->
+    <!-- Optional: import auth_service.js here to validate state and invoke window.updateNavbarAuthState() -->
 </body>
+
 </html>

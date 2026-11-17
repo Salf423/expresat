@@ -1,13 +1,10 @@
 /**
- * src/engine/signEngine.js — Motor de Captura de Cámara + MediaPipe en el Hilo Principal
+ * Main-thread camera capture and MediaPipe vision engine (no Workers).
  *
- * Responsabilidades:
- * - Captura de cámara (`getUserMedia`) e inicialización de MediaPipe en el Hilo Principal (sin Workers).
- * - Expone `start(videoElement)`, `stop()`, `onFrame(cb)`, `onFps(cb)`, `onError(cb)`.
- * - Sin depender de React ni consultar el DOM mediante `getElementById`.
- * - Cleanup 100% idempotente ante el doble montaje de React 19 StrictMode (`runId` incremental y captura de `AbortError` en `video.play()`).
- * - Contadores separados de FPS reales: `cameraFps` (frames leídos de la cámara) e `inferenceFps` (detecciones reales completadas por MediaPipe).
- * - Por defecto ejecuta solo `HandLandmarker` (`@mediapipe/tasks-vision`, WASM en `/wasm`, `delegate: 'CPU'` con fallback a `'GPU'`), y opcionalmente `PoseLandmarker` o la API Legacy (`window.Hands` / `window.Holistic` con versiones fijadas).
+ * Exposes `start(videoElement)`, `stop()`, `onFrame(cb)`, `onFps(cb)`, and `onError(cb)`
+ * with idempotent cleanup across React 19 StrictMode double-mounts (`runId` cancellation
+ * and `video.play()` AbortError handling). Runs `@mediapipe/tasks-vision` (`CPU` or `GPU`
+ * delegate) with optional PoseLandmarker and legacy CDN fallback.
  */
 
 import {
@@ -47,7 +44,7 @@ const POSE_MODEL_FALLBACK_URL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 
 /**
- * Carga un script clásico en `document.head` de forma idempotente (usado solo si se selecciona el backend legacy).
+ * Load a classic script tag into `document.head` once (used only by the legacy backend).
  */
 function loadScriptOnce(src) {
   return new Promise((resolve, reject) => {
@@ -86,8 +83,8 @@ function loadScriptOnce(src) {
 }
 
 /**
- * Protege `window.ModuleFactory` en el hilo principal para que `@mediapipe/tasks-vision`
- * no lo borre (`self.ModuleFactory = void 0`) al instanciar más de un detector o reintentar delegate.
+ * Guard `window.ModuleFactory` on the main thread so `@mediapipe/tasks-vision`
+ * cannot clear it (`self.ModuleFactory = void 0`) when instantiating multiple tasks.
  */
 function protectMainThreadModuleFactory() {
   if (typeof window === 'undefined') return;
@@ -114,8 +111,8 @@ function protectMainThreadModuleFactory() {
 }
 
 /**
- * Desactiva el logger interno ODML de @mediapipe/tasks-vision (POST odml.pa.googleapis.com/v1/log)
- * para evitar salidas a red y errores net::ERR_INTERNET_DISCONNECTED en entorno offline.
+ * Disable @mediapipe/tasks-vision's internal ODML logger (POST odml.pa.googleapis.com/v1/log)
+ * to prevent outbound network calls and errors when running offline.
  */
 function disableMediaPipeOdmlTelemetry(instance) {
   try {
@@ -139,13 +136,14 @@ function disableMediaPipeOdmlTelemetry(instance) {
       }
     };
   } catch {
-    // No crítico si una versión futura cambia estructura interna
+    // Non-critical if future versions alter internal fields
   }
 }
 
 /**
- * Instancia una tarea de MediaPipe probando primero `delegate: 'CPU'` (óptimo y libre de bloqueos WebGL
- * en Linux/Firefox con iGPU Ryzen 3 7320U) y haciendo fallback a `'GPU'`, y probando ruta local antes de URL remota.
+ * Instantiate a MediaPipe task trying the preferred delegate first (defaults to 'CPU'
+ * to avoid WebGL driver stalls on Linux/Firefox iGPUs) before falling back, and local
+ * model paths before remote URLs.
  */
 async function createTaskWithFallback(TaskClass, vision, modelPaths, taskOptions, preferredDelegate = 'CPU') {
   const delegates = preferredDelegate === 'GPU' ? ['GPU', 'CPU'] : ['CPU', 'GPU'];
@@ -179,14 +177,14 @@ async function createTaskWithFallback(TaskClass, vision, modelPaths, taskOptions
 export class SignEngine {
   /**
    * @param {Object} [options]
-   * @param {number} [options.targetFps] FPS objetivo de inferencia (default: CONFIG.targetFps, 15-30)
-   * @param {number} [options.width] Ancho de captura de cámara (default: 640)
-   * @param {number} [options.height] Alto de captura de cámara (default: 480)
-   * @param {boolean} [options.enablePose] Activar detección de pose (default: CONFIG.enablePose = false)
-   * @param {number} [options.modelComplexity] Complejidad 0 o 1 (default: CONFIG.modelComplexity = 0)
-   * @param {'tasks'|'legacy'} [options.backend] Backend MediaPipe (default: CONFIG.mediapipeBackend = 'tasks')
-   * @param {'CPU'|'GPU'} [options.delegate] Delegate preferido (default: 'CPU')
-   * @param {boolean} [options.smoothLandmarks] Suavizado EMA (default: true)
+   * @param {number} [options.targetFps] Target inference FPS (default: CONFIG.targetFps, 15-30)
+   * @param {number} [options.width] Camera capture width (default: 640)
+   * @param {number} [options.height] Camera capture height (default: 480)
+   * @param {boolean} [options.enablePose] Enable PoseLandmarker (default: CONFIG.enablePose)
+   * @param {number} [options.modelComplexity] Model complexity 0 or 1 (default: CONFIG.modelComplexity)
+   * @param {'tasks'|'legacy'} [options.backend] MediaPipe backend (default: CONFIG.mediapipeBackend)
+   * @param {'CPU'|'GPU'} [options.delegate] Preferred delegate (default: 'GPU')
+   * @param {boolean} [options.smoothLandmarks] Enable EMA smoothing (default: true)
    */
   constructor(options = {}) {
     this.targetFps = options.targetFps ?? CONFIG.targetFps ?? 20;
@@ -204,7 +202,7 @@ export class SignEngine {
           queryDelegate = q.toUpperCase();
         }
       } catch {
-        // Ignorar errores de URL en entornos no-browser
+        // Ignore URL parsing errors in non-browser contexts
       }
     }
     this.preferredDelegate = options.delegate ?? queryDelegate ?? 'GPU';
@@ -219,7 +217,7 @@ export class SignEngine {
           queryCamExp = exp;
         }
       } catch {
-        // Ignorar errores de URL en entornos no-browser
+        // Ignore URL parsing errors in non-browser contexts
       }
     }
     this.cameraExperiment =
@@ -284,9 +282,9 @@ export class SignEngine {
   }
 
   /**
-   * Suscribe un listener para cada detección procesada (`onFrame(frameData)`).
+   * Subscribe to processed frame detections (`onFrame(frameData)`).
    * @param {Function} callback
-   * @returns {Function} Función para desuscribir
+   * @returns {Function} Unsubscribe function
    */
   onFrame(callback) {
     if (typeof callback === 'function') {
@@ -296,9 +294,9 @@ export class SignEngine {
   }
 
   /**
-   * Suscribe un listener para las métricas reales de FPS (`onFps({ cameraFps, inferenceFps })`).
+   * Subscribe to real FPS metrics (`onFps({ cameraFps, inferenceFps })`).
    * @param {Function} callback
-   * @returns {Function} Función para desuscribir
+   * @returns {Function} Unsubscribe function
    */
   onFps(callback) {
     if (typeof callback === 'function') {
@@ -308,9 +306,9 @@ export class SignEngine {
   }
 
   /**
-   * Suscribe un listener para errores visibles de cámara o WASM (`onError({ code, message, cause })`).
+   * Subscribe to camera or WASM errors (`onError({ code, message, cause })`).
    * @param {Function} callback
-   * @returns {Function} Función para desuscribir
+   * @returns {Function} Unsubscribe function
    */
   onError(callback) {
     if (typeof callback === 'function') {
@@ -320,9 +318,9 @@ export class SignEngine {
   }
 
   /**
-   * Suscribe un listener para cambios de estado del motor (`onStatus(statusObj)`).
+   * Subscribe to engine lifecycle status changes (`onStatus(statusObj)`).
    * @param {Function} callback
-   * @returns {Function} Función para desuscribir
+   * @returns {Function} Unsubscribe function
    */
   onStatus(callback) {
     if (typeof callback === 'function') {
@@ -353,7 +351,7 @@ export class SignEngine {
     if (!import.meta.env.DEV || !this._devTelemetry) return;
     const prevPhase = this._devTelemetry.phase;
     this._devTelemetry.setPhase(phase);
-    // Refrescar UI del panel dev automáticamente al terminar una grabación ('grabando' -> 'reposo')
+    // Refresh dev panel automatically once recording stops ('grabando' -> 'reposo')
     if (prevPhase === 'grabando' && this._devTelemetry.phase === 'reposo') {
       const snap = this._devTelemetry.getSnapshot();
       for (const listener of this._devSnapshotListeners) {
@@ -382,13 +380,12 @@ export class SignEngine {
   }
 
   /**
-   * Inicia la cámara y el motor MediaPipe en el hilo principal.
-   * Es idempotente y resistente al doble montaje de React StrictMode.
-   *
+   * Start camera capture and MediaPipe inference on the main thread.
+   * Idempotent across React StrictMode double-mounts.
    * @param {HTMLVideoElement} videoElement
    */
   async start(videoElement) {
-    // Incrementar runId invalida cualquier start() anterior en vuelo
+    // Incrementing runId invalidates any older in-flight start()
     const currentRunId = ++this._runId;
     this._cleanupResourcesOnly();
 
@@ -417,7 +414,6 @@ export class SignEngine {
       }
     }
 
-    // 1. Iniciar cámara y cargar WASM/MediaPipe
     let stream = null;
     try {
       stream = await this._acquireCameraStream();
@@ -428,7 +424,7 @@ export class SignEngine {
       return false;
     }
 
-    // Si stop() o un nuevo start() ocurrió mientras getUserMedia esperaba permiso:
+    // Abort if stop() or a newer start() ran while awaiting getUserMedia
     if (currentRunId !== this._runId || !this._running) {
       stream.getTracks().forEach((t) => t.stop());
       return false;
@@ -442,7 +438,7 @@ export class SignEngine {
     try {
       await videoElement.play();
     } catch (playErr) {
-      // En React 19 StrictMode, play() puede lanzar AbortError si el componente se desmonta rápido
+      // React 19 StrictMode unmount interrupts play() with AbortError
       if (currentRunId !== this._runId || !this._running || playErr?.name === 'AbortError') {
         if (currentRunId === this._runId) {
           this._cleanupResourcesOnly();
@@ -482,7 +478,6 @@ export class SignEngine {
 
     this._emitStatus({ state: 'loading_wasm', wasmReady: false, cameraReady: true });
 
-    // 2. Inicializar MediaPipe en el hilo principal
     try {
       await this._initializeMediaPipe(currentRunId);
     } catch (mpErr) {
@@ -530,21 +525,18 @@ export class SignEngine {
       backendInfo: this._activeBackendInfo,
     });
 
-    // Notificar a partículas de fondo para ahorrar CPU
+    // Pause decorative background particles while camera is active
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('camera-active', { detail: true }));
     }
 
-    // 3. Arrancar observador pasivo de cámara (solo dev), ticker FPS (1000 ms) y bucle de captura
     this._startPassiveCameraObserver(currentRunId);
     this._startFpsTicker();
     this._scheduleNextTick(currentRunId);
     return true;
   }
 
-  /**
-   * Detiene de forma idempotente la cámara, el bucle de inferencia y libera MediaPipe.
-   */
+  /** Idempotently stop camera capture, inference loop, and MediaPipe instances. */
   stop() {
     this._runId++;
     this._cleanupResourcesOnly();
@@ -569,7 +561,7 @@ export class SignEngine {
       try {
         this._videoElement.cancelVideoFrameCallback(this._rvfcId);
       } catch {
-        // Ignorar errores de cancelVideoFrameCallback en teardown
+        // Ignore teardown cancelVideoFrameCallback errors
       }
     }
     this._rvfcId = null;
@@ -755,8 +747,7 @@ export class SignEngine {
       }
       return stream;
     } catch (primaryErr) {
-      // Si las restricciones ideales fallan en cámaras virtuales (ej. Playwright fake device),
-      // reintentar con `{ video: true, audio: false }` salvo que haya sido permiso denegado.
+      // Retry without ideal constraints on virtual cameras unless permission was denied
       if (
         primaryErr?.name === 'NotAllowedError' ||
         primaryErr?.name === 'PermissionDeniedError'
@@ -847,7 +838,7 @@ export class SignEngine {
       try {
         await this._initLegacyBackend(currentRunId);
       } catch {
-        // Reportar el error original de WASM/Modelo con mensaje específico
+        // Surface the primary WASM/model error rather than the fallback error
         throw tasksErr;
       }
     }
@@ -1034,7 +1025,7 @@ export class SignEngine {
           playbackQuality = null;
         }
         const devSnap = this._devTelemetry.flushSecondMetrics(playbackQuality);
-        // No notificar re-renders 1 Hz a React mientras está grabando
+        // Skip 1 Hz React UI notifications while actively recording
         if (devSnap && this._devTelemetry.phase !== 'grabando') {
           for (const listener of this._devSnapshotListeners) {
             try {
@@ -1066,7 +1057,7 @@ export class SignEngine {
       video.videoHeight > 0 &&
       (typeof document === 'undefined' || !document.hidden)
     ) {
-      // Contar frame nuevo entregado por la cámara cuando avanza currentTime
+      // Count new camera frame when video.currentTime advances
       const videoTimeAdvanced = video.currentTime !== this._lastVideoTime;
       if (videoTimeAdvanced) {
         this._lastVideoTime = video.currentTime;
@@ -1076,7 +1067,7 @@ export class SignEngine {
         this._devTelemetry?.recordRafTick(nowMs, videoTimeAdvanced);
       }
 
-      // Respetar el intervalo objetivo de inferencia (15 a 30 FPS) y evitar solapamiento
+      // Throttle inference to targetFps and prevent overlapping async steps
       if (!this._busy && nowMs - this._lastInferenceStartMs >= this.frameIntervalMs) {
         this._busy = true;
         this._lastInferenceStartMs = nowMs;
@@ -1101,25 +1092,17 @@ export class SignEngine {
     let stepCompleted = false;
 
     try {
-      // Asegurar timestamp estrictamente creciente para MediaPipe Tasks runningMode: 'VIDEO'
+      // MediaPipe Tasks VIDEO mode requires strictly monotonic timestamps
       const timestampMs = Math.max(Math.floor(nowMs), this._lastMonotonicTimestampMs + 1);
       this._lastMonotonicTimestampMs = timestampMs;
 
-      // Soporte de inyección para pruebas automatizadas (Playwright con cámara sintética)
-      // Una vez que el motor WASM real ya cargó y corrió `detectForVideo`, si MediaPipe no ve
-      // una mano humana en el patrón de barras de color de Chromium (`--use-fake-device-for-media-stream`),
-      // permite que el arnés E2E inyecte landmarks sintéticos verificando todo el pipeline real.
       let rawHands = [];
       let rawHandedness = [];
       let rawPose = null;
 
-      // [CONTRATO DE ENTRADA Y TRANSFORMACIÓN DE DETECTOR - Punto 5]
-      // 1. Elemento de entrada: detectForVideo() recibe DIRECTAMENTE el elemento HTMLVideoElement (`video`).
-      // 2. Sin transformaciones: El video se entrega en su orientación nativa de sensor (NO espejado).
-      // 3. Convención de lateralidad: En cámara frontal (selfie), la mano derecha física del usuario
-      //    aparece en el lado izquierdo del encuadre nativo, por lo que MediaPipe le asigna categoryName: 'Left'.
-      // 4. Modo espejo: El flip horizontal se aplica EXCLUSIVAMENTE en el canvas de renderizado
-      //    (renderCanvasFrame vía `ctx.scale(-1, 1)`) para confort visual del usuario.
+      // Detector contract: pass the unmirrored HTMLVideoElement directly; mirror only
+      // when drawing to the display canvas. Front-camera user right hand appears on the
+      // left side of the raw frame and is labeled categoryName: 'Left' by MediaPipe.
       if (this._handLandmarker) {
         if (import.meta.env.DEV) this._devTelemetry?.mark('expresat:hand:start');
         const handRes = this._handLandmarker.detectForVideo(video, timestampMs, {
@@ -1236,8 +1219,7 @@ export class SignEngine {
       ? this._emaFilter.smoothResults({ pose, hands, handedness })
       : { pose, hands, handedness };
 
-    // En cámara frontal (selfie), MediaPipe etiqueta la mano derecha del usuario como 'Left'
-    // porque aparece a la izquierda de la imagen no espejada.
+    // On unmirrored selfie video, MediaPipe labels the user's right hand as 'Left'
     let leftHand = null;
     let rightHand = null;
 

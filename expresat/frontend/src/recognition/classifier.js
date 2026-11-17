@@ -1,9 +1,9 @@
 /**
- * src/recognition/classifier.js — Clasificador geométrico puro e interfaz Classifier
+ * Pure geometric classifier and Classifier interface.
  *
- * Define la interfaz base `Classifier { predict(frames) -> { label, confidence, details } }`
- * con la implementación `GeometricClassifier` hoy (100% en navegador, sin modelo entrenado)
- * y el adaptador `ModelClassifier` listo para enchufar el modelo neuronal ONNX/GRU después.
+ * Defines the base `Classifier { predict(frames) -> { label, confidence, details } }`
+ * interface implemented by `GeometricClassifier` (in-browser, no trained model required)
+ * and the `ModelClassifier` adapter for plugging in an ONNX/GRU neural model later.
  */
 
 import {
@@ -14,7 +14,7 @@ import {
 } from './geometry.js';
 
 /**
- * Etiquetas canónicas reconocidas por el clasificador geométrico.
+ * Canonical sign labels recognized by the geometric classifier.
  */
 export const SIGN_LABELS = Object.freeze({
   MANO_ABIERTA: 'Mano Abierta',
@@ -29,9 +29,9 @@ export const SIGN_LABELS = Object.freeze({
 });
 
 /**
- * Extrae el arreglo de 21 landmarks de mano desde distintos formatos de entrada:
- * - Un arreglo directo de 21 puntos `[{x,y,z}, ...]`
- * - Un objeto frame `{ rightHand, leftHand, hands }`
+ * Extracts the 21-point hand landmark array from supported input formats:
+ * - A direct array of 21 points `[{x,y,z}, ...]`
+ * - A frame object `{ rightHand, leftHand, hands }`
  */
 export function extractHandFromFrame(frame) {
   if (!frame) return null;
@@ -56,8 +56,8 @@ export function extractHandFromFrame(frame) {
 }
 
 /**
- * Clasifica un único frame de 21 landmarks de mano en un gesto estático.
- * Función pura e invariante a traslación, escala y rotación en el plano XY.
+ * Classifies a single frame of 21 hand landmarks into a static gesture.
+ * Pure function invariant to translation, scale, and XY-plane rotation.
  *
  * @param {Array<{x:number, y:number, z?:number}>|Object} frameOrLandmarks
  * @returns {{ label: string|null, confidence: number, states: Object|null, reason: string }}
@@ -95,8 +95,8 @@ export function classifyStaticHand(frameOrLandmarks) {
     indexMiddleSpread,
   } = states;
 
-  // 1. OK / Pinza: Puntas de pulgar e índice unidas (< 0.36 * palmScale)
-  // Puede hacerse con los otros 3 dedos extendidos (gesto OK clásico) o con los otros 3 doblados (pinza fina)
+  // 1. OK / Pinch: thumb and index tips joined (< 0.36 * palmScale), with remaining fingers open or curled
+  // Allows either classic OK (other 3 fingers extended) or fine pinch (other 3 curled)
   if (isPinching && (!index || middle)) {
     const tightness = Math.max(0, Math.min(1, 1 - thumbIndexTipDist / 0.45));
     const bonus = middle && ring && pinky ? 0.06 : 0.0;
@@ -109,7 +109,7 @@ export function classifyStaticHand(frameOrLandmarks) {
     };
   }
 
-  // 2. Mano Abierta: Los 5 dedos extendidos
+  // 2. Open hand: all 5 fingers extended
   if (thumb && index && middle && ring && pinky) {
     return {
       label: SIGN_LABELS.MANO_ABIERTA,
@@ -119,7 +119,7 @@ export function classifyStaticHand(frameOrLandmarks) {
     };
   }
 
-  // 3. Puño: Los 5 dedos doblados
+  // 3. Fist: all 5 fingers curled
   if (!thumb && !index && !middle && !ring && !pinky) {
     return {
       label: SIGN_LABELS.PUNO,
@@ -129,7 +129,7 @@ export function classifyStaticHand(frameOrLandmarks) {
     };
   }
 
-  // 4. Uno: Solo el dedo índice extendido
+  // 4. One: index finger extended only
   if (!thumb && index && !middle && !ring && !pinky) {
     return {
       label: SIGN_LABELS.UNO,
@@ -139,7 +139,7 @@ export function classifyStaticHand(frameOrLandmarks) {
     };
   }
 
-  // 5. Dos: Dedos índice y medio extendidos, resto cerrado
+  // 5. Two: index and middle fingers extended, remaining fingers curled
   if (!thumb && index && middle && !ring && !pinky) {
     const conf = indexMiddleSpread > 0.2 ? 0.96 : 0.91;
     return {
@@ -150,7 +150,7 @@ export function classifyStaticHand(frameOrLandmarks) {
     };
   }
 
-  // 6. Te Quiero (ILY): Pulgar, índice y meñique extendidos, medio y anular cerrados
+  // 6. ILY (Te Quiero): thumb, index, and pinky extended; middle and ring curled
   if (thumb && index && !middle && !ring && pinky) {
     return {
       label: SIGN_LABELS.TE_QUIERO,
@@ -160,7 +160,7 @@ export function classifyStaticHand(frameOrLandmarks) {
     };
   }
 
-  // 7. Lunes (Letra L): Pulgar e índice extendidos formando ángulo (~45° a 135°)
+  // 7. Lunes (letter L): thumb and index extended forming ~45 to 135 deg angle
   if (thumb && index && !middle && !ring && !pinky) {
     const conf = thumbIndexAngleDeg >= 45 && thumbIndexAngleDeg <= 135 ? 0.94 : 0.88;
     return {
@@ -171,7 +171,7 @@ export function classifyStaticHand(frameOrLandmarks) {
     };
   }
 
-  // 8. Bien (Pulgar extendido solo)
+  // 8. Good (Bien): extended thumb alone
   if (thumb && !index && !middle && !ring && !pinky) {
     return {
       label: SIGN_LABELS.BIEN,
@@ -190,8 +190,8 @@ export function classifyStaticHand(frameOrLandmarks) {
 }
 
 /**
- * Detecta oscilación lateral (saludo "Hola") sobre una ventana temporal de frames.
- * Analiza los cambios de dirección en el desplazamiento de la muñeca relativizados a `palmScale`.
+ * Detects lateral oscillation ("Hola" greeting wave) across a temporal frame window.
+ * Counts horizontal wrist direction reversals normalized by `palmScale`.
  *
  * @param {Array<Array<{x:number,y:number,z?:number}>>} handFrames
  * @returns {{ isWaving: boolean, directionChanges: number, totalAmplitude: number }}
@@ -255,12 +255,12 @@ export function detectWaveMotion(handFrames) {
 }
 
 /**
- * Suavizador temporal por votación de mayoría sobre los últimos N frames.
+ * Temporal majority-voting smoother across the last N frames.
  */
 export class SmoothingVoter {
   /**
-   * @param {number} windowSize Tamaño de la ventana de votación (por defecto 5)
-   * @param {number} minVotes Mínimo de votos para confirmar una etiqueta (por defecto ceil(windowSize / 2))
+   * @param {number} windowSize Voting window size (default 5)
+   * @param {number} minVotes Minimum votes required to confirm a label (default ceil(windowSize / 2))
    */
   constructor(windowSize = 5, minVotes = Math.ceil(windowSize / 2)) {
     this.windowSize = Math.max(1, windowSize);
@@ -269,7 +269,7 @@ export class SmoothingVoter {
   }
 
   /**
-   * Registra una nueva predicción `{ label, confidence }` y devuelve el consenso suavizado.
+   * Records a new `{ label, confidence }` prediction and returns the smoothed consensus.
    * @param {{ label: string|null, confidence: number }} prediction
    */
   push(prediction) {
@@ -324,12 +324,12 @@ export class SmoothingVoter {
 }
 
 /**
- * Interfaz base Classifier.
- * Permite intercambiar `GeometricClassifier` hoy por `ModelClassifier` después sin tocar `engine/` ni `ui/`.
+ * Base Classifier interface.
+ * Swapping `GeometricClassifier` for `ModelClassifier` leaves `engine/` and `ui/` untouched.
  */
 export class Classifier {
   /**
-   * @param {Array<any>|any} _frames Secuencia de frames o un frame individual
+   * @param {Array<any>|any} _frames Sequence of frames or a single frame
    * @returns {{ label: string|null, confidence: number, details?: Object }}
    */
   predict(_frames) {
@@ -340,16 +340,16 @@ export class Classifier {
 }
 
 /**
- * Implementación geométrica determinista en navegador.
- * Soporta tanto predicción directa sobre una ventana de frames `predict(frames)`
- * como acumulación progresiva frame a frame con buffer temporal interno y votación de N frames.
+ * Deterministic in-browser geometric classifier.
+ * Supports batch window prediction `predict(frames)` as well as progressive
+ * frame-by-frame streaming with internal buffering and majority smoothing.
  */
 export class GeometricClassifier extends Classifier {
   /**
    * @param {Object} [options]
-   * @param {number} [options.bufferSize=15] Tamaño del buffer temporal para señas dinámicas
-   * @param {number} [options.smoothingWindow=5] Ventana de frames para suavizado por votación
-   * @param {number} [options.minVotes=3] Votos mínimos para emitir etiqueta suavizada
+   * @param {number} [options.bufferSize=15] Temporal buffer size for dynamic signs
+   * @param {number} [options.smoothingWindow=5] Majority-voting window size
+   * @param {number} [options.minVotes=3] Minimum votes required to emit a smoothed label
    */
   constructor(options = {}) {
     super();
@@ -362,11 +362,11 @@ export class GeometricClassifier extends Classifier {
   }
 
   /**
-   * Clasifica un frame o una lista de frames.
-   * - Si recibe un arreglo de frames (`[frame1, frame2, ...]`), evalúa los gestos sobre esa ventana
-   *   aplicando votación sobre los frames del lote y detección de movimiento dinámico ("Hola").
-   * - Si recibe un único frame (`{ rightHand, leftHand }` o `landmarks[21]`), lo añade al buffer
-   *   temporal interno y aplica suavizado por votación.
+   * Classifies a single frame or a batch of frames.
+   * - Given an array of frames (`[frame1, frame2, ...]`), evaluates gestures across the
+   *   window using majority voting and dynamic motion detection ("Hola").
+   * - Given a single frame (`{ rightHand, leftHand }` or `landmarks[21]`), appends it
+   *   to the internal temporal buffer and applies majority smoothing.
    *
    * @param {Array<any>|Object} framesInput
    * @returns {{ label: string|null, confidence: number, details: Object }}
@@ -380,7 +380,7 @@ export class GeometricClassifier extends Classifier {
       };
     }
 
-    // Distinguir si `framesInput` es un único arreglo de 21 puntos (`[{x,y,z}, ...]`)
+    // Distinguish a single 21-point hand array (`[{x,y,z}, ...]`) from a batch of frames
     // o una secuencia temporal de varios frames (`[frame1, frame2, ...]`).
     const isSingleHandArray =
       Array.isArray(framesInput) &&
@@ -392,7 +392,7 @@ export class GeometricClassifier extends Classifier {
       return this._predictBatch(framesInput);
     }
 
-    // Modo frame individual con buffer temporal y suavizado
+    // Single-frame mode with temporal buffer and smoothing
     const hand = extractHandFromFrame(framesInput);
     if (!hand || !isValidHandLandmarks(hand)) {
       const voted = this.voter.push({ label: null, confidence: 0 });
@@ -418,7 +418,7 @@ export class GeometricClassifier extends Classifier {
     let rawConfidence = staticRes.confidence;
     let reason = staticRes.reason;
 
-    // Si la mano está abierta y hay oscilación lateral en el buffer temporal -> "Hola"
+    // Open hand plus lateral oscillation in the temporal buffer -> "Hola"
     const wave = detectWaveMotion(this.frameBuffer);
     if (rawLabel === SIGN_LABELS.MANO_ABIERTA && wave.isWaving) {
       rawLabel = SIGN_LABELS.HOLA;
@@ -444,7 +444,7 @@ export class GeometricClassifier extends Classifier {
   }
 
   /**
-   * Evalúa un lote completo de frames (p. ej. 5 a 15 frames) de forma determinista y sin estado residual.
+   * Evaluates a complete batch of frames (e.g., 5 to 15 frames) deterministically without residual state.
    */
   _predictBatch(frames) {
     if (frames.length === 0) {
@@ -544,8 +544,8 @@ export class GeometricClassifier extends Classifier {
 }
 
 /**
- * Punto de enchufe para el futuro clasificador con modelo neuronal entrenado (ONNX / WebSocket).
- * Cumple la misma interfaz `Classifier { predict(frames) -> { label, confidence } }`.
+ * Adapter stub for a future trained neural model classifier (ONNX / WebSocket).
+ * Implements the same `Classifier { predict(frames) -> { label, confidence } }` interface.
  */
 export class ModelClassifier extends Classifier {
   constructor(inferFn = null) {
@@ -566,7 +566,7 @@ export class ModelClassifier extends Classifier {
 }
 
 /**
- * Función de conveniencia `classify(framesOrLandmarks)` para uso funcional directo.
+ * Convenience wrapper `classify(framesOrLandmarks)` for stateless functional usage.
  */
 export function classify(framesOrLandmarks) {
   const isSingleHand =

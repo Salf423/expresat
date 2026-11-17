@@ -9,18 +9,15 @@ namespace expresat {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// ─── Constructor ──────────────────────────────────────────────────────────────
 DatasetWriter::DatasetWriter(fs::path outputDir)
     : outputDir_(std::move(outputDir)) {}
 
-// ─── write() — serialise one label to disk ───────────────────────────────────
 void DatasetWriter::write(const std::string& label,
                            const std::vector<Sequence>& samples,
                            int seqLen,
                            int featDim) {
     fs::create_directories(outputDir_);
 
-    // ── Build JSON ─────────────────────────────────────────────────────────
     json root;
     root["label"]           = label;
     root["num_samples"]     = static_cast<int>(samples.size());
@@ -31,14 +28,12 @@ void DatasetWriter::write(const std::string& label,
     for (const auto& seq : samples) {
         json seqArray = json::array();
         for (const auto& frame : seq) {
-            // Convert FeatureVector (std::vector<float>) directly
             seqArray.push_back(frame);
         }
         dataArray.push_back(std::move(seqArray));
     }
     root["data"] = std::move(dataArray);
 
-    // ── Write to file ──────────────────────────────────────────────────────
     fs::path outPath = outputDir_ / (label + ".json");
     std::ofstream ofs(outPath);
     if (!ofs.is_open())
@@ -52,7 +47,7 @@ void DatasetWriter::write(const std::string& label,
               << " samples → " << outPath << "\n";
 }
 
-// ─── writeCombined() — merge all label JSONs into dataset.json ───────────────
+// Merge all individual label JSONs into dataset.json
 void DatasetWriter::writeCombined(const fs::path& outPath) {
     json combined = json::array();
 

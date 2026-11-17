@@ -17,6 +17,8 @@ const BackgroundParticles = () => {
     let height = canvas.height = window.innerHeight;
 
     const isDark = theme === 'dark';
+    // With prefers-reduced-motion, render a single static frame with no animation loop
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const particles = [];
 
     // Reduce particle count to minimize O(N²) connection overhead
@@ -90,7 +92,7 @@ const BackgroundParticles = () => {
         }
       }
 
-      animationFrameIdRef.current = requestAnimationFrame(animate);
+      animationFrameIdRef.current = reducedMotion ? null : requestAnimationFrame(animate);
     }
 
     animate();
@@ -127,13 +129,14 @@ const BackgroundParticles = () => {
   return (
     <canvas
       id="bg"
+      aria-hidden="true"
       ref={canvasRef}
       style={{
         position: 'fixed',
         top: 0,
         left: 0,
-        width: '100vw',
-        height: '100vh',
+        width: '100%',
+        height: '100%',
         zIndex: -1,
         pointerEvents: 'none',
         backgroundColor: 'var(--bg-color)'

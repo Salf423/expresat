@@ -1,24 +1,23 @@
 ---
-title: "Explicación del Código: Generador de Datasets (C++ Legacy v1 & Web+Python v2)"
-description: "Visión general de las herramientas de generación de datasets: app de escritorio C++17 ImGui y nueva arquitectura v2 desacoplada con Tasks Vision y Python sharding."
-version: "2.2.1"
+title: "Explicación del Código: Generador de Datasets (C++ v1 Legacy & Web+Python v2)"
+description: "Visión panorámica de las herramientas de generación y curaduría de datos en ExpresaT: app C++17 Dear ImGui legacy y nueva arquitectura v2 desacoplada (Captura Web Tasks Vision + Pipeline Offline Python NPY sharding PLAN v2.3.0)."
+version: "2.3.0"
 category: "Código / Generador de Datasets"
 status: "Producción"
-target_agents: ["cpp-pro", "ml-engineer", "data-engineering-data-pipeline"]
+target_agents: ["cpp-pro", "ml-engineer", "data-engineering-data-pipeline", "mlops-engineer"]
 recommended_skills:
   - "[[../../Skills/Backend_APIs_y_Sistemas|Backend_APIs_y_Sistemas]] (`cpp-pro`)"
   - "[[../../Skills/MachineLearning_y_Vision|MachineLearning_y_Vision]] (`data-engineering-data-pipeline`, `mlops-engineer`)"
-  - "[[../../Skills/UI_UX_y_Frontend|UI_UX_y_Frontend]] (`ui-ux-designer`, `react-modernization`)"
+  - "[[../../Skills/UI_UX_y_Frontend|UI_UX_y_Frontend]] (`react-modernization`)"
 related_docs:
   - "[[../../00_INDICE_MAESTRO]]"
-  - "[[../../Especificacion_Feature_Spec_v1_2_1]]"
+  - "[[../../Especificacion_Feature_Spec_v1_3_0]]"
   - "[[06_Arquitectura_Dataset_Generator_v2]]"
   - "[[01_Arquitectura_y_Compilacion]]"
   - "[[02_Extraccion_y_Normalizacion]]"
   - "[[03_Motor_Aumentacion_Sintetica]]"
   - "[[04_Interfaz_Grafica_ImGui]]"
   - "[[05_Serializacion_JSON_y_CICD]]"
-  - "[[../../Caracteristicas]]"
 ---
 
 # 🛠️ Generador de Datasets (`expresat-dataset-generator`)
@@ -27,12 +26,14 @@ related_docs:
 
 ---
 
-## 1. Visión General y Evolución
+## 1. Visión General y Evolución de Arquitectura
 
-El ecosistema de generación y síntesis de secuencias para **ExpresaT** ha evolucionado en dos etapas clave:
+El ecosistema de generación y curaduría de datos para **ExpresaT** ha evolucionado a través de dos etapas arquitectónicas:
 
-1. **Generador Nativo C++17 (v1 Legacy):** Aplicación de escritorio desarrollada con **Dear ImGui**, **OpenGL 3.3 / GLFW** y **OpenCV 4/5**, con motor multihilo de aumentación estocástica (`std::thread`).
-2. **Dataset Generator v2 (Plan v2.2.1):** Arquitectura desacoplada en dos etapas: captura web a tasa nativa con `SignEngine` (Tasks Vision CPU, 640×480 4:3, `smoothLandmarks: false`) y pipeline offline headless en Python con particionado estratificado, aumentación sobre puntos crudos y guardado en shards binarios `.npy` contiguos con `manifest.json`.
+1. **Generador Nativo C++17 (v1 Legacy):** Aplicación de escritorio desarrollada con **Dear ImGui**, **OpenGL 3.3 / GLFW** y **OpenCV**, con motor multihilo de aumentación estocástica (`DataAugmenter`).
+2. **Dataset Generator v2 (PLAN v2.3.0 Vigente):** Arquitectura desacoplada en dos etapas:
+   - **Etapa 1 (Captura Web):** Grabador de desarrollo en navegador a 640×480 (4:3) con `SignEngine` (Tasks Vision CPU, `smoothLandmarks: false`), timeline de prompts sonoros/visuales y persistencia atómica en archivos `.raw.json`.
+   - **Etapa 2 (Pipeline Offline en Python):** CLI headless que realiza aumentación sobre puntos crudos (rotación centrada en hombros con $A=4/3$, jitter adaptativo), remuestreo temporal a 15 frames con el algoritmo `ExtractWindow` v1.3.0 y serialización en shards binarios contiguos `.npy` acompañados de `manifest.json`.
 
 ```mermaid
 flowchart LR
@@ -42,36 +43,48 @@ flowchart LR
         C1 --> D1["JSON por clase (*.json)"]
     end
 
-    subgraph Generador_v2 ["v2 Recomendado (Web + Python Sharding)"]
+    subgraph Generador_v2 ["v2 Recomendado (PLAN v2.3.0)"]
         A2["Webcam 640×480 (4:3)"] --> B2["SignEngine (Tasks Vision CPU)"]
-        B2 --> C2["POST local atómico (raw_captures/)"]
-        C2 --> D2["Pipeline Python Headless (.npy Shards + manifest.json)"]
+        B2 --> C2["Toma Cruda (.raw.json v1.3.1)"]
+        C2 --> D2["inspect_recording.py (--segments)"]
+        D2 --> E2["Pipeline Python Headless (.npy Shards + manifest.json)"]
     end
 
     style Generador_v1 fill:#3b2d1a,color:#fff
     style Generador_v2 fill:#1d5b4a,color:#fff
 ```
 
-> [!CAUTION] Alerta de Cuarentena
-> El archivo `dataset/quarantine/letra_a_derecha_2.json` fue aislado tras detectarse que fue producido con el generador v1 en modo STUB senoidal con un bug de escala que omitió la división por hombros ($D$). Todos los nuevos modelos deben entrenarse con datasets conformes a [[../../Especificacion_Feature_Spec_v1_2_1|FEATURE_SPEC v1.2.1]].
+> [!CAUTION] Alerta de Cuarentena Obligatoria
+> El archivo `dataset/quarantine/letra_a_derecha_2.json` fue aislado tras confirmarse que fue producido con el generador v1 en modo STUB senoidal con un bug de escala que omitió la división por la distancia inter-humeral ($D \approx 0.0459$). Todos los nuevos modelos deben entrenarse con datasets conformes a [[../../Especificacion_Feature_Spec_v1_3_0|FEATURE_SPEC v1.3.0]].
 
 ---
 
-## 2. Módulos Técnicos Detallados
+## 2. Herramientas CLI Disponibles (`expresat-dataset-generator/scripts/`)
 
-La documentación técnica detallada está dividida en las siguientes guías modulares:
-
-1. **[[06_Arquitectura_Dataset_Generator_v2]]**: Nueva arquitectura desacoplada en dos etapas (Captura Web Tasks Vision + Pipeline Offline Python NPY sharding).
-2. **[[01_Arquitectura_y_Compilacion]]**: Sistema de compilación CMake 3.20+, C++17, dependencias vendored/FetchContent, scripts de automatización (`build.sh`, `setup_third_party.sh`).
-3. **[[02_Extraccion_y_Normalizacion]]**: Layout del vector plano de 178D, evolución matemática de normalización y comparativa histórica.
-4. **[[03_Motor_Aumentacion_Sintetica]]**: Motor estocástico en `std::thread`, transformaciones espaciales (Jitter, Escalado, Rotación) y temporales (Warping).
-5. **[[04_Interfaz_Grafica_ImGui]]**: Arquitectura de Dear ImGui + GLFW3 + OpenGL 3.3, subprocesos desacoplados (`CameraStream` y worker de generación).
-6. **[[05_Serializacion_JSON_y_CICD]]**: Estructura JSON por etiqueta (`./dataset/<label>.json`), archivo compilado `dataset.json`, y pipeline de integración continua en GitHub Actions.
+| Script | Propósito Técnico | Comando de Ejemplo |
+|---|---|---|
+| **`inspect_recording.py`** | Validador exhaustivo de tomas `.raw.json`, verificación de gaps $\le 100\text{ ms}$, métricas de FPS y análisis por segmentos anatómicos (`reposo`, `solo_derecha`, `solo_izquierda`, `ambas`, `cruce`). | `python expresat-dataset-generator/scripts/inspect_recording.py --input raw.json --segments reposo,solo_derecha,solo_izquierda,ambas,cruce` |
+| **`inspect_dataset.py`** | Inspección no invasiva de datasets `.json` sin cargar millones de tokens en memoria (solo cabeceras, número de muestras y dimensiones). | `python expresat-dataset-generator/scripts/inspect_dataset.py --file dataset/hola.json` |
+| **`validate_dataset.py`** | Validador estricto de esquemas de datos vectoriales 178D y detección de valores fuera de rango o NaN. | `python expresat-dataset-generator/scripts/validate_dataset.py --strict` |
+| **`dataset_stats.py`** | Generador de reportes estadísticos de balanceo de clases y distribución de muestras. | `python expresat-dataset-generator/scripts/dataset_stats.py` |
 
 ---
 
-## 🤖 Asignación de Agentes y Skills Recomendadas
+## 3. Módulos Técnicos Detallados
 
-- **Para el Pipeline Moderno v2:** Consultar [[06_Arquitectura_Dataset_Generator_v2]] e invocar **`data-engineering-data-pipeline`** y **`mlops-engineer`**.
-- **Para Compilación y Mantenimiento C++ v1:** Invocar **`cpp-pro`** (ver [[../../Skills/Backend_APIs_y_Sistemas]]).
-- **Para la Especificación Matemática:** Consultar [[../../Especificacion_Feature_Spec_v1_2_1]].
+1. **[[06_Arquitectura_Dataset_Generator_v2]]**: Nueva arquitectura desacoplada en dos etapas (PLAN v2.3.0).
+2. **[[01_Arquitectura_y_Compilacion]]**: Sistema CMake 3.20+, C++17, dependencias vendored/FetchContent y scripts de build.
+3. **[[02_Extraccion_y_Normalizacion]]**: Layout del vector plano 178D, evolución matemática y cuarentena.
+4. **[[03_Motor_Aumentacion_Sintetica]]**: Motor estocástico en `std::thread`, transformaciones espaciales y temporales.
+5. **[[04_Interfaz_Grafica_ImGui]]**: Dear ImGui + GLFW3 + OpenGL 3.3, subprocesos desacoplados (`CameraStream` y worker).
+6. **[[05_Serializacion_JSON_y_CICD]]**: Esquema JSON por etiqueta y pipeline de GitHub Actions.
+
+---
+
+## 🤖 Guía de Operación para Agentes
+
+- **Para Validar Tomas Crudas Nuevas:**
+  ```bash
+  python expresat-dataset-generator/scripts/inspect_recording.py --input <archivo.raw.json> --segments reposo,solo_derecha,solo_izquierda,ambas,cruce
+  ```
+- **Prohibido realizar `read_file` sobre archivos `dataset/*.json` de tensores completos.** Usar siempre `inspect_dataset.py`.

@@ -1,10 +1,11 @@
 ---
 title: "Skills Especializadas: UI/UX, Accesibilidad y Frontend"
-description: "Conjunto curado de habilidades para diseño de interfaces inclusivas, auditoría de accesibilidad WCAG 2.2, desarrollo React 19, Dear ImGui y validación estética."
-version: "2.0.0"
+description: "Conjunto curado de habilidades para diseño de interfaces inclusivas, auditoría de accesibilidad WCAG 2.2 nivel AA/AAA, desarrollo React 19, Dear ImGui y validación estética en ExpresaT."
+version: "2.3.0"
 category: "Skills / Frontend & UI"
+status: "Producción"
 target_agents: ["frontend-developer", "ui-ux-designer", "accessibility-auditor"]
-related_docs:
+recommended_skills:
   - "[[00_Matriz_General_Skills]]"
   - "[[../Explicacion del codigo/Frontend/Vite_React]]"
   - "[[../Explicacion del codigo/Frontend/Legacy_Vanilla]]"
@@ -30,14 +31,7 @@ Este conjunto de skills está diseñado específicamente para abordar la experie
   - Definir la retroalimentación háptica y visual para confirmación de palabras reconocidas.
   - Asegurar consistencia entre el modo oscuro y modo claro con estética *Glassmorphism*.
 
-### 2. `ui-visual-validator`
-- **Ubicación:** `~/.gemini/config/skills/ui-visual-validator/SKILL.md`
-- **Objetivo:** Inspección visual de componentes, validación de espaciado, tipografía, alineación de video y detección de regresiones visuales.
-- **Cuándo invocar:**
-  - Tras modificar hojas de estilo CSS o componentes de React.
-  - Validar que el overlay de la cámara no cubra controles críticos en dispositivos móviles o ventanas compactas.
-
-### 3. `wcag-audit-patterns` & `a11y-debugging`
+### 2. `wcag-audit-patterns` & `a11y-debugging`
 - **Ubicación:** 
   - `~/.gemini/config/skills/wcag-audit-patterns/SKILL.md`
   - `~/.gemini/config/plugins/chrome-devtools-plugin/skills/a11y-debugging/SKILL.md`
@@ -46,38 +40,50 @@ Este conjunto de skills está diseñado específicamente para abordar la experie
   - Puesto que **ExpresaT es una herramienta de accesibilidad**, este skill es **obligatorio** en cada ciclo de release de frontend.
   - Verificación de etiquetas `<button>`, roles `aria-live="polite"` para los anuncios de texto traducido en tiempo real.
 
-### 4. `screen-reader-testing`
-- **Ubicación:** `~/.gemini/config/skills/screen-reader-testing/SKILL.md`
-- **Objetivo:** Simulación y validación de compatibilidad con lectores de pantalla (NVDA, VoiceOver, Orca).
-- **Cuándo invocar:**
-  - Probar que el motor de síntesis de voz o la caja de texto traducido anuncia correctamente las palabras a usuarios con discapacidad visual concurrente.
-
-### 5. `react-modernization` & `react-state-management`
+### 3. `react-modernization` & `react-state-management`
 - **Ubicación:**
   - `~/.gemini/config/skills/react-modernization/SKILL.md`
   - `~/.gemini/config/skills/react-state-management/SKILL.md`
-- **Objetivo:** Buenas prácticas en React 19, Server/Client components, custom hooks, optimización de renderizados (`useCallback`, `useMemo`) y gestión de estado con Context API o librerías reactivas.
+- **Objetivo:** Buenas prácticas en React 19, custom hooks, optimización de renderizados (`useCallback`, `useMemo`) y coordinación con `SignEngine`.
 - **Cuándo invocar:**
-  - Refactorizar hooks como `useCamera.jsx` o `useInference.jsx`.
+  - Optimizar hooks como `useSignEngine.js`.
   - Evitar fugas de memoria en la conexión WebSocket o bucles innecesarios en la captura a 15-60 FPS.
 
-### 6. `tailwind-design-system`
-- **Ubicación:** `~/.gemini/config/skills/tailwind-design-system/SKILL.md`
-- **Objetivo:** Implementación de tokens de diseño, paletas accesibles, micro-interacciones y utilidades CSS estructuradas.
+### 4. `tailwind-design-system` & `ui-visual-validator`
+- **Ubicación:**
+  - `~/.gemini/config/skills/tailwind-design-system/SKILL.md`
+  - `~/.gemini/config/skills/ui-visual-validator/SKILL.md`
+- **Objetivo:** Tokens de diseño Tailwind CSS, paletas accesibles, micro-interacciones y prevención de regresiones visuales.
 
 ---
 
-## 📋 Protocolo de Ejecución para Agentes Frontend
+## 📋 Protocolo de Accesibilidad Obligatorio (WCAG 2.2 AA/AAA)
 
-Cuando un agente trabaje en el frontend web (`expresat/frontend`) o en la interfaz C++ con ImGui (`expresat-dataset-generator/src/gui`):
+Cuando un agente modifique componentes React en `expresat/frontend`:
 
-1. **Lectura Previa:** Inspeccionar [[../Explicacion del codigo/Frontend/Vite_React]] y verificar la interacción entre `Translator.jsx`, `useSignEngine.js`, `signEngine.js`, `featureExtractor.js` y `wsClient.js`.
-2. **Prioridad de Rendimiento:** El renderizado del DOM no debe interrumpir el loop de la cámara web. `SignEngine` opera en CPU en el main-thread de forma altamente optimizada con limpieza idempotente.
-3. **Validación de Accesibilidad:** Ejecutar checklist con `wcag-audit-patterns`:
-   - [ ] Relación de contraste mínimo 4.5:1 para texto normal y 3:1 para elementos de control.
-   - [ ] Navegabilidad completa por teclado (`Tab`, `Enter`, `Space`, `Esc`).
-   - [ ] Feedback explícito ante fallos en la cámara o pérdida de conexión con el WebSocket.
-4. **Comprobación de Compuertas de Calidad:**
-   - [ ] Ejecutar linter: `npm run lint` (ESLint con reglas stricts de hooks).
-   - [ ] Ejecutar tests de Vitest: `npx vitest run`.
-   - [ ] Ejecutar tests E2E: `npx playwright test`.
+1. **Lectores de Pantalla:** El display de traducción debe actualizar dinámicamente una región viva accesible:
+   ```jsx
+   <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+       {currentTranslation}
+   </div>
+   ```
+2. **Contraste Cromático:** Ratio de contraste mínimo de **4.5:1** para texto convencional y **3:1** para componentes interactivos y badges de confianza.
+3. **Navegación por Teclado:** Todo control debe ser operable mediante `Tab`, `Enter` y `Space`, con anillos de foco visibles (`focus-visible:ring-2`).
+4. **Respeto a Preferencias del Sistema:** Respetar `prefers-reduced-motion` desactivando partículas y transiciones complejas si el usuario lo solicita.
+
+---
+
+## 🧪 Comandos de Prueba para Frontend
+
+```bash
+cd expresat/frontend
+
+# 1. Ejecutar Linter y comprobación de hooks:
+npm run lint
+
+# 2. Ejecutar suite unitaria con Vitest:
+npx vitest run
+
+# 3. Ejecutar pruebas End-to-End con Playwright:
+npx playwright test e2e/translator.spec.js
+```

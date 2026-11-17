@@ -1,22 +1,10 @@
 /**
- * src/engine/featureExtractor.js — ExpresaT: Extractor Canónico de Vectores 178D v1.2.2
+ * Canonical 178D feature vector extractor (FEATURE_SPEC v1.3.0).
  *
- * Implementación idéntica a expresat/models/feature_extractor.py y docs/dataset-generator/FEATURE_SPEC.md v1.2.2.
- * Paridad matemática demostrada con tolerancia L_inf <= 1e-6.
- *
- * Topología:
- *   - [0..51] Upper Pose (13 landmarks × 4 coords: x, y, z, visibility)
- *   - [52..114] Mano Izquierda (21 landmarks × 3 coords: x, y, z)
- *   - [115..177] Mano Derecha (21 landmarks × 3 coords: x, y, z)
- * Total: 178 features float32. Invariante de ventana: 15 frames × 178 features.
- *
- * Secuencia estricta de ExtractWindow:
- *   1. Validar hombros crudos y brechas (gap <= 100 ms)
- *   2. Asignar manos por frame crudo (costo conjunto + etiquetas + continuidad temporal)
- *   3. Remuestrear temporalmente por bloque a 15 frames (Δt = 66.67 ms)
- *   4. D_ventana y C_ventana (mediana de 15 frames, D >= 0.08)
- *   5. Filtro EMA temporal por bloque (α = 0.50, reinicio por bloque independiente)
- *   6. Normalizar hombros y muñeca Z -> Tensor (1, 15, 178) float32
+ * Matches `expresat/models/feature_extractor.py` within L_inf <= 1e-6:
+ *   - [0..51]   Upper Pose (13 landmarks x 4: x, y, z, visibility)
+ *   - [52..114] Left Hand  (21 landmarks x 3: x, y, z)
+ *   - [115..177] Right Hand (21 landmarks x 3: x, y, z)
  */
 
 export const FEATURE_SPEC_VERSION = '1.3.0';
@@ -35,7 +23,7 @@ export const HAND_AMBIGUITY_THRESH = 0.15;
 export const POSE_WRIST_MIN_VIS = 0.50;
 export const MAX_GAP_MS = 100.0;
 
-// Pesos para asignación de manos en unidades de D (FEATURE_SPEC v1.3.0)
+// Hand assignment weights in units of shoulder span D (FEATURE_SPEC v1.3.0)
 export const WEIGHT_LABEL_PENALTY = 0.25;
 export const WEIGHT_TEMPORAL_CONTINUITY = 0.50;
 
@@ -132,7 +120,7 @@ function median(arr) {
 }
 
 /**
- * Asigna las manos detectadas en un frame a { assignedLeftHand, assignedRightHand, isAmbiguous }.
+ * Assign detected hands to anatomical { assignedLeftHand, assignedRightHand, isAmbiguous } slots.
  */
 export function assignHandsToAnatomicalSlots(
   rawFrame,
@@ -249,11 +237,7 @@ export function assignHandsToAnatomicalSlots(
 }
 
 /**
- * Extrae y normaliza un frame individual a 178 características Float32Array.
- */
-/**
- * Valida que todas las manos detectadas en el frame tengan etiqueta válida ('Left' o 'Right').
- * Falla con ERR_HAND_MISSING_LABEL si alguna mano detectada carece de categoryName o tiene 'Unknown'.
+ * Validate that all detected hands carry a valid 'Left' or 'Right' label.
  */
 export function validateFrameHandLabels(rawFrame) {
   const { hands: detectedHands, labels: detectedLabels } = getDetectedHandsAndLabels(rawFrame);
@@ -281,7 +265,7 @@ export function validateFrameHandLabels(rawFrame) {
 }
 
 /**
- * Extrae y normaliza un frame individual a 178 características Float32Array.
+ * Extract and normalize a single frame into a 178-element Float32Array.
  */
 export function extractFrameFeatures(rawFrame) {
   const pose = rawFrame?.pose;
@@ -337,7 +321,6 @@ export function extractFrameFeatures(rawFrame) {
     features[i * 4 + 3] = Math.max(0.0, Math.min(1.0, pvis));
   }
 
-  // Asignación de manos
   const { assignedLeftHand, assignedRightHand } = assignHandsToAnatomicalSlots(rawFrame, pose, D);
 
   if (assignedLeftHand) {
@@ -362,7 +345,7 @@ export function extractFrameFeatures(rawFrame) {
 }
 
 /**
- * Secuencia estricta por bloques de ExtractWindow v1.2.2.
+ * Run the canonical block-based window extraction pipeline (FEATURE_SPEC v1.2.2+).
  */
 export function extractWindow(framesWithTimestamps, options = {}) {
   if (!Array.isArray(framesWithTimestamps) || framesWithTimestamps.length === 0) {
@@ -372,7 +355,7 @@ export function extractWindow(framesWithTimestamps, options = {}) {
   const durationMs = options.durationMs ?? 1000.0;
   const dtNominal = durationMs / SEQUENCE_LENGTH;
 
-  // 1. Filtrar frames con hombros válidos
+  // 1. Filter frames with valid shoulders
   const validFrames = [];
   for (const fr of framesWithTimestamps) {
     if (!fr?.pose || fr.pose.length < 23) continue;
@@ -395,7 +378,6 @@ export function extractWindow(framesWithTimestamps, options = {}) {
 
   validFrames.sort((a, b) => Number(a.t_ms ?? a.timestamp_ms ?? 0) - Number(b.t_ms ?? b.timestamp_ms ?? 0));
 
-  // Validación de brechas (gap <= 100 ms)
   for (let i = 0; i < validFrames.length - 1; i++) {
     const tCurr = Number(validFrames[i].t_ms ?? validFrames[i].timestamp_ms ?? 0);
     const tNext = Number(validFrames[i + 1].t_ms ?? validFrames[i + 1].timestamp_ms ?? 0);
@@ -405,7 +387,7 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     }
   }
 
-  // 2. Asignar manos por frame crudo (desacoplamiento anatómico)
+  // 2. Assign anatomical hand slots per raw frame
   const framesWithBlocks = [];
   let prevLeftW = null;
   let prevRightW = null;
@@ -444,7 +426,7 @@ export function extractWindow(framesWithTimestamps, options = {}) {
 
   const tStart = framesWithBlocks[0].timestamp_ms;
 
-  // 3. Remuestreo temporal por bloque anatómico
+  // 3. Temporal resampling per anatomical block
   const resampledBlocks = [];
   for (let k = 0; k < SEQUENCE_LENGTH; k++) {
     const tTarget = tStart + k * dtNominal;
@@ -465,7 +447,6 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     const tNext = nextF.timestamp_ms;
     const tau = tPrev === tNext ? 0.0 : Math.max(0.0, Math.min(1.0, (tTarget - tPrev) / (tNext - tPrev)));
 
-    // Pose interpolada
     const interpPose = [];
     const nPts = Math.min(prevF.pose.length, nextF.pose.length);
     for (let pI = 0; pI < nPts; pI++) {
@@ -479,7 +460,6 @@ export function extractWindow(framesWithTimestamps, options = {}) {
       });
     }
 
-    // Bloque Mano Izquierda interpolado
     let interpLH = null;
     if (prevF.leftHand && nextF.leftHand) {
       interpLH = [];
@@ -497,7 +477,6 @@ export function extractWindow(framesWithTimestamps, options = {}) {
       interpLH = JSON.parse(JSON.stringify(nextF.leftHand));
     }
 
-    // Bloque Mano Derecha interpolado
     let interpRH = null;
     if (prevF.rightHand && nextF.rightHand) {
       interpRH = [];
@@ -523,7 +502,7 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     });
   }
 
-  // 4. Mediana de escala D y centro C por ventana
+  // 4. Median window scale D and shoulder center C
   const dPerFrame = [];
   const cxPerFrame = [];
   const cyPerFrame = [];
@@ -550,7 +529,7 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     return { tensor: null, valid: false, error: 'ERR_SHOULDERS_TOO_SMALL' };
   }
 
-  // 5. Filtro EMA temporal por bloque (alpha = 0.50)
+  // 5. Per-block temporal EMA filter (alpha = 0.50; reset when hand reappears)
   const alpha = 0.50;
   const smoothed = [];
   let prevPose = null;
@@ -560,7 +539,6 @@ export function extractWindow(framesWithTimestamps, options = {}) {
   for (let k = 0; k < SEQUENCE_LENGTH; k++) {
     const fr = resampledBlocks[k];
 
-    // Pose
     const currPose = fr.pose;
     const smoothPose = [];
     if (k === 0 || !prevPose) {
@@ -579,11 +557,10 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     }
     prevPose = smoothPose;
 
-    // Mano Izquierda
     let smoothLH = null;
     if (fr.leftHand) {
       if (!prevLH || prevLH.length !== fr.leftHand.length) {
-        smoothLH = JSON.parse(JSON.stringify(fr.leftHand)); // Reinicio al reaparecer
+        smoothLH = JSON.parse(JSON.stringify(fr.leftHand));
       } else {
         smoothLH = [];
         for (let i = 0; i < fr.leftHand.length; i++) {
@@ -597,11 +574,10 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     }
     prevLH = smoothLH;
 
-    // Mano Derecha
     let smoothRH = null;
     if (fr.rightHand) {
       if (!prevRH || prevRH.length !== fr.rightHand.length) {
-        smoothRH = JSON.parse(JSON.stringify(fr.rightHand)); // Reinicio al reaparecer
+        smoothRH = JSON.parse(JSON.stringify(fr.rightHand));
       } else {
         smoothRH = [];
         for (let i = 0; i < fr.rightHand.length; i++) {
@@ -623,14 +599,13 @@ export function extractWindow(framesWithTimestamps, options = {}) {
     });
   }
 
-  // 6. Normalización y Ensamble (15 frames x 178 features)
+  // 6. Normalize and assemble (15 frames x 178 features)
   const tensor = new Float32Array(SEQUENCE_LENGTH * TOTAL_FEATURES);
 
   for (let k = 0; k < SEQUENCE_LENGTH; k++) {
     const fr = smoothed[k];
     const offset = k * TOTAL_FEATURES;
 
-    // Upper pose
     for (let i = 0; i < POSE_UPPER_INDICES.length; i++) {
       const pIdx = POSE_UPPER_INDICES[i];
       const lm = fr.pose[pIdx];
@@ -640,7 +615,6 @@ export function extractWindow(framesWithTimestamps, options = {}) {
       tensor[offset + i * 4 + 3] = Math.max(0.0, Math.min(1.0, Number(lm.visibility ?? 1.0)));
     }
 
-    // Mano Izquierda
     if (fr.leftHand) {
       const lf = handToFeatures(fr.leftHand, dVentana, cxVentana, cyVentana);
       tensor.set(lf, offset + 52);
@@ -648,7 +622,6 @@ export function extractWindow(framesWithTimestamps, options = {}) {
       tensor.fill(0.0, offset + 52, offset + 115);
     }
 
-    // Mano Derecha
     if (fr.rightHand) {
       const rf = handToFeatures(fr.rightHand, dVentana, cxVentana, cyVentana);
       tensor.set(rf, offset + 115);
@@ -661,7 +634,7 @@ export function extractWindow(framesWithTimestamps, options = {}) {
 }
 
 /**
- * Espeja landmarks crudos (espacio [0, 1]).
+ * Mirror raw landmarks in normalized [0, 1] image space.
  */
 export function mirrorRawFrame(rawFrame) {
   const mirrored = JSON.parse(JSON.stringify(rawFrame));
@@ -721,7 +694,7 @@ export function mirrorRawFrame(rawFrame) {
 }
 
 /**
- * Espeja analíticamente un vector de 178 features ya normalizado.
+ * Analytically mirror a normalized 178D feature vector.
  */
 export function mirrorFeatures178(features) {
   const out = new Float64Array(features);
@@ -757,12 +730,13 @@ export function mirrorFeatures178(features) {
 }
 
 /**
- * Calcula el hash de configuración canónico (equivalente a Python compute_config_hash).
- * @param {string} fixturesSha256 Digest SHA256 de feature_spec_cases.json
- * @returns {string} Objeto serializado en JSON canónico para validación de contrato
+ * Build the canonical config object matching Python `compute_config_hash`.
+ * @param {string} fixturesSha256 SHA-256 digest of feature_spec_cases.json
+ * @returns {object} Canonical config object
  */
-export function getCanonicalConfigObject(fixturesSha256) {
+export function getCanonicalConfigObject(fixturesSha256, delegate = 'GPU') {
   return {
+    delegate,
     duration_ms: 1000.0,
     feature_spec_version: FEATURE_SPEC_VERSION,
     fixtures_sha256: fixturesSha256,

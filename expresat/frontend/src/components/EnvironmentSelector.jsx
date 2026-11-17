@@ -14,7 +14,6 @@ const EnvironmentSelector = () => {
     setEnv(selectedEnv);
     setIsOpen(false);
     localStorage.setItem('apiEnv', selectedEnv);
-    // Disparar evento para que otras partes reactivas puedan actualizar el WebSocket si es necesario
     window.dispatchEvent(new CustomEvent('environment-changed', { detail: selectedEnv }));
   };
 
@@ -101,7 +100,7 @@ const EnvironmentSelector = () => {
             animation: 'fade-up 0.15s ease-out'
           }}
         >
-          <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-subtle)' }}>
             Servidor de Inferencia
           </div>
 

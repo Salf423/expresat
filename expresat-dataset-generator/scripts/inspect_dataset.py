@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-inspect_dataset.py - Vista rápida y eficiente de datasets de señas en JSON sin saturar contexto.
-Diseñado para agentes de IA y desarrolladores de ExpresaT.
+inspect_dataset.py - Quick, lightweight inspection of JSON sign datasets.
+Summarizes shapes, statistics, and sample slices without loading full payloads into context.
 """
 
 import argparse
@@ -31,7 +31,7 @@ def inspect_single_file(file_path: Path, sample_idx: int = None, as_json: bool =
             actual_seq_len = len(data[0]) if actual_samples > 0 else 0
             actual_feat_dim = len(data[0][0]) if actual_seq_len > 0 else 0
 
-            # Muestreo estadístico rápido para no recorrer todo si es masivo
+            # Quick statistical subsampling for large files
             max_samples_eval = min(actual_samples, 50)
             vals = []
             zero_frames = 0
@@ -44,12 +44,12 @@ def inspect_single_file(file_path: Path, sample_idx: int = None, as_json: bool =
                     total_frames += 1
                     if all(v == 0.0 for v in frame):
                         zero_frames += 1
-                    # Revisar visibilidad de pose si hay al menos 52 features (13 landmarks * 4: x,y,z,vis)
+                    # Check pose visibility if >= 52 features exist (13 landmarks * 4: x, y, z, vis)
                     if len(frame) >= 52:
                         vis_scores = [frame[i] for i in range(3, 52, 4)]
                         if any(v < 0.5 for v in vis_scores):
                             low_conf_frames += 1
-                    vals.extend(frame[::10])  # Submuestreo para media/std
+                    vals.extend(frame[::10])  # Subsample for mean/std estimation
 
             if vals:
                 min_v = min(vals)
@@ -101,7 +101,7 @@ def inspect_single_file(file_path: Path, sample_idx: int = None, as_json: bool =
             if as_json:
                 print(json.dumps(info, indent=2))
             else:
-                status_icon = "✅" if info["status"] == "OK" else "❌"
+                status_icon = "[OK]" if info["status"] == "OK" else "[FAIL]"
                 print(f"=== {info['file']} {status_icon} ===")
                 print(f"  label              : {info['label']}")
                 print(f"  shape              : {info['shape']}")
@@ -120,7 +120,7 @@ def inspect_single_file(file_path: Path, sample_idx: int = None, as_json: bool =
         if as_json:
             print(json.dumps({"file": str(file_path.name), "error": str(e)}))
         else:
-            print(f"❌ Error leyendo {file_path.name}: {e}")
+            print(f"[FAIL] Error leyendo {file_path.name}: {e}")
 
 
 def main():
