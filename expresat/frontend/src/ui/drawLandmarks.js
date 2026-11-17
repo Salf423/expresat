@@ -53,7 +53,6 @@ function drawDiagnosticBadge(ctx, text, x, y, bgColor = 'rgba(15, 23, 42, 0.90)'
   ctx.font = 'bold 11px monospace, system-ui, sans-serif';
   const metrics = ctx.measureText(text);
   const padX = 6;
-  const padY = 3;
   const bw = metrics.width + padX * 2;
   const bh = 18;
   const bx = Math.max(4, Math.min(x - bw / 2, ctx.canvas.width - bw - 4));
@@ -97,20 +96,28 @@ export function renderCanvasFrame({
   trackingConfig = null,
 }) {
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
+  const ctx =
+    canvas.__expresatCtx2d ||
+    (canvas.__expresatCtx2d =
+      canvas.getContext('2d', { alpha: false, desynchronized: true }) ||
+      canvas.getContext('2d'));
   if (!ctx) return;
 
   const w = canvas.width;
   const h = canvas.height;
+  const hasVideo = Boolean(video && video.readyState >= 2);
 
   ctx.save();
-  ctx.clearRect(0, 0, w, h);
+  if (!hasVideo) {
+    ctx.fillStyle = '#07090f';
+    ctx.fillRect(0, 0, w, h);
+  }
 
   // Espejar horizontalmente para el usuario (modo selfie)
   ctx.translate(w, 0);
   ctx.scale(-1, 1);
 
-  if (video && video.readyState >= 2) {
+  if (hasVideo) {
     ctx.drawImage(video, 0, 0, w, h);
   }
 

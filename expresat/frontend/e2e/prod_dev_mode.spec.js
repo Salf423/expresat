@@ -44,7 +44,9 @@ test.describe('Modo Desarrollador en Producción — Botón Toggle, Persistencia
       timeout: 20000,
     });
 
-    // Con Modo Dev apagado no debe exponerse ningún panel dev ni telemetría
+    // Con Modo Dev apagado muestra la salida normal de traducción y cero paneles dev
+    await expect(page.getByTestId('detected-gesture')).toBeVisible();
+    await expect(page.getByTestId('dev-mode-panel')).toHaveCount(0);
     await expect(page.getByTestId('dev-recorder-panel')).toHaveCount(0);
     await expect(page.getByTestId('dev-instrumentation-panel')).toHaveCount(0);
     await expect(page.getByTestId('real-camera-fps')).toHaveCount(0);
@@ -52,13 +54,18 @@ test.describe('Modo Desarrollador en Producción — Botón Toggle, Persistencia
     const hasGlobalBefore = await page.evaluate(() => Boolean(window.__EXPRESAT_DEV_TELEMETRY__));
     expect(hasGlobalBefore).toBe(false);
 
-    // Activar Modo Desarrollador desde el botón en UI
+    // Activar Modo Desarrollador: reemplaza la salida normal por el Panel del Modo Desarrollador
     await toggleBtn.click();
     await expect(toggleBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('detected-gesture')).toHaveCount(0);
+    await expect(page.getByTestId('dev-mode-panel')).toBeVisible();
     await expect(page.getByTestId('dev-recorder-panel')).toBeVisible();
     await expect(page.getByTestId('dev-instrumentation-panel')).toBeVisible();
     await expect(page.getByTestId('real-camera-fps')).toBeVisible();
     await expect(page.getByTestId('dev-fixture-recorder')).toBeVisible();
+    await expect(page.getByTestId('wasm-status-badge')).toHaveText('WASM Activo', {
+      timeout: 20000,
+    });
 
     const storedAfterOn = await page.evaluate(() => window.localStorage.getItem('expresat_dev_mode'));
     expect(storedAfterOn).toBe('true');
@@ -94,9 +101,11 @@ test.describe('Modo Desarrollador en Producción — Botón Toggle, Persistencia
     expect(report?.track_settings?.width).toBeGreaterThan(0);
     expect(reportFilename).toMatch(/^telemetry_\d{8}_\d{6}_[a-f0-9]{7,}\.json$/);
 
-    // Desactivar Modo Desarrollador debe desmontar los paneles y limpiar telemetría global
+    // Desactivar Modo Desarrollador restaura la salida normal y limpia los paneles/telemetría
     await page.getByTestId('dev-mode-toggle').click();
     await expect(page.getByTestId('dev-mode-toggle')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('detected-gesture')).toBeVisible();
+    await expect(page.getByTestId('dev-mode-panel')).toHaveCount(0);
     await expect(page.getByTestId('dev-recorder-panel')).toHaveCount(0);
     await expect(page.getByTestId('dev-instrumentation-panel')).toHaveCount(0);
     await expect(page.getByTestId('dev-fixture-recorder')).toHaveCount(0);
@@ -104,6 +113,9 @@ test.describe('Modo Desarrollador en Producción — Botón Toggle, Persistencia
       const hasGlobalAfter = await page.evaluate(() => Boolean(window.__EXPRESAT_DEV_TELEMETRY__));
       expect(hasGlobalAfter).toBe(false);
     }).toPass({ timeout: 10000 });
+    await expect(page.getByTestId('wasm-status-badge')).toHaveText('WASM Activo', {
+      timeout: 20000,
+    });
 
     expect(failedRequests).toEqual([]);
     expect(pageErrors).toEqual([]);

@@ -18,6 +18,43 @@ import { LandmarkTracker } from '../services/landmarkTracker.js';
 import { CONFIG, getActiveEndpoints } from '../config.js';
 import { renderCanvasFrame } from './drawLandmarks.js';
 
+function isSameRenderedGesture(prev, nextLabel, nextCategory, nextConfidence, nextSource, nextDetails) {
+  if (!prev) return false;
+  if (
+    prev.label !== nextLabel ||
+    prev.category !== nextCategory ||
+    prev.source !== nextSource ||
+    Math.round((prev.confidence || 0) * 100) !== Math.round((nextConfidence || 0) * 100)
+  ) {
+    return false;
+  }
+  const prevDetails = prev.details;
+  const prevReason = prevDetails?.reason || null;
+  const nextReason = nextDetails?.reason || null;
+  if (prevReason !== nextReason) return false;
+
+  const prevAliases = prevDetails?.aliases;
+  const nextAliases = nextDetails?.aliases;
+  if ((prevAliases?.length || 0) !== (nextAliases?.length || 0)) return false;
+  if (prevAliases && nextAliases && prevAliases[0] !== nextAliases[0]) return false;
+
+  const ps = prevDetails?.states;
+  const ns = nextDetails?.states;
+  if (Boolean(ps) !== Boolean(ns)) return false;
+  if (ps && ns) {
+    if (
+      ps.thumb !== ns.thumb ||
+      ps.index !== ns.index ||
+      ps.middle !== ns.middle ||
+      ps.ring !== ns.ring ||
+      ps.pinky !== ns.pinky
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function useSignEngine({
   videoRef,
   canvasRef,
@@ -27,6 +64,8 @@ export function useSignEngine({
   recognitionMode = 'all',
   enablePose = false,
   enableDevTelemetry = Boolean(typeof import.meta !== 'undefined' && import.meta.env?.DEV),
+  telemetryDrawerOpen = false,
+  skipLocalClassification = false,
 } = {}) {
   const [fps, setFps] = useState({ cameraFps: 0, inferenceFps: 0 });
   const [engineStatus, setEngineStatus] = useState({
@@ -65,12 +104,29 @@ export function useSignEngine({
   const latestFrameRef = useRef(null);
   const trackingConfigRef = useRef(trackingConfig);
   const recognitionModeRef = useRef(recognitionMode);
+  const telemetryDrawerOpenRef = useRef(Boolean(telemetryDrawerOpen));
+  const skipLocalClassificationRef = useRef(Boolean(skipLocalClassification));
+  const lastLandmarksCountRef = useRef(0);
+  const lastTelemetryUiMsRef = useRef(0);
   const wsBatchBufferRef = useRef([]);
   const lastWsSendTimeRef = useRef(0);
 
   useEffect(() => {
     trackingConfigRef.current = trackingConfig;
   }, [trackingConfig]);
+
+  useEffect(() => {
+    telemetryDrawerOpenRef.current = Boolean(telemetryDrawerOpen);
+    if (!telemetryDrawerOpen) {
+      setTelemetry(null);
+    } else if (trackerRef.current?.lastTelemetry) {
+      setTelemetry(trackerRef.current.lastTelemetry);
+    }
+  }, [telemetryDrawerOpen]);
+
+  useEffect(() => {
+    skipLocalClassificationRef.current = Boolean(skipLocalClassification);
+  }, [skipLocalClassification]);
 
   useEffect(() => {
     recognitionModeRef.current = recognitionMode;
@@ -247,14 +303,20 @@ export function useSignEngine({
       latestFrameRef.current = frameData;
 
       if (devTelemetryEnabled) devTel?.mark('expresat:ui_dispatch:start');
-      // Contar landmarks detectados (21 por cada mano + 33 si hay pose)
-      const handPts = (frameData.hands || []).reduce(
-        (acc, h) => acc + (Array.isArray(h) ? h.length : 0),
-        0
-      );
+      // Contar landmarks detectados solo evitando setState si el conteo no cambió
+      let handPts = 0;
+      const handsArr = frameData.hands;
+      if (Array.isArray(handsArr)) {
+        for (let i = 0; i < handsArr.length; i++) {
+          if (Array.isArray(handsArr[i])) handPts += handsArr[i].length;
+        }
+      }
       const posePts = Array.isArray(frameData.pose) ? frameData.pose.length : 0;
       const totalPts = handPts + posePts;
-      setLandmarksCount(totalPts);
+      if (lastLandmarksCountRef.current !== totalPts) {
+        lastLandmarksCountRef.current = totalPts;
+        setLandmarksCount(totalPts);
+      }
       if (devTelemetryEnabled && devTel) {
         const countSetMs = devTel.endAndMeasure(
           'expresat:stage:ui_dispatch:count',
@@ -266,14 +328,15 @@ export function useSignEngine({
         }
       }
 
-      // Actualizar LandmarkTracker si está habilitado
-      if (trackingConfigRef.current?.enabled && canvasRef?.current) {
+      // Actualizar LandmarkTracker solo con el nivel de detalle requerido por UI
+      const cfg = trackingConfigRef.current;
+      const drawerOpen = telemetryDrawerOpenRef.current;
+      if (cfg?.enabled && canvasRef?.current) {
         if (devTelemetryEnabled) devTel?.mark('expresat:tracker:start');
-        const snap = tracker.update(
-          frameData,
-          canvasRef.current.width,
-          canvasRef.current.height
-        );
+        const snap = tracker.update(frameData, canvasRef.current.width, canvasRef.current.height, {
+          includeTelemetry: drawerOpen,
+          trackHistory: Boolean(cfg.showTrails || drawerOpen),
+        });
         if (devTelemetryEnabled && devTel) {
           const trackerMs = devTel.endAndMeasure(
             'expresat:stage:tracker',
@@ -283,10 +346,16 @@ export function useSignEngine({
           if (trackerMs !== null && trackerMs !== undefined) {
             devTel.recordStageDuration('tracker', trackerMs);
           }
-          devTel.mark('expresat:ui_telemetry:start');
+          if (drawerOpen) devTel.mark('expresat:ui_telemetry:start');
         }
-        setTelemetry(snap);
-        if (devTelemetryEnabled && devTel) {
+        if (drawerOpen) {
+          const nowTel = performance.now();
+          if (nowTel - lastTelemetryUiMsRef.current >= 200) {
+            lastTelemetryUiMsRef.current = nowTel;
+            setTelemetry(snap);
+          }
+        }
+        if (devTelemetryEnabled && devTel && drawerOpen) {
           const telSetMs = devTel.endAndMeasure(
             'expresat:stage:ui_dispatch:telemetry',
             'expresat:ui_telemetry:start',
@@ -306,7 +375,7 @@ export function useSignEngine({
           video: videoRef.current,
           frameData,
           tracker,
-          trackingConfig: trackingConfigRef.current,
+          trackingConfig: cfg,
         });
         if (devTelemetryEnabled && devTel) {
           const canvasMs = devTel.endAndMeasure(
@@ -320,41 +389,75 @@ export function useSignEngine({
         }
       }
 
-      // Clasificación geométrica local en navegador (100% independiente del backend)
-      if (devTelemetryEnabled) devTel?.mark('expresat:ui_gesture:start');
-      const localPrediction = classifier.predict(frameData);
-      if (localPrediction.label) {
-        setGesture({
-          label: localPrediction.label,
-          category: localPrediction.category || localPrediction.details?.category || null,
-          confidence: localPrediction.confidence,
-          source: 'local',
-          details: localPrediction.details,
-        });
-      } else if (frameData.hands.length > 0) {
-        // Hay mano frente a cámara pero fue rechazada por baja confianza (LOW_CONFIDENCE)
-        setGesture({
-          label: null,
-          category: null,
-          confidence: localPrediction.confidence,
-          source: 'local',
-          details: localPrediction.details,
-        });
-      } else {
-        // No hay mano en escena: conservar última etiqueta o limpiar detalles
-        setGesture((prev) => ({
-          ...prev,
-          details: localPrediction.details,
-        }));
-      }
-      if (devTelemetryEnabled && devTel) {
-        const gestureUiMs = devTel.endAndMeasure(
-          'expresat:stage:ui_dispatch',
-          'expresat:ui_gesture:start',
-          'expresat:ui_gesture:end'
-        );
-        if (gestureUiMs !== null && gestureUiMs !== undefined) {
-          devTel.recordStageDuration('ui_dispatch', gestureUiMs);
+      // Clasificación geométrica local (saltar cuando la salida fue reemplazada por el Panel Dev)
+      if (!skipLocalClassificationRef.current) {
+        if (devTelemetryEnabled) devTel?.mark('expresat:ui_gesture:start');
+        const localPrediction = classifier.predict(frameData);
+        if (localPrediction.label) {
+          const nextCat = localPrediction.category || localPrediction.details?.category || null;
+          setGesture((prev) =>
+            isSameRenderedGesture(
+              prev,
+              localPrediction.label,
+              nextCat,
+              localPrediction.confidence,
+              'local',
+              localPrediction.details
+            )
+              ? prev
+              : {
+                  label: localPrediction.label,
+                  category: nextCat,
+                  confidence: localPrediction.confidence,
+                  source: 'local',
+                  details: localPrediction.details,
+                }
+          );
+        } else if (frameData.hands.length > 0) {
+          setGesture((prev) =>
+            isSameRenderedGesture(
+              prev,
+              null,
+              null,
+              localPrediction.confidence,
+              'local',
+              localPrediction.details
+            )
+              ? prev
+              : {
+                  label: null,
+                  category: null,
+                  confidence: localPrediction.confidence,
+                  source: 'local',
+                  details: localPrediction.details,
+                }
+          );
+        } else {
+          setGesture((prev) =>
+            isSameRenderedGesture(
+              prev,
+              prev.label,
+              prev.category,
+              prev.confidence,
+              prev.source,
+              localPrediction.details
+            )
+              ? prev
+              : {
+                  ...prev,
+                  details: localPrediction.details,
+                }
+          );
+        }
+        if (devTelemetryEnabled && devTel) {
+          const gestureUiMs = devTel.endAndMeasure(
+            'expresat:stage:ui_dispatch',
+            'expresat:ui_gesture:start',
+            'expresat:ui_gesture:end'
+          );
+          if (gestureUiMs !== null && gestureUiMs !== undefined) {
+            devTel.recordStageDuration('ui_dispatch', gestureUiMs);
+          }
         }
       }
 

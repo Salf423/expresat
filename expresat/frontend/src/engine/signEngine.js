@@ -208,7 +208,8 @@ export class SignEngine {
       }
     }
     this.preferredDelegate = options.delegate ?? queryDelegate ?? 'GPU';
-    this.poseCadence = Math.max(1, Math.min(5, options.poseCadence ?? 1));
+    // Cadencia 1:2 para PoseLandmarker por defecto (+35% FPS manteniendo manos 1:1 y hombros frescos)
+    this.poseCadence = Math.max(1, Math.min(5, options.poseCadence ?? 2));
     this.smoothLandmarks = options.smoothLandmarks ?? true;
     this.enableDevTelemetry = Boolean(
       options.enableDevTelemetry ?? (Boolean(import.meta.env?.DEV) || Boolean(options.devTelemetry))
@@ -255,6 +256,7 @@ export class SignEngine {
     this._busy = false;
     this._lastInferenceStartMs = 0;
     this._lastVideoTime = -1;
+    this._lastInferredVideoTime = -1;
     this._lastMonotonicTimestampMs = 0;
 
     this._cameraFrameCount = 0;
@@ -645,6 +647,7 @@ export class SignEngine {
     this._cameraFrameCount = 0;
     this._inferenceFrameCount = 0;
     this._lastVideoTime = -1;
+    this._lastInferredVideoTime = -1;
     this._currentFps = { cameraFps: 0, inferenceFps: 0 };
 
     if (this.enableDevTelemetry && this._devTelemetry && getActiveDevCollector() === this._devTelemetry) {
@@ -1082,10 +1085,18 @@ export class SignEngine {
         this._devTelemetry?.recordRafTick(nowMs, videoTimeAdvanced);
       }
 
-      // Respetar el intervalo objetivo de inferencia (15 a 30 FPS) y evitar solapamiento
-      if (!this._busy && nowMs - this._lastInferenceStartMs >= this.frameIntervalMs) {
+      // Evitar re-inferir frames estáticos/duplicados si el reloj de cámara no avanzó;
+      // tolerancia de 3 ms para no perder un tick rAF de 60 Hz frente a frameIntervalMs.
+      const hasNewCameraFrame = video.currentTime !== this._lastInferredVideoTime;
+      const minIntervalMs = Math.max(0, this.frameIntervalMs - 3);
+      if (
+        !this._busy &&
+        hasNewCameraFrame &&
+        nowMs - this._lastInferenceStartMs >= minIntervalMs
+      ) {
         this._busy = true;
         this._lastInferenceStartMs = nowMs;
+        this._lastInferredVideoTime = video.currentTime;
         try {
           await this._runInferenceStep(video, nowMs);
         } catch (inferErr) {
@@ -1265,25 +1276,44 @@ export class SignEngine {
 
     const cleanCoords = (arr, includeVisibility = false) => {
       if (!Array.isArray(arr)) return null;
-      return arr.map((pt) => {
-        const base = { x: pt.x, y: pt.y, z: pt.z ?? 0 };
-        if (includeVisibility) {
-          base.visibility = pt.visibility ?? 1.0;
-        }
-        return base;
-      });
+      const len = arr.length;
+      const out = new Array(len);
+      for (let i = 0; i < len; i++) {
+        const pt = arr[i];
+        out[i] = includeVisibility
+          ? { x: pt.x, y: pt.y, z: pt.z ?? 0, visibility: pt.visibility ?? 1.0 }
+          : { x: pt.x, y: pt.y, z: pt.z ?? 0 };
+      }
+      return out;
     };
+
+    let cachedRaw = null;
+    const rawPoseSrc = pose;
+    const rawHandsSrc = hands;
+    const rawHandednessSrc = handedness;
 
     const framePayload = {
       hands: filtered.hands || [],
       handedness: filtered.handedness || [],
-      leftHand: cleanCoords(leftHand, false),
-      rightHand: cleanCoords(rightHand, false),
-      pose: cleanCoords(filtered.pose, true),
-      raw: {
-        hands: Array.isArray(hands) ? hands.map((h) => cleanCoords(h, false)) : [],
-        handedness: handedness || [],
-        pose: cleanCoords(pose, true),
+      leftHand: this.smoothLandmarks ? leftHand : cleanCoords(leftHand, false),
+      rightHand: this.smoothLandmarks ? rightHand : cleanCoords(rightHand, false),
+      pose: this.smoothLandmarks ? filtered.pose : cleanCoords(filtered.pose, true),
+      get raw() {
+        if (!cachedRaw) {
+          let copiedHands = [];
+          if (Array.isArray(rawHandsSrc)) {
+            copiedHands = new Array(rawHandsSrc.length);
+            for (let i = 0; i < rawHandsSrc.length; i++) {
+              copiedHands[i] = cleanCoords(rawHandsSrc[i], false);
+            }
+          }
+          cachedRaw = {
+            hands: copiedHands,
+            handedness: rawHandednessSrc || [],
+            pose: cleanCoords(rawPoseSrc, true),
+          };
+        }
+        return cachedRaw;
       },
       timestamp,
       latencyMs,

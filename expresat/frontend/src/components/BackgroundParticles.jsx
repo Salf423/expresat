@@ -57,35 +57,36 @@ const BackgroundParticles = () => {
     }
 
     function animate() {
-      // Freeze rendering loop when camera is active or tab is hidden
-      if (!isPausedRef.current && !document.hidden) {
-        ctx.clearRect(0, 0, width, height);
+      if (isPausedRef.current || document.hidden) {
+        animationFrameIdRef.current = null;
+        return;
+      }
+      ctx.clearRect(0, 0, width, height);
 
-        particles.forEach(p => {
-          p.update();
-          p.draw();
-        });
+      particles.forEach(p => {
+        p.update();
+        p.draw();
+      });
 
-        // Particle connections calculation O(N²)
-        for (let i = 0; i < particles.length; i++) {
-          for (let j = i + 1; j < particles.length; j++) {
-            const dx = particles[i].x - particles[j].x;
-            const dy = particles[i].y - particles[j].y;
-            const distSq = dx * dx + dy * dy;
-            if (distSq < 14400) { // 120² = 14400
-              const dist = Math.sqrt(distSq);
-              if (isDark) {
-                ctx.strokeStyle = `rgba(255,255,255, ${Math.max(0, 0.4 - dist / 300)})`;
-                ctx.lineWidth = 1;
-              } else {
-                ctx.strokeStyle = `rgba(114, 9, 183, ${Math.max(0, 0.85 - dist / 150)})`;
-                ctx.lineWidth = 1.2;
-              }
-              ctx.beginPath();
-              ctx.moveTo(particles[i].x, particles[i].y);
-              ctx.lineTo(particles[j].x, particles[j].y);
-              ctx.stroke();
+      // Particle connections calculation O(N²)
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const distSq = dx * dx + dy * dy;
+          if (distSq < 14400) { // 120² = 14400
+            const dist = Math.sqrt(distSq);
+            if (isDark) {
+              ctx.strokeStyle = `rgba(255,255,255, ${Math.max(0, 0.4 - dist / 300)})`;
+              ctx.lineWidth = 1;
+            } else {
+              ctx.strokeStyle = `rgba(114, 9, 183, ${Math.max(0, 0.85 - dist / 150)})`;
+              ctx.lineWidth = 1.2;
             }
+            ctx.beginPath();
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.stroke();
           }
         }
       }
@@ -101,15 +102,27 @@ const BackgroundParticles = () => {
     };
     window.addEventListener('resize', handleResize);
 
-    // Event listener to pause particles when camera stream starts
+    // Cancelar rAF cuando la cámara está activa (cero ticks vacíos durante inferencia)
     const handleCameraActive = (e) => {
-      isPausedRef.current = e.detail === true;
+      const active = e.detail === true;
+      isPausedRef.current = active;
+      if (active) {
+        if (animationFrameIdRef.current !== null) {
+          cancelAnimationFrame(animationFrameIdRef.current);
+          animationFrameIdRef.current = null;
+        }
+      } else if (!document.hidden && animationFrameIdRef.current === null) {
+        animate();
+      }
     };
     window.addEventListener('camera-active', handleCameraActive);
 
     // Pause animation when tab loses focus
     const handleVisibilityChange = () => {
-      if (!document.hidden && !animationFrameIdRef.current) {
+      if (document.hidden && animationFrameIdRef.current !== null) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+        animationFrameIdRef.current = null;
+      } else if (!document.hidden && !isPausedRef.current && animationFrameIdRef.current === null) {
         animate();
       }
     };

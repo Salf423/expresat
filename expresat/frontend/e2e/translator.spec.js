@@ -36,7 +36,7 @@ test.describe('ExpresaT Demo E2E — Navegador real con cámara falsa y MediaPip
       });
     }, syntheticDos);
 
-    await page.goto('/translator');
+    await page.goto('/translator?dev=0');
 
     // 1. Verificar que WASM cargó en el hilo principal sin ModuleFactory not set
     const wasmBadge = page.getByTestId('wasm-status-badge');
@@ -80,7 +80,7 @@ test.describe('ExpresaT Demo E2E — Navegador real con cámara falsa y MediaPip
       });
     }, syntheticOpen);
 
-    await page.goto('/translator');
+    await page.goto('/translator?dev=0');
 
     await expect(page.getByTestId('wasm-status-badge')).toHaveText('WASM Activo', {
       timeout: 15000,

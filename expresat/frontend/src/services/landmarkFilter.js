@@ -42,29 +42,41 @@ export class LandmarkEMAFilter {
         }
 
         const prev = this._prev[name];
+        const len = landmarks.length;
+        const hasVis = landmarks[0]?.visibility !== undefined;
 
         // First detection for this set: initialize state without smoothing
-        if (!prev || prev.length !== landmarks.length) {
-            this._prev[name] = landmarks.map(lm => ({
-                x: lm.x,
-                y: lm.y,
-                z: lm.z,
-                ...(lm.visibility !== undefined ? { visibility: lm.visibility } : {})
-            }));
-            return this._prev[name];
+        if (!prev || prev.length !== len) {
+            const initArr = new Array(len);
+            for (let i = 0; i < len; i++) {
+                const lm = landmarks[i];
+                initArr[i] = hasVis
+                    ? { x: lm.x, y: lm.y, z: lm.z ?? 0, visibility: lm.visibility ?? 1.0 }
+                    : { x: lm.x, y: lm.y, z: lm.z ?? 0 };
+            }
+            this._prev[name] = initArr;
+            return initArr;
         }
 
         const a = this.alpha;
         const b = 1 - a;
 
-        const smoothed = new Array(landmarks.length);
-        for (let i = 0; i < landmarks.length; i++) {
-            smoothed[i] = {
-                x: a * landmarks[i].x + b * prev[i].x,
-                y: a * landmarks[i].y + b * prev[i].y,
-                z: a * landmarks[i].z + b * prev[i].z,
-                ...(landmarks[i].visibility !== undefined ? { visibility: landmarks[i].visibility } : {})
-            };
+        const smoothed = new Array(len);
+        for (let i = 0; i < len; i++) {
+            const lm = landmarks[i];
+            const pv = prev[i];
+            smoothed[i] = hasVis
+                ? {
+                    x: a * lm.x + b * pv.x,
+                    y: a * lm.y + b * pv.y,
+                    z: a * (lm.z ?? 0) + b * pv.z,
+                    visibility: lm.visibility ?? 1.0
+                }
+                : {
+                    x: a * lm.x + b * pv.x,
+                    y: a * lm.y + b * pv.y,
+                    z: a * (lm.z ?? 0) + b * pv.z
+                };
         }
 
         this._prev[name] = smoothed;

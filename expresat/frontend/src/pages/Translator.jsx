@@ -97,6 +97,8 @@ const Translator = () => {
     recognitionMode,
     enablePose: Boolean(devMode || CONFIG.enablePose),
     enableDevTelemetry: devMode,
+    telemetryDrawerOpen: showTelemetryDrawer,
+    skipLocalClassification: devMode,
   });
 
   const handleRecordRealFixture = () => {
@@ -490,20 +492,6 @@ const Translator = () => {
             </div>
           </div>
 
-          {devMode ? (
-            <>
-              <Profiler id="dev_recorder" onRender={onDevProfilerRender}>
-                <DevRecorder engineRef={engineRef} videoRef={videoRef} enabled={devMode} />
-              </Profiler>
-              <DevInstrumentationPanel
-                engineRef={engineRef}
-                devSnapshot={devSnapshot}
-                onRefreshSnapshot={refreshDevSnapshot}
-                enabled={devMode}
-              />
-            </>
-          ) : null}
-
           <div className="video-container" style={{ position: 'relative' }}>
             <video
               ref={videoRef}
@@ -799,7 +787,108 @@ const Translator = () => {
           )}
         </section>
 
-        {/* Panel 2: Live Translation & Finger State */}
+        {/* Panel 2: En Modo Desarrollador reemplaza la salida de cada acción por el Panel Dev */}
+        {devMode ? (
+          <section
+            className="glass-panel translator-panel"
+            aria-label="Panel del Modo Desarrollador"
+            data-testid="dev-mode-panel"
+            style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
+          >
+            <div className="panel-header" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+              <Wrench size={20} color="var(--accent-primary)" />
+              <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>
+                Panel Modo Desarrollador — Calibración MediaPipe
+              </h2>
+              <span
+                className="chip"
+                style={{
+                  marginLeft: 'auto',
+                  fontSize: '0.72rem',
+                  background: 'var(--accent-primary-bg)',
+                  color: 'var(--accent-primary)',
+                  borderColor: 'var(--accent-primary-border)',
+                  fontWeight: 600,
+                }}
+              >
+                Salida reemplazada por herramientas Dev
+              </span>
+            </div>
+
+            <Profiler id="dev_recorder" onRender={onDevProfilerRender}>
+              <DevRecorder engineRef={engineRef} videoRef={videoRef} enabled={devMode} />
+            </Profiler>
+
+            <DevInstrumentationPanel
+              engineRef={engineRef}
+              devSnapshot={devSnapshot}
+              onRefreshSnapshot={refreshDevSnapshot}
+              enabled={devMode}
+            />
+
+            <div
+              data-testid="dev-fixture-recorder"
+              style={{
+                padding: '0.75rem 0.9rem',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--panel-bg)',
+                border: '1px dashed var(--panel-border)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '0.5rem',
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                [DEV] Grabar fixture real (~1.8s):
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <select
+                  aria-label="Seleccionar seña a grabar"
+                  value={devTargetLabel}
+                  onChange={(e) => setDevTargetLabel(e.target.value)}
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '0.2rem 0.45rem',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--input-bg)',
+                    color: 'var(--text-color)',
+                    border: '1px solid var(--panel-border)',
+                  }}
+                >
+                  {[
+                    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10',
+                    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'LL',
+                    'M', 'N', 'Ñ', 'O', 'P', 'Q', 'R', 'RR', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+                  ].map((lbl) => (
+                    <option key={lbl} value={lbl}>
+                      Seña {lbl}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  data-testid="dev-record-fixture-btn"
+                  onClick={handleRecordRealFixture}
+                  disabled={devRecording}
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '0.22rem 0.65rem',
+                    borderRadius: 'var(--radius-sm)',
+                    background: devRecording ? 'rgba(239,68,68,0.2)' : 'var(--accent-primary-bg)',
+                    color: devRecording ? '#FCA5A5' : 'var(--accent-primary)',
+                    border: '1px solid var(--accent-primary)',
+                    cursor: devRecording ? 'wait' : 'pointer',
+                    fontWeight: 600,
+                  }}
+                >
+                  {devRecording ? 'Grabando...' : 'Descargar JSON'}
+                </button>
+              </div>
+            </div>
+          </section>
+        ) : (
         <section className="glass-panel translator-panel" aria-label="Resultado de Traducción">
           <div className="panel-header" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
             <MessageSquare size={20} color="var(--accent-secondary)" />
@@ -1097,71 +1186,9 @@ const Translator = () => {
                 </span>
               ))}
             </div>
-
-            {devMode && (
-              <div
-                data-testid="dev-fixture-recorder"
-                style={{
-                  marginTop: '0.5rem',
-                  paddingTop: '0.6rem',
-                  borderTop: '1px dashed var(--panel-border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  flexWrap: 'wrap',
-                  gap: '0.5rem',
-                }}
-              >
-                <span style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
-                  [DEV] Grabar fixture real (~1.8s):
-                </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <select
-                    aria-label="Seleccionar seña a grabar"
-                    value={devTargetLabel}
-                    onChange={(e) => setDevTargetLabel(e.target.value)}
-                    style={{
-                      fontSize: '0.72rem',
-                      padding: '0.2rem 0.45rem',
-                      borderRadius: 'var(--radius-sm)',
-                      background: 'var(--input-bg)',
-                      color: 'var(--text-color)',
-                      border: '1px solid var(--panel-border)',
-                    }}
-                  >
-                    {[
-                      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10',
-                      'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'LL',
-                      'M', 'N', 'Ñ', 'O', 'P', 'Q', 'R', 'RR', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-                    ].map((lbl) => (
-                      <option key={lbl} value={lbl}>
-                        Seña {lbl}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    data-testid="dev-record-fixture-btn"
-                    onClick={handleRecordRealFixture}
-                    disabled={devRecording}
-                    style={{
-                      fontSize: '0.72rem',
-                      padding: '0.22rem 0.65rem',
-                      borderRadius: 'var(--radius-sm)',
-                      background: devRecording ? 'rgba(239,68,68,0.2)' : 'var(--accent-primary-bg)',
-                      color: devRecording ? '#FCA5A5' : 'var(--accent-primary)',
-                      border: '1px solid var(--accent-primary)',
-                      cursor: devRecording ? 'wait' : 'pointer',
-                      fontWeight: 600,
-                    }}
-                  >
-                    {devRecording ? 'Grabando...' : 'Descargar JSON'}
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </section>
+        )}
       </div>
 
       {/* Panel de Diagnóstico (Ctrl+Shift+D) */}
