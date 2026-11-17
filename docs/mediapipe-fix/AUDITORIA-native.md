@@ -6,7 +6,7 @@
 - **Estado:** **Histórico (Bloqueado posteriormente por conformidad `v1.3.0`)**
 
 > [!NOTE]
-> Posteriormente a esta auditoría inicial, el módulo `expresat-native/` fue marcado formalmente como **`NO_CONFORME_FEATURE_SPEC_1_3_0`**: aunque [`inference_thread.cpp`](../../expresat-native/core/src/inference_thread.cpp) calcula la escala 3D de hombros en `normalize_to_shoulders()`, no implementa `ExtractWindow` (`v1.3.0`) y rechaza activamente la ejecución devolviendo `ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0`. Véase [FEATURE_SPEC.md](../dataset-generator/FEATURE_SPEC.md).
+> Posteriormente a esta auditoría inicial, el módulo `expresat-native/` fue marcado formalmente como **`NO_CONFORME_FEATURE_SPEC_1_3_0`** (`ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0`) y posteriormente retirado del repositorio. Véase [FEATURE_SPEC.md](../dataset-generator/FEATURE_SPEC.md).
 
 ---
 
@@ -55,7 +55,7 @@ La aplicación de escritorio nativa es un cliente C++/OpenGL/ImGui con:
 
 | Severidad | Hallazgo | Evidencia | Líneas |
 |---|---|---|---|
-| **Baja** | **Campos de structs de landmarks** | `PoseLandmark` (`x, y, z, visibility`) y `HandLandmark` (`x, y, z`) en [`core/include/landmark_types.h`](../../expresat-native/core/include/landmark_types.h) deben coincidir exactamente con la salida de MediaPipe si se reemplaza el stub. | Archivo completo |
+| **Baja** | **Campos de structs de landmarks** | `PoseLandmark` (`x, y, z, visibility`) y `HandLandmark` (`x, y, z`) en `core/include/landmark_types.h` (*módulo `expresat-native/` retirado*) deben coincidir con la salida de MediaPipe si se reemplaza el stub. | Archivo completo |
 | **Baja** | **Constantes dimensionales del modelo** | `SEQUENCE_LENGTH = 15`, `NUM_FEATURES = 178`, `NUM_CLASSES = 15` y `POSE_UPPER_INDICES` deben mantenerse alineados con `model_metadata.json`. | Archivo completo |
 
 ---

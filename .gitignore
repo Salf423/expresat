@@ -43,10 +43,11 @@ playwright-report/
 logs/
 *.log
 
-# OS / Editors
+# OS / Editors & Local Vaults
 .DS_Store
 Thumbs.db
 *.swp
 *.swo
 *.sw?
 .idea/
+Obsidian_exp/

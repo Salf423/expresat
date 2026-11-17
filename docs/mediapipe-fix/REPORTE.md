@@ -28,7 +28,7 @@ Todos los commits fueron probados atómicamente y validados contra linter y test
 
 1. `8d66a9c` ([`Translator.jsx`](../../expresat/frontend/src/pages/Translator.jsx)): `fix(frontend): define isDemo state to resolve ReferenceError [MP-1]`
 2. `6caf276` ([`main.py`](../../expresat/backend/main.py)): `fix(backend): allow demo mode WS connections and log reject reasons with origin [MP-2]`
-3. `fd6ea42` ([`apiService.js`](../../expresat/frontend/src/services/apiService.js)): `fix(ws): align token auth protocol across handshake and message phases [MP-2b]`
+3. `fd6ea42` (`expresat/frontend/src/services/apiService.js`, *eliminado posteriormente; reemplazado por [`wsClient.js`](../../expresat/frontend/src/transport/wsClient.js)*): `fix(ws): align token auth protocol across handshake and message phases [MP-2b]`
 4. `d40c591` (`expresat/frontend/src/workers/mediapipe-worker.js`, *archivo eliminado posteriormente en `rearquitectura-demo`*): `fix(mediapipe): add WASM CDN fallback, GPU-to-CPU graceful degradation, and rVFC fallback [MP-3]`
 5. `98b75bf` ([`Translator.jsx`](../../expresat/frontend/src/pages/Translator.jsx)): `fix(frontend): remove demo_fallback_token and relax FPS watchdog [MP-4]`
 6. `8615265` ([`main.py`](../../expresat/backend/main.py)): `fix(backend): decouple token verification from demo mode access control [MP-5]`

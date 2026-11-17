@@ -14,7 +14,7 @@ function requireSupabaseClient() {
   if (!supabase) {
     throw new Error(
       'La autenticación con Supabase no está configurada en este entorno (Modo Demo Local activo). ' +
-        'Configura VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en expresat/frontend/.env para habilitar el inicio de sesión.'
+      'Configura VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en expresat/frontend/.env para habilitar el inicio de sesión.'
     );
   }
   return supabase;
@@ -111,7 +111,7 @@ export class AuthService {
       return {
         data: {
           subscription: {
-            unsubscribe: () => {},
+            unsubscribe: () => { },
           },
         },
       };

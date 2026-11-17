@@ -362,7 +362,10 @@
   font-size: var(--text-sm);
   transition: color var(--transition-fast);
 }
-.footer-link:hover { color: var(--text-color); }
+
+.footer-link:hover {
+  color: var(--text-color);
+}
 
 /* Environment selector */
 .env-menu-item {

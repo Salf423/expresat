@@ -18,7 +18,7 @@ La inspección de git y del código fuente confirma que `expresat-dataset-genera
 - **Discrepancia geométrica:** Los hombros en ese dataset tienen distancia inter-humeral media $D_{\text{norm}} \approx 0.0459$ (omitió la división por $D$). En un espacio normalizado por hombros, los hombros frontales deben situarse en $(\pm 0.5000, 0, 0)$ con $D = 1.0$.
 
 ### 1.2 Contrato Nuevo, Cuarentena y Verificación de `config_hash`
-1. **Puesta en Cuarentena:** El archivo `letra_a_derecha_2.json` queda aislado en [`expresat-dataset-generator/dataset/quarantine/`](../../expresat-dataset-generator/dataset/quarantine/) y **no debe utilizarse para entrenar modelos productivos**.
+1. **Puesta en Cuarentena y Retiro:** El archivo `letra_a_derecha_2.json` fue puesto en cuarentena (`expresat-dataset-generator/dataset/quarantine/`, *retirado del árbol de trabajo tras auditoría*) y **no debe utilizarse para entrenar modelos productivos**.
 2. **Contrato Vigente `1.3.0`:** La especificación v1.3.0 rige la extracción en `feature_extractor.py` y `featureExtractor.js`.
 3. **Verificación de Versión y `config_hash` (Implementado vs. Planeado `v1.4.0`):**
    - **Implementado en `v1.3.0`:** `compute_config_hash()` en `feature_extractor.py` y `getCanonicalConfigObject()` en `featureExtractor.js` generan el diccionario canónico sellado (incluyendo `fixtures_sha256` sobre `tests/fixtures/feature_spec_cases.json`), verificado en `tests/test_feature_spec.py`.
