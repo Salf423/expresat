@@ -1,0 +1,237 @@
+{
+  "CPU — Manos + Pose (1:1 cadencia)": {
+    "supported": true,
+    "delegate": "CPU",
+    "enablePose": true,
+    "poseCadence": 1,
+    "numFrames": 25,
+    "stages": {
+      "hand_detection": {
+        "mean": 111.72,
+        "median": 112,
+        "p95": 116,
+        "max": 116
+      },
+      "pose_detection": {
+        "mean": 47.92,
+        "median": 48,
+        "p95": 50,
+        "max": 54
+      },
+      "ema_filtering": {
+        "mean": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "classifier": {
+        "mean": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "canvas_draw": {
+        "mean": 2.8,
+        "median": 3,
+        "p95": 4,
+        "max": 4
+      },
+      "total_frame": {
+        "mean": 162.48,
+        "median": 162,
+        "p95": 166,
+        "max": 169
+      }
+    },
+    "effective_fps_mean": 6.2,
+    "effective_fps_p95": 6
+  },
+  "GPU — Manos + Pose (1:1 cadencia)": {
+    "supported": true,
+    "delegate": "GPU",
+    "enablePose": true,
+    "poseCadence": 1,
+    "numFrames": 25,
+    "stages": {
+      "hand_detection": {
+        "mean": 37.28,
+        "median": 37,
+        "p95": 40,
+        "max": 41
+      },
+      "pose_detection": {
+        "mean": 25.52,
+        "median": 25,
+        "p95": 27,
+        "max": 27
+      },
+      "ema_filtering": {
+        "mean": 0.04,
+        "median": 0,
+        "p95": 0,
+        "max": 1
+      },
+      "classifier": {
+        "mean": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "canvas_draw": {
+        "mean": 2.56,
+        "median": 3,
+        "p95": 3,
+        "max": 3
+      },
+      "total_frame": {
+        "mean": 65.4,
+        "median": 65,
+        "p95": 69,
+        "max": 71
+      }
+    },
+    "effective_fps_mean": 15.3,
+    "effective_fps_p95": 14.5
+  },
+  "CPU — Solo Manos (sin pose)": {
+    "supported": true,
+    "delegate": "CPU",
+    "enablePose": false,
+    "poseCadence": 1,
+    "numFrames": 25,
+    "stages": {
+      "hand_detection": {
+        "mean": 112.84,
+        "median": 112,
+        "p95": 118,
+        "max": 122
+      },
+      "pose_detection": {
+        "mean": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "ema_filtering": {
+        "mean": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "classifier": {
+        "mean": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "canvas_draw": {
+        "mean": 2.8,
+        "median": 3,
+        "p95": 4,
+        "max": 4
+      },
+      "total_frame": {
+        "mean": 115.64,
+        "median": 115,
+        "p95": 121,
+        "max": 125
+      }
+    },
+    "effective_fps_mean": 8.6,
+    "effective_fps_p95": 8.3
+  },
+  "CPU — Manos + Pose cada 2 frames (1:2)": {
+    "supported": true,
+    "delegate": "CPU",
+    "enablePose": true,
+    "poseCadence": 2,
+    "numFrames": 25,
+    "stages": {
+      "hand_detection": {
+        "mean": 116.04,
+        "median": 111,
+        "p95": 151,
+        "max": 153
+      },
+      "pose_detection": {
+        "mean": 26.04,
+        "median": 46,
+        "p95": 53,
+        "max": 70
+      },
+      "ema_filtering": {
+        "mean": 0.04,
+        "median": 0,
+        "p95": 0,
+        "max": 1
+      },
+      "classifier": {
+        "mean": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "canvas_draw": {
+        "mean": 2.84,
+        "median": 3,
+        "p95": 4,
+        "max": 4
+      },
+      "total_frame": {
+        "mean": 144.96,
+        "median": 160,
+        "p95": 183,
+        "max": 227
+      }
+    },
+    "effective_fps_mean": 6.9,
+    "effective_fps_p95": 5.5
+  },
+  "CPU — Manos + Pose cada 3 frames (1:3)": {
+    "supported": true,
+    "delegate": "CPU",
+    "enablePose": true,
+    "poseCadence": 3,
+    "numFrames": 25,
+    "stages": {
+      "hand_detection": {
+        "mean": 112.36,
+        "median": 112,
+        "p95": 115,
+        "max": 125
+      },
+      "pose_detection": {
+        "mean": 17.92,
+        "median": 0,
+        "p95": 50,
+        "max": 61
+      },
+      "ema_filtering": {
+        "mean": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "classifier": {
+        "mean": 0.04,
+        "median": 0,
+        "p95": 0,
+        "max": 1
+      },
+      "canvas_draw": {
+        "mean": 2.56,
+        "median": 3,
+        "p95": 3,
+        "max": 3
+      },
+      "total_frame": {
+        "mean": 132.88,
+        "median": 115,
+        "p95": 165,
+        "max": 173
+      }
+    },
+    "effective_fps_mean": 7.5,
+    "effective_fps_p95": 6.1
+  }
+}

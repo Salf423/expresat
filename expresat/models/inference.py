@@ -1,20 +1,17 @@
 """
-inference.py — ExpresaT: Módulo Legacy (DEPRECADO — usar inference_engine.py)
-=============================================================================
-⚠️  ADVERTENCIA: Este módulo usa la topología INCORRECTA de features (33×3=99
-    para pose completa en vez de 13×4=52 para upper pose). El vector resultante
-    tiene 225 dimensiones en vez de las 178 requeridas por el modelo GRU.
-
-    Para inferencia de producción, usar:
+inference.py — ExpresaT: Módulo Legacy (OBSOLETO / DEPRECADO)
+=============================================================
+⚠️  OBSOLETO: Este módulo está oficialmente fuera de servicio desde FEATURE_SPEC v1.2.2.
+    No realiza inferencia real (utilizaba stubs aleatorios y carece de normalización canónica).
+    Para cualquier tarea de inferencia en producción o backend, debe usarse estrictamente:
         from models.inference_engine import InferenceEngine
 
-    Este archivo se conserva solo como referencia histórica y para no romper
-    imports legados. NO conectar al pipeline de entrenamiento ni al backend.
+    Cualquier llamada a este módulo emitirá advertencias y debe ser migrada.
 """
 
 import warnings
 warnings.warn(
-    "inference.py está DEPRECADO. Use inference_engine.py para producción.",
+    "inference.py está OBSOLETO y fuera de servicio. Use models.inference_engine.InferenceEngine.",
     DeprecationWarning,
     stacklevel=2
 )

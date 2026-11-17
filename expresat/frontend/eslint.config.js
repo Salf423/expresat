@@ -40,7 +40,7 @@ export default [
     },
   },
   {
-    files: ['src/**/*.test.{js,jsx}', 'e2e/**/*.{js,jsx}'],
+    files: ['src/**/*.test.{js,jsx}', 'e2e/**/*.{js,jsx}', 'benchmarks/**/*.{js,jsx}'],
     languageOptions: {
       globals: {
         ...globals.node,

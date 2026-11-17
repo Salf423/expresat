@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { Profiler, useRef, useState } from 'react';
 import {
   Camera,
   Activity,
@@ -14,15 +14,20 @@ import {
   BarChart2,
   AlertTriangle,
   RefreshCw,
+  Wrench,
 } from 'lucide-react';
 import { useSignEngine } from '../ui/index.js';
+import { onDevProfilerRender } from '../engine/index.js';
 import { WS_STATES } from '../transport/index.js';
 import { COLOR_LEGEND_ITEMS } from '../services/landmarkTracker.js';
 import { CONFIG } from '../config.js';
+import { DevRecorder } from '../components/DevRecorder.jsx';
+import { DevInstrumentationPanel } from '../components/DevInstrumentationPanel.jsx';
+import { readInitialDevMode, persistDevMode } from '../utils/devMode.js';
 
 const WS_STATE_LABELS = Object.freeze({
   [WS_STATES.IDLE]: 'Modo Local',
-  [WS_STATES.CONNECTING]: 'Conectando...',
+  [WS_STATES.CONNECTING]: 'Conectando…',
   [WS_STATES.OPEN]: 'Conectado',
   [WS_STATES.AUTH_ERROR]: 'Modo Demo Local (Sin Token)',
   [WS_STATES.FAILED]: 'Modo Demo Local (Sin Backend)',
@@ -51,6 +56,15 @@ const Translator = () => {
   const [recognitionMode, setRecognitionMode] = useState('all');
   const [devTargetLabel, setDevTargetLabel] = useState('A');
   const [devRecording, setDevRecording] = useState(false);
+  const [devMode, setDevMode] = useState(() => readInitialDevMode());
+
+  const handleToggleDevMode = () => {
+    setDevMode((prev) => {
+      const next = !prev;
+      persistDevMode(next);
+      return next;
+    });
+  };
   const [trackingConfig, setTrackingConfig] = useState({
     enabled: true,
     showTrails: true,
@@ -71,13 +85,18 @@ const Translator = () => {
     landmarksCount,
     telemetry,
     latestFrameRef,
+    devSnapshot,
+    refreshDevSnapshot,
     reconnectTransport,
+    engineRef,
   } = useSignEngine({
     videoRef,
     canvasRef,
     trackingConfig,
     enableRemoteTransport: true,
     recognitionMode,
+    enablePose: Boolean(devMode || CONFIG.enablePose),
+    enableDevTelemetry: devMode,
   });
 
   const handleRecordRealFixture = () => {
@@ -161,7 +180,7 @@ const Translator = () => {
     }
   };
 
-  return (
+  const content = (
     <div
       className="container animate-fade-in"
       style={{
@@ -199,13 +218,13 @@ const Translator = () => {
               style={{
                 fontSize: '0.72rem',
                 background: engineStatus.wasmReady
-                  ? 'rgba(16, 185, 129, 0.15)'
-                  : 'rgba(245, 158, 11, 0.15)',
-                color: engineStatus.wasmReady ? '#10B981' : '#F59E0B',
+                  ? 'var(--success-bg)'
+                  : 'var(--warning-bg)',
+                color: engineStatus.wasmReady ? 'var(--success-color)' : 'var(--warning-color)',
                 borderColor: 'transparent',
               }}
             >
-              {engineStatus.wasmReady ? 'WASM Activo' : 'Cargando WASM...'}
+              {engineStatus.wasmReady ? 'WASM Activo' : 'Cargando WASM…'}
             </span>
           </div>
           <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
@@ -214,84 +233,119 @@ const Translator = () => {
           </p>
         </div>
 
-        {/* Telemetry Indicator (WCAG aria-live="polite") */}
-        <div
-          role="status"
-          aria-live="polite"
-          className="glass-panel"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '1rem',
-            padding: '0.6rem 1.25rem',
-            borderRadius: 'var(--radius-full)',
-            flexWrap: 'wrap',
-          }}
-        >
-          {/* FPS Cámara */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+          {/* Telemetry Indicator (WCAG aria-live="polite") */}
           <div
-            data-testid="camera-fps"
-            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-            title="Fotogramas por segundo entregados por la cámara"
+            role="status"
+            aria-live="polite"
+            className="glass-panel"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1rem',
+              padding: '0.6rem 1.25rem',
+              borderRadius: 'var(--radius-full)',
+              flexWrap: 'wrap',
+            }}
           >
-            <Camera size={16} color="var(--accent-primary)" />
-            <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              Cámara:{' '}
-              <strong style={{ color: 'var(--text-color)', fontFamily: 'monospace' }}>
-                {fps.cameraFps}
-              </strong>{' '}
-              FPS
-            </span>
+            {/* FPS Cámara */}
+            <div
+              data-testid="camera-fps"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              title="Fotogramas por segundo entregados por la cámara"
+            >
+              <Camera size={16} color="var(--accent-primary)" />
+              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                Cámara:{' '}
+                <strong style={{ color: 'var(--text-color)', fontVariantNumeric: 'tabular-nums' }}>
+                  {fps.cameraFps}
+                </strong>{' '}
+                FPS
+              </span>
+            </div>
+
+            <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
+
+            {/* FPS Inferencia Real */}
+            <div
+              data-testid="inference-fps"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              title="Detecciones reales de MediaPipe procesadas por segundo"
+            >
+              <Activity size={16} color="var(--accent-secondary)" />
+              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                Inferencia:{' '}
+                <strong style={{ color: 'var(--text-color)', fontVariantNumeric: 'tabular-nums' }}>
+                  {fps.inferenceFps}
+                </strong>{' '}
+                FPS
+              </span>
+            </div>
+
+            <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
+
+            {/* Estado explícito del transporte WebSocket */}
+            <div
+              data-testid="ws-status"
+              data-ws-state={wsSnapshot.state}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              title={wsSnapshot.detail}
+            >
+              <span
+                className={`status-dot ${isWsOpen ? 'status-dot--online' : 'status-dot--offline'}`}
+                aria-hidden="true"
+              />
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                {wsStatusLabel}
+              </span>
+              {(wsSnapshot.state === WS_STATES.FAILED ||
+                wsSnapshot.state === WS_STATES.AUTH_ERROR) && (
+                <button
+                  type="button"
+                  onClick={reconnectTransport}
+                  className="btn-icon"
+                  title="Reintentar conexión con el servidor backend"
+                  aria-label="Reintentar conexión con servidor"
+                  style={{ width: '24px', height: '24px', padding: '2px' }}
+                >
+                  <RefreshCw size={13} />
+                </button>
+              )}
+            </div>
           </div>
 
-          <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
-
-          {/* FPS Inferencia Real */}
-          <div
-            data-testid="inference-fps"
-            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-            title="Detecciones reales de MediaPipe procesadas por segundo"
-          >
-            <Activity size={16} color="var(--accent-secondary)" />
-            <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              Inferencia:{' '}
-              <strong style={{ color: 'var(--text-color)', fontFamily: 'monospace' }}>
-                {fps.inferenceFps}
-              </strong>{' '}
-              FPS
-            </span>
-          </div>
-
-          <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
-
-          {/* Estado explícito del transporte WebSocket */}
-          <div
-            data-testid="ws-status"
-            data-ws-state={wsSnapshot.state}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-            title={wsSnapshot.detail}
-          >
-            <span
-              className={`status-dot ${isWsOpen ? 'status-dot--online' : 'status-dot--offline'}`}
-              aria-hidden="true"
-            />
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)' }}>
-              {wsStatusLabel}
-            </span>
-            {(wsSnapshot.state === WS_STATES.FAILED ||
-              wsSnapshot.state === WS_STATES.AUTH_ERROR) && (
-              <button
-                type="button"
-                onClick={reconnectTransport}
-                className="btn-icon"
-                title="Reintentar conexión con el servidor backend"
-                aria-label="Reintentar conexión con servidor"
-                style={{ width: '24px', height: '24px', padding: '2px' }}
-              >
-                <RefreshCw size={13} />
-              </button>
-            )}
-          </div>
+          {/* Indicador DEV separado: Cámara Real (rVFC) independiente del bucle de inferencia */}
+          {devMode && (
+            <div
+              data-testid="real-camera-fps"
+              className="glass-panel"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                padding: '0.5rem 0.9rem',
+                borderRadius: 'var(--radius-full)',
+                border: '1px solid #0284c7',
+                fontSize: '0.78rem',
+              }}
+              title="Tasa real de frames únicos de cámara medida por requestVideoFrameCallback (desacoplada del loop de inferencia)"
+            >
+              <Camera size={14} color="#38bdf8" />
+              <span style={{ color: 'var(--text-muted)' }}>
+                Cámara real (rVFC):{' '}
+                <strong style={{ color: '#38bdf8', fontVariantNumeric: 'tabular-nums' }}>
+                  {devSnapshot?.rvfcSupported === false
+                    ? 'N/A'
+                    : `${devSnapshot?.live?.realCameraFps ?? 0}`}
+                </strong>{' '}
+                FPS
+              </span>
+              <span style={{ color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums' }}>
+                · Únic: {devSnapshot?.live?.uniqueInferredFps ?? 0} · Dup:{' '}
+                {devSnapshot?.live?.duplicateInferenceFps ?? 0}
+              </span>
+            </div>
+          )}
         </div>
       </header>
 
@@ -306,15 +360,15 @@ const Translator = () => {
             gap: '0.75rem',
             padding: '0.85rem 1.15rem',
             borderRadius: 'var(--radius-md)',
-            background: 'rgba(239, 68, 68, 0.14)',
-            border: '1px solid rgba(239, 68, 68, 0.45)',
-            color: '#FCA5A5',
+            background: 'var(--error-bg)',
+            border: '1px solid var(--error-color)',
+            color: 'var(--text-color)',
             fontSize: '0.88rem',
           }}
         >
-          <AlertTriangle size={20} color="#EF4444" style={{ flexShrink: 0 }} />
+          <AlertTriangle size={20} color="var(--error-color)" style={{ flexShrink: 0 }} />
           <div>
-            <strong style={{ display: 'block', color: '#FECACA' }}>
+            <strong style={{ display: 'block', color: 'var(--text-color)' }}>
               Error en el motor de visión ({engineError.code})
             </strong>
             <span>{engineError.message}</span>
@@ -336,8 +390,8 @@ const Translator = () => {
               gap: '0.5rem',
               padding: '0.6rem 1rem',
               borderRadius: 'var(--radius-md)',
-              background: 'rgba(59, 130, 246, 0.1)',
-              border: '1px solid rgba(59, 130, 246, 0.3)',
+              background: 'var(--info-bg)',
+              border: '1px solid var(--accent-primary-border)',
               color: 'var(--text-color)',
               fontSize: '0.82rem',
             }}
@@ -365,6 +419,7 @@ const Translator = () => {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
+                flexWrap: 'wrap',
               }}
             >
               <span
@@ -403,8 +458,51 @@ const Translator = () => {
                 <Layers size={13} />
                 <span>{trackingConfig.enabled ? 'Tracker On' : 'Tracker Off'}</span>
               </button>
+              <button
+                type="button"
+                data-testid="dev-mode-toggle"
+                aria-pressed={devMode}
+                aria-label={
+                  devMode
+                    ? 'Desactivar modo desarrollador y calibración MediaPipe'
+                    : 'Activar modo desarrollador para grabar muestras de calibración MediaPipe'
+                }
+                title="Activar o desactivar modo desarrollador en producción (grabador 18s e instrumentación)"
+                onClick={handleToggleDevMode}
+                className="chip"
+                style={{
+                  cursor: 'pointer',
+                  border: `1px solid ${
+                    devMode ? 'var(--accent-primary)' : 'var(--input-border)'
+                  }`,
+                  background: devMode ? 'var(--accent-primary-bg)' : 'var(--input-bg)',
+                  color: devMode ? 'var(--accent-primary)' : 'var(--text-color)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                }}
+              >
+                <Wrench size={13} aria-hidden="true" />
+                <span>{devMode ? 'Modo Dev: On' : 'Modo Dev'}</span>
+              </button>
             </div>
           </div>
+
+          {devMode ? (
+            <>
+              <Profiler id="dev_recorder" onRender={onDevProfilerRender}>
+                <DevRecorder engineRef={engineRef} videoRef={videoRef} enabled={devMode} />
+              </Profiler>
+              <DevInstrumentationPanel
+                engineRef={engineRef}
+                devSnapshot={devSnapshot}
+                onRefreshSnapshot={refreshDevSnapshot}
+                enabled={devMode}
+              />
+            </>
+          ) : null}
 
           <div className="video-container" style={{ position: 'relative' }}>
             <video
@@ -894,7 +992,7 @@ const Translator = () => {
                   className="translation-placeholder"
                   style={{ margin: 0 }}
                 >
-                  Esperando señas frente a la cámara...
+                  Esperando señas frente a la cámara…
                 </p>
                 <span
                   style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', maxWidth: '320px' }}
@@ -941,9 +1039,9 @@ const Translator = () => {
                       padding: '0.18rem 0.55rem',
                       borderRadius: 'var(--radius-sm)',
                       fontWeight: 600,
-                      background: isExt ? 'rgba(16, 185, 129, 0.18)' : 'var(--input-bg)',
-                      color: isExt ? '#10B981' : 'var(--text-muted)',
-                      border: `1px solid ${isExt ? '#10B981' : 'var(--panel-border)'}`,
+                      background: isExt ? 'var(--success-bg)' : 'var(--input-bg)',
+                      color: isExt ? 'var(--success-color)' : 'var(--text-muted)',
+                      border: `1px solid ${isExt ? 'var(--success-color)' : 'var(--panel-border)'}`,
                     }}
                   >
                     {f.label}
@@ -1000,7 +1098,7 @@ const Translator = () => {
               ))}
             </div>
 
-            {!CONFIG.isProdBuild && (
+            {devMode && (
               <div
                 data-testid="dev-fixture-recorder"
                 style={{
@@ -1098,6 +1196,14 @@ const Translator = () => {
         </section>
       )}
     </div>
+  );
+
+  return devMode ? (
+    <Profiler id="translator" onRender={onDevProfilerRender}>
+      {content}
+    </Profiler>
+  ) : (
+    content
   );
 };
 

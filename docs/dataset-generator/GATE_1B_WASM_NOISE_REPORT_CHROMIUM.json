@@ -1,0 +1,15 @@
+{
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.8127.18 Safari/537.36",
+  "numFrames": 30,
+  "framesDetectedHand": 30,
+  "framesDetectedPose": 30,
+  "totalPointsEvaluated": 630,
+  "maxLandmarkNoise": 0,
+  "meanLandmarkNoise": 0,
+  "stdLandmarkNoise": 0,
+  "labelMismatches": 0,
+  "totalPosePointsEvaluated": 990,
+  "maxPoseNoise": 0,
+  "meanPoseNoise": 0,
+  "browser": "chromium"
+}

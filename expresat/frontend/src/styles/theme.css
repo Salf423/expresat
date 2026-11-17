@@ -3,8 +3,7 @@
    ExpresaT v2.0 — Mobile-First, WCAG 2.2 AA, Glassmorphism
    ============================================================ */
 
-/* ── Google Inter Variable Font Fallback ── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..800;1,14..32,300..800&display=swap');
+/* ── Tipografía local con fallback del sistema (100% offline) ── */
 
 /* ── LIGHT THEME ─────────────────────────────────────────── */
 :root {

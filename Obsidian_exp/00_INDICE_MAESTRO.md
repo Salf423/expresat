@@ -1,12 +1,13 @@
 ---
 title: "Índice Maestro de Arquitectura y Documentación — ExpresaT"
 description: "Centro neurálgico de navegación técnica, mapa de arquitectura, asignación de skills y grafo de dependencias para desarrolladores y agentes de IA."
-version: "2.0.0"
+version: "2.2.1"
 category: "Índice Central"
 status: "Producción"
 target_agents: ["all"]
 related_docs:
   - "[[Caracteristicas]]"
+  - "[[Especificacion_Feature_Spec_v1_2_1]]"
   - "[[Estructura del proyecto]]"
   - "[[Flujo de datos]]"
   - "[[Websocket]]"
@@ -31,6 +32,7 @@ flowchart TD
     
     subgraph Arquitectura_Core ["1. Fundamentos y Especificaciones"]
         Caract["[[Caracteristicas]]\nEspecificación de IA & Features 178D"]
+        FSpec["[[Especificacion_Feature_Spec_v1_2_1]]\nFEATURE_SPEC v1.2.1 (Canónico)"]
         Estruct["[[Estructura del proyecto]]\nOrganización del Repositorio"]
         Flujo["[[Flujo de datos]]\nPipeline de Streaming & Ventana Temporal"]
         WS["[[Websocket]]\nProtocolo de Comunicación en Tiempo Real"]
@@ -44,9 +46,10 @@ flowchart TD
     subgraph Modulos_Codigo ["3. Desglose del Código Fuente"]
         BE_Py["[[Explicacion del codigo/Backend/Python_FastAPI|Backend Python FastAPI]]"]
         BE_Cpp["[[Explicacion del codigo/Backend/Main C++|Motor Nativo C++]]"]
-        FE_React["[[Explicacion del codigo/Frontend/Vite_React|Frontend Vite + React]]"]
+        FE_React["[[Explicacion del codigo/Frontend/Vite_React|Frontend Vite + React 19]]"]
         FE_Native["[[Explicacion del codigo/Frontend|Frontend Nativo ImGui / Android]]"]
-        Dataset_Gen["[[Explicacion del codigo/Dataset_Generator/Cpp_Generator|Generador de Datasets C++]]"]
+        Dataset_Gen["[[Explicacion del codigo/Dataset_Generator/Cpp_Generator|Dataset Generator C++ (Legacy)]]"]
+        Dataset_Gen_v2["[[Explicacion del codigo/Dataset_Generator/06_Arquitectura_Dataset_Generator_v2|Dataset Generator v2 (Web+Python)]]"]
         Model_Train["[[Explicacion del codigo/Funciones_Modelo/Training_and_Inference|Entrenamiento e Inferencia]]"]
     end
 
@@ -80,9 +83,10 @@ flowchart TD
 | Documento | Audiencia Principal | Propósito Técnico | Skills Sugeridas |
 |---|---|---|---|
 | **[[Caracteristicas]]** | ML Engineers, Backend Devs | Especificación del vector de 178 características, normalización respecto a hombros, arquitectura PyTorch `SignLanguageGRU` y cuantización INT8. | `ml-engineer`, `mlops-engineer` |
+| **[[Especificacion_Feature_Spec_v1_2_1]]** | ML, C++, Frontend Devs | Contrato estricto v1.2.1: normalización 3D, Z relativo a muñeca en manos, asignación conjunta húngara, códigos de error y suite TC-01..TC-05C ($10^{-6}$). | `ml-engineer`, `cpp-pro`, `react-modernization` |
 | **[[Estructura del proyecto]]** | Todos los desarrolladores y agentes | Descripción exhaustiva del árbol de directorios, roles de cada carpeta, dependencias y enlaces entre módulos. | `c4-architecture-c4-architecture`, `dx-optimizer` |
-| **[[Flujo de datos]]** | Arquitectos, Agentes de streaming | Diagrama de flujo de datos extremo a extremo (cámara → MediaPipe → buffer 15 frames → WebSocket / IPC → ONNX Runtime → UI). | `microservices-patterns`, `async-python-patterns` |
-| **[[Websocket]]** | Backend Devs, Agentes de Red | Especificación completa del protocolo WebSocket (Batch mode vs Stream mode), payloads JSON, autenticación Supabase y keep-alive. | `fastapi-pro`, `backend-security-coder` |
+| **[[Flujo de datos]]** | Arquitectos, Agentes de streaming | Diagrama de flujo de datos extremo a extremo (cámara → SignEngine Tasks Vision → buffer 15 frames → WebSocket / IPC → ONNX Runtime → UI). | `microservices-patterns`, `async-python-patterns` |
+| **[[Websocket]]** | Backend Devs, Agentes de Red | Especificación completa del protocolo WebSocket (Batch mode vs Stream mode), payloads JSON, máquina de estados `WSClient` y autenticación. | `fastapi-pro`, `backend-security-coder` |
 | **[[Deploys]]** | DevOps, Cloud Engineers | Runbook para despliegues en Docker (FastAPI), Netlify (Vite React), Supabase (PostgreSQL/Auth) y binarios nativos (CMake/Android). | `deployment-pipeline-design`, `github-actions-templates` |
 | **[[Plan de negocio de EXPRESAT]]** | Product Managers, Founders | Estrategia de producto Open-Core, análisis de mercado TAM/SAM/SOM, modelo de suscripción (50-600 MXN) y costes de inferencia. | `startup-business-analyst-business-case`, `competitive-landscape` |
 | **[[Skills/00_Matriz_General_Skills]]** | Agentes Autónomos | Catálogo maestro y carpetas de habilidades instaladas en el entorno local (`~/.gemini/config/skills/`). | `antigravity-skills-manager`, `agent-orchestration-improve-agent` |
@@ -91,8 +95,9 @@ flowchart TD
 
 ## 💻 Desglose Técnico por Componente de Código
 
-### 1. Generador de Datasets en C++ (`expresat-dataset-generator`)
-- **Resumen:** [[Explicacion del codigo/Dataset_Generator/Cpp_Generator]]
+### 1. Generador de Datasets (v1 C++ Legacy & v2 Web+Python)
+- **Dataset Generator v2 (Plan v2.2.1):** [[Explicacion del codigo/Dataset_Generator/06_Arquitectura_Dataset_Generator_v2]]
+- **Resumen C++ v1:** [[Explicacion del codigo/Dataset_Generator/Cpp_Generator]]
 - **Compilación y CMake:** [[Explicacion del codigo/Dataset_Generator/01_Arquitectura_y_Compilacion]]
 - **Normalización 178D y Landmarks:** [[Explicacion del codigo/Dataset_Generator/02_Extraccion_y_Normalizacion]]
 - **Aumentación Estocástica de Datos:** [[Explicacion del codigo/Dataset_Generator/03_Motor_Aumentacion_Sintetica]]
@@ -100,13 +105,14 @@ flowchart TD
 - **Serialización JSON y CI/CD:** [[Explicacion del codigo/Dataset_Generator/05_Serializacion_JSON_y_CICD]]
 
 ### 2. Frontend (Web y Nativo)
-- **Visión General Nativa:** [[Explicacion del codigo/Frontend]]
-- **Frontend Moderno (React + Vite):** [[Explicacion del codigo/Frontend/Vite_React]]
+- **Frontend Moderno (React 19 + Vite):** [[Explicacion del codigo/Frontend/Vite_React]] (SignEngine Tasks Vision CPU, hook useSignEngine, featureExtractor.js, clasificador geométrico)
+- **Visión General Nativa (ImGui / Android):** [[Explicacion del codigo/Frontend]]
 - **Frontend Clásico (Vanilla JS):** [[Explicacion del codigo/Frontend/Legacy_Vanilla]]
 
 ### 3. Backend e Inferencia
 - **Servidor Python (FastAPI):** [[Explicacion del codigo/Backend/Python_FastAPI]]
-- **Motor C++ de Inferencia Nativa:** [[Explicacion del codigo/Backend/Main C++]]
+- **Motor C++ de Inferencia Nativa:** [[Explicacion del codigo/Backend/Main C++]] (Alineado con FEATURE_SPEC v1.2.1)
+- **Extractor Canónico y Validación Spec:** `expresat/models/feature_extractor.py` y `tests/test_feature_spec.py`
 - **Pipeline de Entrenamiento y Exportación:** [[Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION]]
 - **Motor de Inferencia ONNX Runtime:** [[Explicacion del codigo/Funciones_Modelo/INFERENCIA]]
 - **Resumen Inferencia y Entrenamiento:** [[Explicacion del codigo/Funciones_Modelo/Training_and_Inference]]
@@ -118,7 +124,12 @@ flowchart TD
 Si eres un agente de IA operando en este repositorio:
 1. **Regla de Contexto:** Antes de modificar un archivo en `expresat/` o `expresat-native/`, lee el documento correspondiente en este Vault.
 2. **Invariantes del Sistema:**
-   - La red `SignLanguageGRU` espera tensores de entrada de dimensiones exactas `(1, 15, 178)`.
-   - La normalización se realiza tomando como origen el centro de los hombros (`(pose[11] + pose[12]) / 2`).
-   - El modelo ONNX cuantizado en producción es `expresat_gru_int8.onnx`.
+   - La red `SignLanguageGRU` espera tensores de entrada de dimensiones exactas `(1, 15, 178)` en `float32`.
+   - **Normalización Canónica (FEATURE_SPEC v1.2.1):**
+     - Origen: centroide 3D de los hombros (`(pose[11] + pose[12]) / 2`).
+     - Escala: distancia euclidiana 3D inter-humeral $D = \text{dist3D}(P_{11}, P_{12})$. Mínimo admisible $D \ge 0.08$.
+     - Desacoplamiento de Manos: en el eje $Z$, las manos se normalizan respecto a su propia muñeca ($z'_i = (z_i - z_{wrist}) / D$) para garantizar invarianza exacta a traslación 3D.
+     - Manos ausentes: **63 ceros exactos (`0.0f`)**.
+     - Cuarentena: Prohibido entrenar con `dataset/quarantine/letra_a_derecha_2.json`.
+   - El modelo ONNX cuantizado en producción es `expresat_gru_int8.onnx` con verificación de `feature_spec_version = "1.2.1"`.
 3. **Consulta de Habilidades:** Acude a [[Skills/00_Matriz_General_Skills]] para identificar las habilidades idóneas antes de realizar refactorizaciones o auditorías.

@@ -26,6 +26,14 @@ from typing import Optional
 
 import numpy as np
 
+try:
+    from models.feature_extractor import extract_window, FEATURE_SPEC_VERSION
+except ImportError:
+    try:
+        from feature_extractor import extract_window, FEATURE_SPEC_VERSION
+    except ImportError:
+        from expresat.models.feature_extractor import extract_window, FEATURE_SPEC_VERSION
+
 
 # =============================================================================
 # CONSTANTES — Deben coincidir con train_and_export.py
@@ -166,56 +174,17 @@ class InferenceEngine:
 
     def preprocess_batch(self, raw_frames: list[dict]) -> np.ndarray:
         """
-        Preprocesa un lote de 15 frames crudos de MediaPipe.
-
-        Pipeline de preprocesamiento:
-          1. Extraer landmarks relevantes (pose superior, manos)
-          2. Normalizar coordenadas relativas a punto central (hombros)
-          3. Manejar landmarks faltantes (zero-fill)
-          4. Ensamblar tensor final de forma (1, 15, NUM_FEATURES)
-
-        Args:
-            raw_frames: Lista de 15 diccionarios, cada uno con:
-                - "pose": lista de 33 landmarks [{x, y, z}, ...]
-                - "leftHand": lista de 21 landmarks o null
-                - "rightHand": lista de 21 landmarks o null
+        Preprocesa una secuencia de frames crudos usando ExtractWindow canónico v1.2.2.
 
         Returns:
             np.ndarray de forma (1, 15, 178) dtype float32
+        Raises:
+            ValueError: Si la validación falla (cero caídas silenciosas a coordenadas crudas).
         """
-        processed_frames = np.zeros(
-            (SEQUENCE_LENGTH, NUM_FEATURES), dtype=np.float32
-        )
-
-        num_frames = min(len(raw_frames), SEQUENCE_LENGTH)
-
-        for i in range(num_frames):
-            frame = raw_frames[i]
-            if frame is None:
-                continue
-
-            # --- Extraer pose superior ---
-            pose_features = self._extract_pose_upper(frame.get("pose"))
-
-            # --- Extraer manos ---
-            left_hand_features = self._extract_hand(frame.get("leftHand"))
-            right_hand_features = self._extract_hand(frame.get("rightHand"))
-
-            # --- Concatenar features del frame ---
-            frame_features = np.concatenate([
-                pose_features, left_hand_features, right_hand_features
-            ])
-
-            # --- Normalización relativa a los hombros ---
-            if frame.get("pose") and len(frame["pose"]) > 12:
-                frame_features = self._normalize_to_shoulders(
-                    frame_features, frame["pose"]
-                )
-
-            processed_frames[i] = frame_features
-
-        # Expandir dimensión de batch: (15, 178) → (1, 15, 178)
-        return np.expand_dims(processed_frames, axis=0)
+        tensor, valid, error = extract_window(raw_frames)
+        if not valid or tensor is None:
+            raise ValueError(f"Preprocesamiento de inferencia falló: {error} (prohibido caer a coordenadas crudas)")
+        return tensor
 
     def _extract_pose_upper(self, pose_landmarks: Optional[list]) -> np.ndarray:
         """
@@ -354,14 +323,23 @@ class InferenceEngine:
         """
         start_time = time.perf_counter()
 
-        # 1. Preprocesar
-        input_tensor = self.preprocess_batch(raw_frames)
+        # 1. Preprocesar con extract_window canónico v1.2.2 (sin caídas silenciosas a crudo)
+        tensor, valid, error = extract_window(raw_frames)
+        if not valid or tensor is None:
+            return {
+                "label": None,
+                "confidence": 0.0,
+                "valid": False,
+                "error": error,
+                "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+                "all_probabilities": {},
+            }
 
         # 2. Inferir (thread-safe)
         with self._lock:
             logits = self.session.run(
                 None,
-                {self._input_name: input_tensor}
+                {self._input_name: tensor}
             )[0]  # Shape: (1, num_classes)
 
         # 3. Post-procesar

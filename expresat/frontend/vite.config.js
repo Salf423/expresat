@@ -1,7 +1,20 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+
+function resolveDevGitCommitShort() {
+  try {
+    const hash = execSync('git rev-parse --short HEAD', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return hash || 'nogit';
+  } catch {
+    return 'nogit';
+  }
+}
 
 /**
  * Serves WASM (.wasm / .js) and MediaPipe model (.task) assets from public/
@@ -33,12 +46,16 @@ function servePublicWasmAndModelsPlugin() {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(() => ({
   plugins: [react(), servePublicWasmAndModelsPlugin()],
+
+  define: {
+    'import.meta.env.VITE_DEV_GIT_COMMIT': JSON.stringify(resolveDevGitCommitShort()),
+  },
 
   // Ensure WASM files from @mediapipe/tasks-vision are served with the correct
   // Content-Type and are not mangled by the bundler.
   optimizeDeps: {
     exclude: ['@mediapipe/tasks-vision'],
   },
-});
+}));

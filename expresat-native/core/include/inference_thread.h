@@ -17,6 +17,9 @@ class SessionOptions;
 
 namespace expresat {
 
+// Estado de conformidad formal con FEATURE_SPEC v1.3.0
+constexpr const char* CPP_FEATURE_SPEC_CONFORMANCE = "NO_CONFORME_FEATURE_SPEC_1_3_0";
+
 // Dedicated inference pipeline: consumes frames, extracts landmarks, runs ONNX
 // GRU model, publishes results.
 class InferenceThread {
@@ -59,9 +62,11 @@ private:
   static std::array<float, HAND_POINTS * HAND_COORDS>
   extract_hand(const std::vector<HandLandmark> &hand);
 
-  static void normalize_to_shoulders(float *features, int n,
+  static bool normalize_to_shoulders(float *features, int n,
                                      const PoseLandmark &left_shoulder,
-                                     const PoseLandmark &right_shoulder);
+                                     const PoseLandmark &right_shoulder,
+                                     const std::vector<HandLandmark> &left_hand,
+                                     const std::vector<HandLandmark> &right_hand);
 
   static std::vector<float> softmax(const std::vector<float> &logits);
 

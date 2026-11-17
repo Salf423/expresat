@@ -132,4 +132,35 @@ describe('engine/SignEngine — Ciclo de vida, cleanup idempotente y FPS reales'
       });
     }
   });
+
+  it('soporta smoothLandmarks: false y expone framePayload.raw intacto', () => {
+    const engine = new SignEngine({ smoothLandmarks: false });
+    let emitted = null;
+    engine.onFrame((payload) => {
+      emitted = payload;
+    });
+
+    const rawPose = [{ x: 0.5, y: 0.5, z: 0.1, visibility: 0.95 }];
+    const rawHands = [[{ x: 0.6, y: 0.7, z: 0.05 }]];
+    const rawHandedness = [[{ categoryName: 'Right', score: 0.98 }]];
+
+    engine._dispatchNormalizedResults({
+      pose: rawPose,
+      hands: rawHands,
+      handedness: rawHandedness,
+      timestamp: 1000,
+      latencyMs: 5.2,
+    });
+
+    expect(emitted).not.toBeNull();
+    // smoothLandmarks: false => hands coincide exactamente con las crudas
+    expect(emitted.hands[0][0].x).toBe(0.6);
+    expect(emitted.hands[0][0].y).toBe(0.7);
+
+    // framePayload.raw expone las detecciones crudas
+    expect(emitted.raw).toBeDefined();
+    expect(emitted.raw.hands[0][0].x).toBe(0.6);
+    expect(emitted.raw.pose[0].x).toBe(0.5);
+    expect(emitted.raw.pose[0].visibility).toBe(0.95);
+  });
 });

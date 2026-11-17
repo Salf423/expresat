@@ -188,9 +188,11 @@ async def run_inference_async(engine, raw_frames):
    proxy_read_timeout 3600s;
    proxy_send_timeout 3600s;
    ```
-2. **Reconexión Automática en el Cliente (`apiService.js`):**
-   El cliente implementa reconexión exponencial con retroceso (*exponential backoff* con jitter) en caso de caída temporal del enlace de red.
-3. **Alternativa Nativa (IPC Sin Red):**
+2. **Cliente WebSocket con Máquina de Estados (`wsClient.js`):**
+   El cliente web implementa una máquina de estados finitos explícita (`CONNECTING`, `OPEN`, `CLOSING`, `CLOSED`), reconexión automática con *exponential backoff*, control de heartbeats periódicos (ping/pong) y degradación suave (*fallback*) a modo demostración si el backend no responde.
+3. **Validación de Origen en Backend (`config.py`):**
+   El servidor FastAPI valida los orígenes permitidos en el handshake del socket, rechazando orígenes no autorizados o conexiones maliciosas de terceros.
+4. **Alternativa Nativa (IPC Sin Red):**
    En la aplicación C++ `expresat-native`, este protocolo de red es reemplazado por colas circulares en memoria (*lock-free SPSC*), eliminando el protocolo WebSocket y reduciendo el transporte a 0 milisegundos.
 
 ---

@@ -60,7 +60,7 @@
             }
           }
         ],
-        "currentTab": 3
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -221,8 +221,9 @@
       "bases:Crear nueva base": false
     }
   },
-  "active": "ccbc9bc0f59d3ca8",
+  "active": "697953536875490f",
   "lastOpenFiles": [
+    "file:/home/adrian/Descargas/proyecto final (1).md",
     "file:/home/adrian/Descargas/ADRIAN_SAUL_FLORES_CRUZ_2427..md",
     "Estructura del proyecto.md",
     "Skills/UI_UX_y_Frontend.md",
@@ -249,7 +250,6 @@
     "Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md",
     "Explicacion del codigo/Backend/Main C++.md",
     "Caracteristicas.md",
-    "Websocket.md",
     "Explicacion del codigo/Backend",
     "Explicacion del codigo/Funciones_Modelo",
     "Explicacion del codigo"

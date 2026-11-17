@@ -1,0 +1,152 @@
+{
+  "catalog_version": "1.3.0",
+  "descripcion": "Catálogo formal de señas de Lengua de Señas Mexicana (LSM) — ExpresaT",
+  "duracion_maxima_toma_ms": 2500,
+  "requisito_estatica_estabilidad_ms": 1200,
+  "signos": [
+    {
+      "id": "reposo",
+      "glosa": "REPOSO",
+      "modo": "estatica",
+      "manos_requeridas": 0,
+      "descripcion": "Brazos abajo en posición neutra de descanso sin formar seña activa",
+      "fuente": "Clase base neutra del sistema ExpresaT",
+      "nota": "Capturada físicamente con el firmante en reposo postural"
+    },
+    {
+      "id": "hola",
+      "glosa": "HOLA",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Mano dominante en configuración B cerca de la sien moviéndose hacia afuera",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "gracias",
+      "glosa": "GRACIAS",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Dedo medio de mano dominante toca barbilla/pecho y se proyecta hacia adelante",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "por_favor",
+      "glosa": "POR_FAVOR",
+      "modo": "dinamica",
+      "manos_requeridas": 2,
+      "descripcion": "Palmas unidas al frente del pecho en movimiento suave descendente o frotamiento",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "adios",
+      "glosa": "ADIOS",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Mano abierta oscilando lateralmente al nivel del hombro",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "si",
+      "glosa": "SI",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Mano en configuración I o puño oscilando en flexión hacia abajo",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "no",
+      "glosa": "NO",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Dedos índice y medio se unen con el pulgar repetidamente",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "ayuda",
+      "glosa": "AYUDA",
+      "modo": "dinamica",
+      "manos_requeridas": 2,
+      "descripcion": "Mano base en palma hacia arriba, mano dominante en puño A apoyada y empujando hacia arriba/adelante",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "bien",
+      "glosa": "BIEN",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Mano en barbilla que se abre proyectándose hacia el frente",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "mal",
+      "glosa": "MAL",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Mano sale de barbilla girando bruscamente hacia abajo",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "nombre",
+      "glosa": "NOMBRE",
+      "modo": "dinamica",
+      "manos_requeridas": 2,
+      "descripcion": "Dedos índice y medio de ambas manos en configuración H se cruzan o tocan",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "como_estas",
+      "glosa": "COMO_ESTAS",
+      "modo": "dinamica",
+      "manos_requeridas": 2,
+      "descripcion": "Manos en configuración C o palmas cóncavas rotando al frente",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "mucho_gusto",
+      "glosa": "MUCHO_GUSTO",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Palma en pecho frotando circularmente en el corazón",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "perdon",
+      "glosa": "PERDON",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Mano en barbilla o pecho con movimiento de disculpa",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "agua",
+      "glosa": "AGUA",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Configuración W tocando la barbilla",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    },
+    {
+      "id": "comida",
+      "glosa": "COMIDA",
+      "modo": "dinamica",
+      "manos_requeridas": 1,
+      "descripcion": "Yemas de los dedos juntas llevándose a la boca repetidamente",
+      "fuente": "PENDIENTE_FUENTE",
+      "nota": "Pendiente de validación bibliográfica con enlace público verificable"
+    }
+  ]
+}
