@@ -59,35 +59,38 @@ const BackgroundParticles = () => {
     }
 
     function animate() {
-      // Freeze rendering loop when camera is active or tab is hidden
-      if (!isPausedRef.current && !document.hidden) {
-        ctx.clearRect(0, 0, width, height);
+      // Stop rAF completely when camera is active or tab is hidden (zero empty ticks)
+      if (isPausedRef.current || document.hidden) {
+        animationFrameIdRef.current = null;
+        return;
+      }
 
-        particles.forEach(p => {
-          p.update();
-          p.draw();
-        });
+      ctx.clearRect(0, 0, width, height);
 
-        // Particle connections calculation O(N²)
-        for (let i = 0; i < particles.length; i++) {
-          for (let j = i + 1; j < particles.length; j++) {
-            const dx = particles[i].x - particles[j].x;
-            const dy = particles[i].y - particles[j].y;
-            const distSq = dx * dx + dy * dy;
-            if (distSq < 14400) { // 120² = 14400
-              const dist = Math.sqrt(distSq);
-              if (isDark) {
-                ctx.strokeStyle = `rgba(255,255,255, ${Math.max(0, 0.4 - dist / 300)})`;
-                ctx.lineWidth = 1;
-              } else {
-                ctx.strokeStyle = `rgba(114, 9, 183, ${Math.max(0, 0.85 - dist / 150)})`;
-                ctx.lineWidth = 1.2;
-              }
-              ctx.beginPath();
-              ctx.moveTo(particles[i].x, particles[i].y);
-              ctx.lineTo(particles[j].x, particles[j].y);
-              ctx.stroke();
+      for (let i = 0; i < particles.length; i++) {
+        particles[i].update();
+        particles[i].draw();
+      }
+
+      // Particle connections calculation O(N²)
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const distSq = dx * dx + dy * dy;
+          if (distSq < 14400) { // 120² = 14400
+            const dist = Math.sqrt(distSq);
+            if (isDark) {
+              ctx.strokeStyle = `rgba(255,255,255, ${Math.max(0, 0.4 - dist / 300)})`;
+              ctx.lineWidth = 1;
+            } else {
+              ctx.strokeStyle = `rgba(114, 9, 183, ${Math.max(0, 0.85 - dist / 150)})`;
+              ctx.lineWidth = 1.2;
             }
+            ctx.beginPath();
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.stroke();
           }
         }
       }
@@ -103,23 +106,42 @@ const BackgroundParticles = () => {
     };
     window.addEventListener('resize', handleResize);
 
-    // Event listener to pause particles when camera stream starts
+    // Cancel rAF immediately when camera stream starts to eliminate idle ticks during inference
     const handleCameraActive = (e) => {
-      isPausedRef.current = e.detail === true;
+      const active = e.detail === true;
+      isPausedRef.current = active;
+      if (active) {
+        if (animationFrameIdRef.current !== null) {
+          cancelAnimationFrame(animationFrameIdRef.current);
+          animationFrameIdRef.current = null;
+        }
+      } else if (!reducedMotion && !document.hidden && animationFrameIdRef.current === null) {
+        animate();
+      }
     };
     window.addEventListener('camera-active', handleCameraActive);
 
-    // Pause animation when tab loses focus
+    // Cancel rAF when tab loses focus and resume cleanly on return (respecting reduced-motion)
     const handleVisibilityChange = () => {
-      if (!document.hidden && !animationFrameIdRef.current) {
+      if (document.hidden && animationFrameIdRef.current !== null) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+        animationFrameIdRef.current = null;
+      } else if (
+        !reducedMotion &&
+        !document.hidden &&
+        !isPausedRef.current &&
+        animationFrameIdRef.current === null
+      ) {
         animate();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      cancelAnimationFrame(animationFrameIdRef.current);
-      animationFrameIdRef.current = null;
+      if (animationFrameIdRef.current !== null) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+        animationFrameIdRef.current = null;
+      }
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('camera-active', handleCameraActive);
       document.removeEventListener('visibilitychange', handleVisibilityChange);

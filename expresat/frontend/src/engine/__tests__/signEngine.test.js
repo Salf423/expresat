@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SignEngine, ENGINE_ERROR_CODES } from '../index.js';
+import * as signEngineMod from '../signEngine.js';
 
 describe('engine/SignEngine — Ciclo de vida, cleanup idempotente y FPS reales', () => {
   it('es idempotente ante múltiples llamadas a stop() y doble montaje StrictMode', async () => {
@@ -157,10 +158,81 @@ describe('engine/SignEngine — Ciclo de vida, cleanup idempotente y FPS reales'
     expect(emitted.hands[0][0].x).toBe(0.6);
     expect(emitted.hands[0][0].y).toBe(0.7);
 
-    // framePayload.raw preserves original unsmoothed detections
+    // framePayload.raw preserves original unsmoothed detections via lazy getter
+    const rawDesc = Object.getOwnPropertyDescriptor(emitted, 'raw');
+    expect(typeof rawDesc?.get).toBe('function');
     expect(emitted.raw).toBeDefined();
     expect(emitted.raw.hands[0][0].x).toBe(0.6);
     expect(emitted.raw.pose[0].x).toBe(0.5);
     expect(emitted.raw.pose[0].visibility).toBe(0.95);
+    // Direct v1.4.0 laterality: 'Right' -> rightHand
+    expect(emitted.rightHand).not.toBeNull();
+    expect(emitted.leftHand).toBeNull();
+  });
+
+  it('deduplica frames repetidos por video.currentTime y envía { rotationDegrees: 0 } directo como 3er argumento', async () => {
+    const engine = new SignEngine({ targetFps: 30, enablePose: true, smoothLandmarks: false });
+    const handDetect = vi.fn().mockReturnValue({ landmarks: [], handedness: [] });
+    const poseDetect = vi.fn().mockReturnValue({ landmarks: [] });
+
+    engine._running = true;
+    engine._runId = 1;
+    engine._handLandmarker = { detectForVideo: handDetect };
+    engine._poseLandmarker = { detectForVideo: poseDetect };
+
+    const fakeVideo = {
+      readyState: 4,
+      videoWidth: 640,
+      videoHeight: 480,
+      currentTime: 0.1,
+    };
+    engine._videoElement = fakeVideo;
+
+    // Stub _scheduleNextTick to avoid real rAF recursion in Node/Vitest
+    engine._scheduleNextTick = () => {};
+
+    // First tick at t=100ms (currentTime=0.10) -> runs inference
+    await engine._tick(100, 1);
+    expect(handDetect).toHaveBeenCalledTimes(1);
+    expect(poseDetect).toHaveBeenCalledTimes(1);
+    expect(handDetect.mock.calls[0][2]).toEqual({ rotationDegrees: 0 });
+    expect(poseDetect.mock.calls[0][2]).toEqual({ rotationDegrees: 0 });
+
+    // Second tick at t=200ms with SAME currentTime=0.10 -> MUST NOT re-infer duplicate frame
+    await engine._tick(200, 1);
+    expect(handDetect).toHaveBeenCalledTimes(1);
+    expect(poseDetect).toHaveBeenCalledTimes(1);
+
+    // Third tick at t=250ms with NEW currentTime=0.15 -> runs inference once more
+    fakeVideo.currentTime = 0.15;
+    await engine._tick(250, 1);
+    expect(handDetect).toHaveBeenCalledTimes(2);
+    expect(poseDetect).toHaveBeenCalledTimes(2);
+  });
+
+  it('valida relación de aspecto 4:3 ± 0.05 y emite ERR_INVALID_ASPECT_RATIO en 16:9', () => {
+    expect(ENGINE_ERROR_CODES.INVALID_ASPECT_RATIO).toBe('ERR_INVALID_ASPECT_RATIO');
+    expect(typeof signEngineMod.validateVideoAspectRatio).toBe('function');
+
+    expect(signEngineMod.validateVideoAspectRatio(640, 480).valid).toBe(true);
+    expect(signEngineMod.validateVideoAspectRatio(800, 600).valid).toBe(true);
+    expect(signEngineMod.validateVideoAspectRatio(1280, 720).valid).toBe(false);
+
+    const engine = new SignEngine();
+    const errors = [];
+    engine.onError((e) => errors.push(e));
+
+    expect(engine._checkVideoAspectRatio(1280, 720)).toBe(false);
+    expect(errors.length).toBe(1);
+    expect(errors[0].code).toBe('ERR_INVALID_ASPECT_RATIO');
+    // Only emitted once per run
+    expect(engine._checkVideoAspectRatio(1280, 720)).toBe(false);
+    expect(errors.length).toBe(1);
+  });
+
+  it('mantiene poseCadence=1 por defecto y umbrales de confianza HandLandmarker alineados a 0.50', () => {
+    const engine = new SignEngine({ enablePose: true });
+    expect(engine.poseCadence).toBe(1);
+    expect(engine.enablePose).toBe(true);
   });
 });

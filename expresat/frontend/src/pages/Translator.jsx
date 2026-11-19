@@ -73,7 +73,8 @@ const Translator = () => {
     canvasRef,
     trackingConfig,
     enableRemoteTransport: true,
-    enablePose: Boolean(import.meta.env.DEV),
+    enablePose: true,
+    telemetryDrawerOpen: showTelemetryDrawer,
   });
 
   // Keyboard shortcuts: Ctrl+Shift+D (Debug) and Ctrl+Shift+T (Tracker)

@@ -1,12 +1,14 @@
 /**
  * React hook integrating SignEngine, Classifier (GeometricClassifier), and WSClient.
  *
- * Guarantees:
+ * Guarantees (FEATURE_SPEC v1.4.0):
  * - Tracking and geometric recognition run locally in the browser without backend or login.
  * - Idempotent cleanup under React 19 StrictMode (no leaked camera streams or AbortError).
  * - Separate real FPS counters (`cameraFps` and `inferenceFps`).
  * - Explicit WebSocket transport state (`idle | connecting | open | auth_error | failed`).
- * - No synchronous `setState` during render.
+ * - Sends unsmoothed `frameData.raw` with real monotonic `t_ms` in a time-bounded window
+ *   over WebSocket (eliminating double EMA and k=1..14 cloning).
+ * - Enables PoseLandmarker whenever neural remote transport or explicit pose mode is active.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -18,6 +20,96 @@ import { LandmarkTracker } from '../services/landmarkTracker.js';
 import { CONFIG, getActiveEndpoints } from '../config.js';
 import { renderCanvasFrame } from './drawLandmarks.js';
 
+const WS_WINDOW_RETENTION_MS = 1100;
+const WS_MIN_SPAN_MS = 1000 * (14 / 15); // 933.333... ms (zero tail extrapolation for v1.4.0)
+const WS_MIN_FRAMES = 12;
+const WS_MAX_BUFFER_FRAMES = 60;
+const TELEMETRY_UI_INTERVAL_MS = 250; // <= 4 Hz UI refresh when telemetry drawer is open
+
+export function resolveEnablePose({
+  enablePose = false,
+  enableRemoteTransport = false,
+  configEnablePose = false,
+} = {}) {
+  return Boolean(enablePose || enableRemoteTransport || configEnablePose);
+}
+
+/**
+ * Build a raw unsmoothed frame for backend WebSocket inference (`FEATURE_SPEC v1.4.0`).
+ * Preserves real monotonic `t_ms`, raw `pose`/`hands`/`handedness`, and direct `leftHand`/`rightHand`.
+ */
+export function buildWsInferenceFrame(frameData) {
+  const raw = frameData?.raw || frameData;
+  const tMs =
+    typeof frameData?.timestamp === 'number' && Number.isFinite(frameData.timestamp)
+      ? frameData.timestamp
+      : performance.now();
+
+  return {
+    t_ms: tMs,
+    pose: raw?.pose ?? null,
+    hands: Array.isArray(raw?.hands) ? raw.hands : [],
+    handedness: Array.isArray(raw?.handedness) ? raw.handedness : [],
+    leftHand: raw?.leftHand ?? null,
+    rightHand: raw?.rightHand ?? null,
+  };
+}
+
+/**
+ * Append a raw frame to the rolling WebSocket window buffer and prune stale entries.
+ * Returns `{ ready, spanMs }` indicating whether the buffer satisfies v1.4.0 window coverage.
+ */
+export function updateWsRollingBuffer(
+  buffer,
+  frameData,
+  windowRetentionMs = WS_WINDOW_RETENTION_MS,
+  maxFrames = WS_MAX_BUFFER_FRAMES
+) {
+  const entry = buildWsInferenceFrame(frameData);
+  buffer.push(entry);
+
+  const latestTs = entry.t_ms;
+  while (
+    buffer.length > WS_MIN_FRAMES &&
+    latestTs - buffer[0].t_ms > windowRetentionMs
+  ) {
+    buffer.shift();
+  }
+  while (buffer.length > maxFrames) {
+    buffer.shift();
+  }
+
+  const spanMs = buffer.length >= 2 ? buffer[buffer.length - 1].t_ms - buffer[0].t_ms : 0;
+  const ready = buffer.length >= WS_MIN_FRAMES && spanMs >= WS_MIN_SPAN_MS;
+  return { ready, spanMs };
+}
+
+function isSameRenderedGesture(prev, nextLabel, nextConfidence, nextSource, nextDetails) {
+  if (!prev) return false;
+  if (
+    prev.label !== nextLabel ||
+    prev.source !== nextSource ||
+    Math.round((prev.confidence || 0) * 100) !== Math.round((nextConfidence || 0) * 100)
+  ) {
+    return false;
+  }
+  const prevStates = prev.details?.states;
+  const nextStates = nextDetails?.states;
+  if (Boolean(prevStates) !== Boolean(nextStates)) return false;
+  if (prevStates && nextStates) {
+    if (
+      prevStates.thumb !== nextStates.thumb ||
+      prevStates.index !== nextStates.index ||
+      prevStates.middle !== nextStates.middle ||
+      prevStates.ring !== nextStates.ring ||
+      prevStates.pinky !== nextStates.pinky
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function useSignEngine({
   videoRef,
   canvasRef,
@@ -25,6 +117,7 @@ export function useSignEngine({
   classifierInstance = null,
   enableRemoteTransport = true,
   enablePose = false,
+  telemetryDrawerOpen = false,
 } = {}) {
   const [fps, setFps] = useState({ cameraFps: 0, inferenceFps: 0 });
   const [engineStatus, setEngineStatus] = useState({
@@ -61,12 +154,24 @@ export function useSignEngine({
   const trackerRef = useRef(null);
   const latestFrameRef = useRef(null);
   const trackingConfigRef = useRef(trackingConfig);
+  const telemetryDrawerOpenRef = useRef(Boolean(telemetryDrawerOpen));
+  const lastLandmarksCountRef = useRef(0);
+  const lastTelemetryUiMsRef = useRef(0);
   const wsBatchBufferRef = useRef([]);
   const lastWsSendTimeRef = useRef(0);
 
   useEffect(() => {
     trackingConfigRef.current = trackingConfig;
   }, [trackingConfig]);
+
+  useEffect(() => {
+    telemetryDrawerOpenRef.current = Boolean(telemetryDrawerOpen);
+    if (!telemetryDrawerOpen) {
+      setTelemetry(null);
+    } else if (trackerRef.current?.lastTelemetry) {
+      setTelemetry(trackerRef.current.lastTelemetry);
+    }
+  }, [telemetryDrawerOpen]);
 
   // 1. Initialize optional WebSocket transport (decoupled from vision engine)
   useEffect(() => {
@@ -75,6 +180,7 @@ export function useSignEngine({
     }
 
     let isMounted = true;
+    const wsBatchBuffer = wsBatchBufferRef.current;
     const authService = new AuthService();
     const endpoints = getActiveEndpoints();
     const wsClient = new WSClient({ url: endpoints.wsUrl });
@@ -83,6 +189,9 @@ export function useSignEngine({
     const unsubState = wsClient.onStateChange((snap) => {
       if (isMounted) {
         setWsSnapshot(snap);
+        if (snap.state !== WS_STATES.OPEN) {
+          wsBatchBufferRef.current.length = 0;
+        }
       }
     });
 
@@ -156,10 +265,17 @@ export function useSignEngine({
       unsubMsg();
       wsClient.disconnect();
       wsClientRef.current = null;
+      wsBatchBuffer.length = 0;
     };
   }, [enableRemoteTransport]);
 
   // 2. Initialize SignEngine (camera + main-thread MediaPipe) and GeometricClassifier
+  const resolvedEnablePose = resolveEnablePose({
+    enablePose,
+    enableRemoteTransport,
+    configEnablePose: CONFIG.enablePose,
+  });
+
   useEffect(() => {
     const videoEl = videoRef?.current;
     if (!videoEl) return undefined;
@@ -179,7 +295,7 @@ export function useSignEngine({
 
     const engine = new SignEngine({
       targetFps: CONFIG.targetFps,
-      enablePose: Boolean(enablePose || CONFIG.enablePose),
+      enablePose: resolvedEnablePose,
       modelComplexity: CONFIG.modelComplexity,
       backend: CONFIG.mediapipeBackend,
     });
@@ -225,14 +341,20 @@ export function useSignEngine({
       latestFrameRef.current = frameData;
 
       if (import.meta.env.DEV) devTel?.mark('expresat:ui_dispatch:start');
-      // Count detected landmarks (21 per hand + 33 if pose is present)
-      const handPts = (frameData.hands || []).reduce(
-        (acc, h) => acc + (Array.isArray(h) ? h.length : 0),
-        0
-      );
+      // Count detected landmarks (21 per hand + 33 if pose is present); avoid no-op setState
+      let handPts = 0;
+      const handsArr = frameData.hands;
+      if (Array.isArray(handsArr)) {
+        for (let i = 0; i < handsArr.length; i++) {
+          if (Array.isArray(handsArr[i])) handPts += handsArr[i].length;
+        }
+      }
       const posePts = Array.isArray(frameData.pose) ? frameData.pose.length : 0;
       const totalPts = handPts + posePts;
-      setLandmarksCount(totalPts);
+      if (totalPts !== lastLandmarksCountRef.current) {
+        lastLandmarksCountRef.current = totalPts;
+        setLandmarksCount(totalPts);
+      }
       if (import.meta.env.DEV && devTel) {
         const countSetMs = devTel.endAndMeasure(
           'expresat:stage:ui_dispatch:count',
@@ -244,13 +366,19 @@ export function useSignEngine({
         }
       }
 
-      // Update LandmarkTracker if enabled
+      // Update LandmarkTracker if enabled (skip heavy telemetry list when drawer is closed)
       if (trackingConfigRef.current?.enabled && canvasRef?.current) {
+        const drawerOpen = telemetryDrawerOpenRef.current;
+        const showTrails = Boolean(trackingConfigRef.current?.showTrails);
         if (import.meta.env.DEV) devTel?.mark('expresat:tracker:start');
         const snap = tracker.update(
           frameData,
           canvasRef.current.width,
-          canvasRef.current.height
+          canvasRef.current.height,
+          {
+            includeTelemetry: drawerOpen,
+            trackHistory: showTrails,
+          }
         );
         if (import.meta.env.DEV && devTel) {
           const trackerMs = devTel.endAndMeasure(
@@ -263,7 +391,13 @@ export function useSignEngine({
           }
           devTel.mark('expresat:ui_telemetry:start');
         }
-        setTelemetry(snap);
+        if (drawerOpen) {
+          const nowUi = performance.now();
+          if (nowUi - lastTelemetryUiMsRef.current >= TELEMETRY_UI_INTERVAL_MS) {
+            lastTelemetryUiMsRef.current = nowUi;
+            setTelemetry(snap);
+          }
+        }
         if (import.meta.env.DEV && devTel) {
           const telSetMs = devTel.endAndMeasure(
             'expresat:stage:ui_dispatch:telemetry',
@@ -298,27 +432,41 @@ export function useSignEngine({
         }
       }
 
-      // Local geometric classification in-browser (independent from backend)
+      // Local geometric classification in-browser (skip redundant setState when unchanged)
       if (import.meta.env.DEV) devTel?.mark('expresat:ui_gesture:start');
       const localPrediction = classifier.predict(frameData);
       if (localPrediction.label) {
-        setGesture({
-          label: localPrediction.label,
-          confidence: localPrediction.confidence,
-          source: 'local',
-          details: localPrediction.details,
-        });
-      } else if (frameData.hands.length === 0) {
-        // Refresh finger state details without clearing the last recognized label
-        setGesture((prev) => ({
-          ...prev,
-          details: localPrediction.details,
-        }));
+        setGesture((prev) =>
+          isSameRenderedGesture(
+            prev,
+            localPrediction.label,
+            localPrediction.confidence,
+            'local',
+            localPrediction.details
+          )
+            ? prev
+            : {
+                label: localPrediction.label,
+                confidence: localPrediction.confidence,
+                source: 'local',
+                details: localPrediction.details,
+              }
+        );
       } else {
-        setGesture((prev) => ({
-          ...prev,
-          details: localPrediction.details,
-        }));
+        setGesture((prev) =>
+          isSameRenderedGesture(
+            prev,
+            prev.label,
+            prev.confidence,
+            prev.source,
+            localPrediction.details
+          )
+            ? prev
+            : {
+                ...prev,
+                details: localPrediction.details,
+              }
+        );
       }
       if (import.meta.env.DEV && devTel) {
         const gestureUiMs = devTel.endAndMeasure(
@@ -331,25 +479,14 @@ export function useSignEngine({
         }
       }
 
-      // Buffer 15 frames and optionally send over WebSocket when OPEN
-      wsBatchBufferRef.current.push({
-        pose: frameData.pose,
-        leftHand: frameData.leftHand,
-        rightHand: frameData.rightHand,
-      });
-      if (wsBatchBufferRef.current.length > 15) {
-        wsBatchBufferRef.current.shift();
-      }
-
-      const now = performance.now();
-      if (
-        wsClientRef.current &&
-        wsClientRef.current.state === WS_STATES.OPEN &&
-        wsBatchBufferRef.current.length === 15 &&
-        now - lastWsSendTimeRef.current >= 500
-      ) {
-        lastWsSendTimeRef.current = now;
-        wsClientRef.current.sendLandmarks([...wsBatchBufferRef.current]);
+      // Buffer unsmoothed raw frames with real monotonic `t_ms` only when WS is OPEN
+      if (wsClientRef.current && wsClientRef.current.state === WS_STATES.OPEN) {
+        const { ready } = updateWsRollingBuffer(wsBatchBufferRef.current, frameData);
+        const now = performance.now();
+        if (ready && now - lastWsSendTimeRef.current >= 500) {
+          lastWsSendTimeRef.current = now;
+          wsClientRef.current.sendLandmarks(wsBatchBufferRef.current.slice());
+        }
       }
     });
 
@@ -367,7 +504,7 @@ export function useSignEngine({
       tracker.reset();
       engineRef.current = null;
     };
-  }, [videoRef, canvasRef, classifierInstance, enablePose]);
+  }, [videoRef, canvasRef, classifierInstance, resolvedEnablePose]);
 
   const reconnectTransport = useCallback(() => {
     if (wsClientRef.current) {

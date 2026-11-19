@@ -32,10 +32,32 @@ export const ENGINE_ERROR_CODES = Object.freeze({
   CAMERA_NOT_FOUND: 'CAMERA_NOT_FOUND',
   CAMERA_IN_USE: 'CAMERA_IN_USE',
   CAMERA_OVERCONSTRAINED: 'CAMERA_OVERCONSTRAINED',
+  INVALID_ASPECT_RATIO: 'ERR_INVALID_ASPECT_RATIO',
   WASM_LOAD_FAILED: 'WASM_LOAD_FAILED',
   MODEL_LOAD_FAILED: 'MODEL_LOAD_FAILED',
   ENGINE_RUNTIME_ERROR: 'ENGINE_RUNTIME_ERROR',
 });
+
+export const EXPECTED_ASPECT_RATIO = 4 / 3;
+export const ASPECT_RATIO_TOLERANCE = 0.05;
+
+/**
+ * Validate camera video dimensions against the canonical 4:3 (±0.05) FEATURE_SPEC v1.4.0 ratio.
+ * Returns `{ valid: true, ratio: null }` if metadata dimensions are not yet available.
+ */
+export function validateVideoAspectRatio(
+  videoWidth,
+  videoHeight,
+  expectedRatio = EXPECTED_ASPECT_RATIO,
+  tolerance = ASPECT_RATIO_TOLERANCE
+) {
+  if (!videoWidth || !videoHeight || videoWidth <= 0 || videoHeight <= 0) {
+    return { valid: true, ratio: null };
+  }
+  const ratio = videoWidth / videoHeight;
+  const valid = Math.abs(ratio - expectedRatio) <= tolerance;
+  return { valid, ratio };
+}
 
 const LEGACY_HANDS_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240';
 const LEGACY_HOLISTIC_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629';
@@ -250,7 +272,10 @@ export class SignEngine {
     this._busy = false;
     this._lastInferenceStartMs = 0;
     this._lastVideoTime = -1;
+    this._lastInferredVideoTime = -1;
     this._lastMonotonicTimestampMs = 0;
+    this._aspectRatioErrorEmitted = false;
+    this._lastAspectRatioValid = true;
 
     this._cameraFrameCount = 0;
     this._inferenceFrameCount = 0;
@@ -461,19 +486,24 @@ export class SignEngine {
       return false;
     }
 
-    if (import.meta.env.DEV && this._devTelemetry) {
-      const syncVideoDims = () => {
-        if (!this._devTelemetry || this._videoElement !== videoElement) return;
-        this._devTelemetry.setCameraNegotiation({
-          videoWidth: videoElement.videoWidth || 0,
-          videoHeight: videoElement.videoHeight || 0,
-        });
-      };
-      syncVideoDims();
-      if (!videoElement.videoWidth && typeof videoElement.addEventListener === 'function') {
-        this._loadedMetadataHandler = syncVideoDims;
-        videoElement.addEventListener('loadedmetadata', syncVideoDims, { once: true });
+    const syncVideoDims = () => {
+      if (this._videoElement !== videoElement) return;
+      const vw = videoElement.videoWidth || 0;
+      const vh = videoElement.videoHeight || 0;
+      if (vw > 0 && vh > 0) {
+        this._checkVideoAspectRatio(vw, vh);
       }
+      if (import.meta.env.DEV && this._devTelemetry) {
+        this._devTelemetry.setCameraNegotiation({
+          videoWidth: vw,
+          videoHeight: vh,
+        });
+      }
+    };
+    syncVideoDims();
+    if (!videoElement.videoWidth && typeof videoElement.addEventListener === 'function') {
+      this._loadedMetadataHandler = syncVideoDims;
+      videoElement.addEventListener('loadedmetadata', syncVideoDims, { once: true });
     }
 
     this._emitStatus({ state: 'loading_wasm', wasmReady: false, cameraReady: true });
@@ -634,6 +664,9 @@ export class SignEngine {
     this._cameraFrameCount = 0;
     this._inferenceFrameCount = 0;
     this._lastVideoTime = -1;
+    this._lastInferredVideoTime = -1;
+    this._aspectRatioErrorEmitted = false;
+    this._lastAspectRatioValid = true;
     this._currentFps = { cameraFps: 0, inferenceFps: 0 };
 
     if (import.meta.env.DEV && this._devTelemetry && getActiveDevCollector() === this._devTelemetry) {
@@ -820,6 +853,19 @@ export class SignEngine {
     );
   }
 
+  _checkVideoAspectRatio(videoWidth, videoHeight) {
+    const { valid, ratio } = validateVideoAspectRatio(videoWidth, videoHeight);
+    this._lastAspectRatioValid = valid;
+    if (!valid && !this._aspectRatioErrorEmitted) {
+      this._aspectRatioErrorEmitted = true;
+      this._emitError(
+        ENGINE_ERROR_CODES.INVALID_ASPECT_RATIO,
+        `Resolución de cámara ${videoWidth}x${videoHeight} (ratio ${ratio.toFixed(2)}) fuera de contrato 4:3 (±${ASPECT_RATIO_TOLERANCE}). Usa una resolución 4:3 (p.ej. 640x480).`
+      );
+    }
+    return valid;
+  }
+
   async _initializeMediaPipe(currentRunId) {
     protectMainThreadModuleFactory();
 
@@ -868,9 +914,9 @@ export class SignEngine {
         {
           runningMode: 'VIDEO',
           numHands: 2,
-          minHandDetectionConfidence: 0.45,
-          minHandPresenceConfidence: 0.45,
-          minTrackingConfidence: 0.45,
+          minHandDetectionConfidence: 0.5,
+          minHandPresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
         },
         this.preferredDelegate
       );
@@ -1057,20 +1103,35 @@ export class SignEngine {
       video.videoHeight > 0 &&
       (typeof document === 'undefined' || !document.hidden)
     ) {
+      // Validate 4:3 aspect ratio once real dimensions are available
+      if (this._lastAspectRatioValid && !this._aspectRatioErrorEmitted) {
+        this._checkVideoAspectRatio(video.videoWidth, video.videoHeight);
+      }
+
       // Count new camera frame when video.currentTime advances
-      const videoTimeAdvanced = video.currentTime !== this._lastVideoTime;
+      const currentVideoTime = video.currentTime;
+      const videoTimeAdvanced = currentVideoTime !== this._lastVideoTime;
       if (videoTimeAdvanced) {
-        this._lastVideoTime = video.currentTime;
+        this._lastVideoTime = currentVideoTime;
         this._cameraFrameCount++;
       }
       if (import.meta.env.DEV) {
         this._devTelemetry?.recordRafTick(nowMs, videoTimeAdvanced);
       }
 
+      // Deduplicate by video.currentTime: never re-infer an already processed camera frame
+      const hasUninferredFrame =
+        this._lastInferredVideoTime === -1 || currentVideoTime !== this._lastInferredVideoTime;
+
       // Throttle inference to targetFps and prevent overlapping async steps
-      if (!this._busy && nowMs - this._lastInferenceStartMs >= this.frameIntervalMs) {
+      if (
+        !this._busy &&
+        hasUninferredFrame &&
+        nowMs - this._lastInferenceStartMs >= this.frameIntervalMs
+      ) {
         this._busy = true;
         this._lastInferenceStartMs = nowMs;
+        this._lastInferredVideoTime = currentVideoTime;
         try {
           await this._runInferenceStep(video, nowMs);
         } catch (inferErr) {
@@ -1100,13 +1161,12 @@ export class SignEngine {
       let rawHandedness = [];
       let rawPose = null;
 
-      // Detector contract: pass the unmirrored HTMLVideoElement directly; mirror only
-      // when drawing to the display canvas. Front-camera user right hand appears on the
-      // left side of the raw frame and is labeled categoryName: 'Left' by MediaPipe.
+      // Detector contract (FEATURE_SPEC v1.4.0): pass unmirrored HTMLVideoElement directly
+      // with ImageProcessingOptions `{ rotationDegrees: 0 }`; mirror only on display canvas.
       if (this._handLandmarker) {
         if (import.meta.env.DEV) this._devTelemetry?.mark('expresat:hand:start');
         const handRes = this._handLandmarker.detectForVideo(video, timestampMs, {
-          imageProcessingOptions: { rotationDegrees: 0 },
+          rotationDegrees: 0,
         });
         if (import.meta.env.DEV && this._devTelemetry) {
           const handMs = this._devTelemetry.endAndMeasure(
@@ -1125,7 +1185,9 @@ export class SignEngine {
         if (this._poseLandmarker) {
           if ((this._frameStepIndex - 1) % this.poseCadence === 0) {
             if (import.meta.env.DEV) this._devTelemetry?.mark('expresat:pose:start');
-            const poseRes = this._poseLandmarker.detectForVideo(video, timestampMs);
+            const poseRes = this._poseLandmarker.detectForVideo(video, timestampMs, {
+              rotationDegrees: 0,
+            });
             if (import.meta.env.DEV && this._devTelemetry) {
               const poseMs = this._devTelemetry.endAndMeasure(
                 'expresat:stage:pose',
@@ -1199,11 +1261,11 @@ export class SignEngine {
     const handedness = [];
     if (results?.leftHandLandmarks) {
       hands.push(results.leftHandLandmarks);
-      handedness.push([{ categoryName: 'Right', score: 0.95 }]);
+      handedness.push([{ categoryName: 'Left', score: 0.95 }]);
     }
     if (results?.rightHandLandmarks) {
       hands.push(results.rightHandLandmarks);
-      handedness.push([{ categoryName: 'Left', score: 0.95 }]);
+      handedness.push([{ categoryName: 'Right', score: 0.95 }]);
     }
     this._dispatchNormalizedResults({
       pose: results?.poseLandmarks || null,
@@ -1219,52 +1281,78 @@ export class SignEngine {
       ? this._emaFilter.smoothResults({ pose, hands, handedness })
       : { pose, hands, handedness };
 
-    // On unmirrored selfie video, MediaPipe labels the user's right hand as 'Left'
-    let leftHand = null;
-    let rightHand = null;
-
-    if (Array.isArray(filtered.hands)) {
-      for (let i = 0; i < filtered.hands.length; i++) {
-        const lm = filtered.hands[i];
-        const category = filtered.handedness?.[i]?.[0]?.categoryName;
-        if (category === 'Left' && !rightHand) {
-          rightHand = lm;
-        } else if (category === 'Right' && !leftHand) {
-          leftHand = lm;
-        } else if (!rightHand) {
-          rightHand = lm;
-        } else if (!leftHand) {
-          leftHand = lm;
+    // Direct v1.4.0 anatomical convention: 'Left' -> leftHand, 'Right' -> rightHand
+    const resolveDirectSlots = (handList, handednessList) => {
+      let lh = null;
+      let rh = null;
+      if (Array.isArray(handList)) {
+        for (let i = 0; i < handList.length; i++) {
+          const lm = handList[i];
+          const category = handednessList?.[i]?.[0]?.categoryName;
+          if (category === 'Left' && !lh) {
+            lh = lm;
+          } else if (category === 'Right' && !rh) {
+            rh = lm;
+          } else if (!lh) {
+            lh = lm;
+          } else if (!rh) {
+            rh = lm;
+          }
         }
       }
-    }
+      return { leftHand: lh, rightHand: rh };
+    };
+
+    const { leftHand, rightHand } = resolveDirectSlots(filtered.hands, filtered.handedness);
 
     const cleanCoords = (arr, includeVisibility = false) => {
       if (!Array.isArray(arr)) return null;
-      return arr.map((pt) => {
-        const base = { x: pt.x, y: pt.y, z: pt.z ?? 0 };
-        if (includeVisibility) {
-          base.visibility = pt.visibility ?? 1.0;
-        }
-        return base;
-      });
+      const len = arr.length;
+      const out = new Array(len);
+      for (let i = 0; i < len; i++) {
+        const pt = arr[i];
+        out[i] = includeVisibility
+          ? { x: pt.x, y: pt.y, z: pt.z ?? 0, visibility: pt.visibility ?? 1.0 }
+          : { x: pt.x, y: pt.y, z: pt.z ?? 0 };
+      }
+      return out;
     };
 
+    let cachedRaw = null;
     const framePayload = {
       hands: filtered.hands || [],
       handedness: filtered.handedness || [],
       leftHand: cleanCoords(leftHand, false),
       rightHand: cleanCoords(rightHand, false),
       pose: cleanCoords(filtered.pose, true),
-      raw: {
-        hands: Array.isArray(hands) ? hands.map((h) => cleanCoords(h, false)) : [],
-        handedness: handedness || [],
-        pose: cleanCoords(pose, true),
-      },
       timestamp,
       latencyMs,
+      videoWidth: this._videoElement?.videoWidth || 0,
+      videoHeight: this._videoElement?.videoHeight || 0,
+      aspectRatioValid: this._lastAspectRatioValid,
       delegate: this._activeBackendInfo?.delegate || this.preferredDelegate,
     };
+
+    // Lazy memoized raw getter: zero allocations when no consumer reads `framePayload.raw`
+    Object.defineProperty(framePayload, 'raw', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        if (cachedRaw === null) {
+          const rawHandsClean = Array.isArray(hands) ? hands.map((h) => cleanCoords(h, false)) : [];
+          const rawHandedness = handedness || [];
+          const rawSlots = resolveDirectSlots(rawHandsClean, rawHandedness);
+          cachedRaw = {
+            hands: rawHandsClean,
+            handedness: rawHandedness,
+            leftHand: rawSlots.leftHand,
+            rightHand: rawSlots.rightHand,
+            pose: cleanCoords(pose, true),
+          };
+        }
+        return cachedRaw;
+      },
+    });
 
     for (const listener of this._frameListeners) {
       try {

@@ -1,16 +1,12 @@
 /**
  * Experimental MediaPipe landmark tracking and visualization system.
  *
- * Responsibilities:
- *  1. Anatomical grouping for MediaPipe Pose and Hand landmarks.
- *  2. Color coding per body part and finger (pose: face, torso, arms;
- *     hands: palm/wrist, thumb, index, middle, ring, pinky).
- *  3. Motion trails over recent frames.
- *  4. Visual ID badges and halos on key joints.
- *  5. Real-time telemetry (3D coordinates, visibility, speed, normalization).
+ * Hot-path optimized:
+ *  - Precomputed O(1) lookup tables (`POSE_META_BY_INDEX`, `HAND_META_BY_SIDE`)
+ *  - Zero per-frame `Set` allocation (`_tickId` tagging for eviction)
+ *  - Trail node recycling and quantized RGBA color cache
+ *  - Optional `{ includeTelemetry, trackHistory }` fast-path skipping unused work
  */
-
-// Topologies and anatomical connections
 
 /** Pose connections grouped by body region */
 export const POSE_SEGMENTS = {
@@ -159,6 +155,71 @@ export const COLOR_LEGEND_ITEMS = [
     { label: 'Meñique', color: '#8B5CF6', group: 'Mano' }
 ];
 
+// Precomputed O(1) lookup tables (zero per-frame allocations)
+const POSE_SEGMENT_LIST = Object.values(POSE_SEGMENTS);
+const HAND_SEGMENT_LIST = Object.values(HAND_SEGMENTS);
+const EMPTY_POINTS = Object.freeze([]);
+
+const POSE_META_BY_INDEX = Array.from({ length: 33 }, (_, idx) => {
+    let partName = 'Pose';
+    let color = '#06B6D4';
+    let glow = 'rgba(6, 182, 212, 0.45)';
+    if (idx <= 10) {
+        partName = 'Rostro';
+        color = POSE_SEGMENTS.face.color;
+        glow = POSE_SEGMENTS.face.glow;
+    } else if (idx === 11 || idx === 13 || idx === 15 || idx === 17 || idx === 19 || idx === 21) {
+        partName = 'Brazo Izquierdo';
+        color = POSE_SEGMENTS.leftArm.color;
+        glow = POSE_SEGMENTS.leftArm.glow;
+    } else if (idx === 12 || idx === 14 || idx === 16 || idx === 18 || idx === 20 || idx === 22) {
+        partName = 'Brazo Derecho';
+        color = POSE_SEGMENTS.rightArm.color;
+        glow = POSE_SEGMENTS.rightArm.glow;
+    } else if (idx === 23 || idx === 24) {
+        partName = 'Torso / Cadera';
+        color = POSE_SEGMENTS.torso.color;
+        glow = POSE_SEGMENTS.torso.glow;
+    }
+    return {
+        partName,
+        color,
+        glow,
+        isKeyJoint: idx >= 11 && idx <= 16,
+        name: LANDMARK_NAMES.pose[idx] || `Pose #${idx}`,
+    };
+});
+
+function buildHandSideMeta(sideKey) {
+    return Array.from({ length: 21 }, (_, lmIdx) => {
+        for (const segment of HAND_SEGMENT_LIST) {
+            if (segment.indices.includes(lmIdx)) {
+                return {
+                    fingerName: segment.name,
+                    fingerColor: segment.colors[sideKey].color,
+                    fingerGlow: segment.colors[sideKey].glow,
+                    isTip: segment.tipIndex === lmIdx,
+                    displayLabel: `${LANDMARK_NAMES.hand[lmIdx] || `Punto #${lmIdx}`} (${sideKey === 'Right' ? 'Der' : 'Izq'})`,
+                };
+            }
+        }
+        return {
+            fingerName: 'Mano',
+            fingerColor: sideKey === 'Right' ? '#9D4EDD' : '#7B2FF7',
+            fingerGlow: 'rgba(157, 78, 221, 0.4)',
+            isTip: false,
+            displayLabel: `${LANDMARK_NAMES.hand[lmIdx] || `Punto #${lmIdx}`} (${sideKey === 'Right' ? 'Der' : 'Izq'})`,
+        };
+    });
+}
+
+const HAND_META_BY_SIDE = {
+    Left: buildHandSideMeta('Left'),
+    Right: buildHandSideMeta('Right'),
+};
+
+const TRAIL_RGBA_CACHE = new Map();
+
 export class LandmarkTracker {
     /**
      * @param {object} [options]
@@ -169,15 +230,11 @@ export class LandmarkTracker {
         this.maxTrailLength = options.maxTrailLength ?? 8;
         this.maxTelemetryPoints = options.maxTelemetryPoints ?? 50;
 
-        // Per-key trail history: Map<pointKey, Array<{ px, py, time }>>
         this.pointHistory = new Map();
-
+        this._tickId = 0;
         this.lastTelemetry = null;
     }
 
-    /**
-     * Projects a normalized landmark into canvas pixel coordinates.
-     */
     project(lm, w, h) {
         return { px: lm.x * w, py: lm.y * h };
     }
@@ -188,108 +245,138 @@ export class LandmarkTracker {
      * @param {object} results - Smoothed landmarks `{ pose, hands, handedness }`
      * @param {number} width - Canvas width
      * @param {number} height - Canvas height
-     * @returns {object} Telemetry snapshot with counts, coordinates, and velocities
+     * @param {object} [options] - `{ includeTelemetry, trackHistory }` to skip unused work
+     * @returns {object} Telemetry snapshot
      */
-    update(results, width, height) {
+    update(results, width, height, options = {}) {
+        const { includeTelemetry = true, trackHistory = true } = options;
         const now = performance.now();
-        const activeKeys = new Set();
-        const trackedPointsList = [];
 
-        // Track pose landmarks
-        let poseCount = 0;
-        if (results?.pose && results.pose.length > 0) {
-            results.pose.forEach((lm, idx) => {
-                if (!lm) return;
-                poseCount++;
-                const key = `pose_${idx}`;
-                activeKeys.add(key);
-
-                const { px, py } = this.project(lm, width, height);
-                this._recordPointHistory(key, px, py, now);
-
-                // Resolve anatomical pose body region
-                let partName = 'Pose';
-                let partColor = '#06B6D4';
-                if (idx <= 10) {
-                    partName = 'Rostro';
-                    partColor = POSE_SEGMENTS.face.color;
-                } else if ([11, 13, 15, 17, 19, 21].includes(idx)) {
-                    partName = 'Brazo Izquierdo';
-                    partColor = POSE_SEGMENTS.leftArm.color;
-                } else if ([12, 14, 16, 18, 20, 22].includes(idx)) {
-                    partName = 'Brazo Derecho';
-                    partColor = POSE_SEGMENTS.rightArm.color;
-                } else if ([23, 24].includes(idx)) {
-                    partName = 'Torso / Cadera';
-                    partColor = POSE_SEGMENTS.torso.color;
-                }
-
-                trackedPointsList.push({
-                    key,
-                    id: idx,
-                    type: 'pose',
-                    name: LANDMARK_NAMES.pose[idx] || `Pose #${idx}`,
-                    part: partName,
-                    color: partColor,
-                    x: lm.x,
-                    y: lm.y,
-                    z: lm.z ?? 0,
-                    visibility: lm.visibility ?? 1,
-                    speed: this._getPointSpeed(key)
-                });
-            });
-        }
-
-        // Track hand landmarks
+        let poseCount = Array.isArray(results?.pose) ? results.pose.length : 0;
         let leftHandCount = 0;
         let rightHandCount = 0;
 
-        if (results?.hands && results.hands.length > 0) {
-            results.hands.forEach((handLandmarks, handIdx) => {
-                if (!handLandmarks || handLandmarks.length === 0) return;
+        const handsArr = results?.hands;
+        const handednessArr = results?.handedness;
 
-                // MediaPipe tasks-vision handedness
-                const side = results.handedness?.[handIdx]?.[0]?.categoryName ?? (handIdx === 0 ? 'Left' : 'Right');
-                if (side === 'Left') leftHandCount = handLandmarks.length;
-                else rightHandCount = handLandmarks.length;
+        if (!trackHistory && !includeTelemetry) {
+            if (Array.isArray(handsArr)) {
+                for (let hIdx = 0; hIdx < handsArr.length; hIdx++) {
+                    const hl = handsArr[hIdx];
+                    if (!hl || hl.length === 0) continue;
+                    const side = handednessArr?.[hIdx]?.[0]?.categoryName ?? (hIdx === 0 ? 'Left' : 'Right');
+                    if (side === 'Left') leftHandCount = hl.length;
+                    else rightHandCount = hl.length;
+                }
+            }
+            if (this.pointHistory.size > 0) {
+                this.pointHistory.clear();
+            }
+            this.lastTelemetry = {
+                timestamp: now,
+                counts: {
+                    pose: poseCount,
+                    leftHand: leftHandCount,
+                    rightHand: rightHandCount,
+                    totalActive: poseCount + leftHandCount + rightHandCount,
+                },
+                normalization: null,
+                points: EMPTY_POINTS,
+            };
+            return this.lastTelemetry;
+        }
 
-                handLandmarks.forEach((lm, lmIdx) => {
-                    if (!lm) return;
-                    const key = `hand_${side}_${lmIdx}`;
-                    activeKeys.add(key);
+        const tickId = ++this._tickId;
+        const trackedPointsList = includeTelemetry ? [] : EMPTY_POINTS;
 
-                    const { px, py } = this.project(lm, width, height);
-                    this._recordPointHistory(key, px, py, now);
+        // Track pose landmarks
+        poseCount = 0;
+        if (results?.pose && results.pose.length > 0) {
+            const pose = results.pose;
+            for (let idx = 0; idx < pose.length; idx++) {
+                const lm = pose[idx];
+                if (!lm) continue;
+                poseCount++;
+                const meta = POSE_META_BY_INDEX[idx] || {
+                    partName: 'Pose',
+                    color: '#06B6D4',
+                    name: `Pose #${idx}`,
+                };
+                const key = `pose_${idx}`;
+                const px = lm.x * width;
+                const py = lm.y * height;
+                const history = this._recordPointHistory(key, px, py, now, tickId, meta.color);
 
-                    const { fingerName, fingerColor } = this._getHandSegmentMeta(lmIdx, side);
-
+                if (includeTelemetry) {
                     trackedPointsList.push({
                         key,
-                        id: lmIdx,
-                        type: `hand_${side}`,
-                        handSide: side,
-                        name: `${LANDMARK_NAMES.hand[lmIdx] || `Punto #${lmIdx}`} (${side === 'Right' ? 'Der' : 'Izq'})`,
-                        part: fingerName,
-                        color: fingerColor,
+                        id: idx,
+                        type: 'pose',
+                        name: meta.name,
+                        part: meta.partName,
+                        color: meta.color,
                         x: lm.x,
                         y: lm.y,
                         z: lm.z ?? 0,
                         visibility: lm.visibility ?? 1,
-                        speed: this._getPointSpeed(key)
+                        speed: this._getSpeedFromHistory(history),
                     });
-                });
-            });
+                }
+            }
         }
 
-        // Evict inactive keys and enforce maxTelemetryPoints to prevent unbounded growth
-        for (const storedKey of this.pointHistory.keys()) {
-            if (!activeKeys.has(storedKey)) {
+        // Track hand landmarks
+        if (Array.isArray(handsArr) && handsArr.length > 0) {
+            for (let handIdx = 0; handIdx < handsArr.length; handIdx++) {
+                const handLandmarks = handsArr[handIdx];
+                if (!handLandmarks || handLandmarks.length === 0) continue;
+
+                const side = handednessArr?.[handIdx]?.[0]?.categoryName ?? (handIdx === 0 ? 'Left' : 'Right');
+                const sideKey = side === 'Right' ? 'Right' : 'Left';
+                if (side === 'Left') leftHandCount = handLandmarks.length;
+                else rightHandCount = handLandmarks.length;
+
+                const sideMeta = HAND_META_BY_SIDE[sideKey];
+                const typeTag = `hand_${side}`;
+                for (let lmIdx = 0; lmIdx < handLandmarks.length; lmIdx++) {
+                    const lm = handLandmarks[lmIdx];
+                    if (!lm) continue;
+                    const key = `hand_${side}_${lmIdx}`;
+                    const meta = sideMeta[lmIdx] || this._getHandSegmentMeta(lmIdx, sideKey);
+                    const px = lm.x * width;
+                    const py = lm.y * height;
+                    const history = this._recordPointHistory(key, px, py, now, tickId, meta.fingerColor);
+
+                    if (includeTelemetry) {
+                        trackedPointsList.push({
+                            key,
+                            id: lmIdx,
+                            type: typeTag,
+                            handSide: side,
+                            name:
+                                meta.displayLabel ||
+                                `${LANDMARK_NAMES.hand[lmIdx] || `Punto #${lmIdx}`} (${side === 'Right' ? 'Der' : 'Izq'})`,
+                            part: meta.fingerName,
+                            color: meta.fingerColor,
+                            x: lm.x,
+                            y: lm.y,
+                            z: lm.z ?? 0,
+                            visibility: lm.visibility ?? 1,
+                            speed: this._getSpeedFromHistory(history),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Evict inactive keys by tickId without allocating a Set per frame
+        for (const [storedKey, history] of this.pointHistory.entries()) {
+            if (history._tickId !== tickId) {
                 this.pointHistory.delete(storedKey);
             }
         }
         const currentPointCount = this.pointHistory.size;
         if (currentPointCount > this.maxTelemetryPoints) {
-            // Drop oldest entries until within limit
             const keysToRemove = currentPointCount - this.maxTelemetryPoints;
             let removed = 0;
             for (const key of this.pointHistory.keys()) {
@@ -299,9 +386,9 @@ export class LandmarkTracker {
             }
         }
 
-        // Normalization metrics matching ExpresaT shoulder-scale invariants
+        // Normalization metrics only when telemetry drawer is open
         let normalization = null;
-        if (results?.pose && results.pose[11] && results.pose[12]) {
+        if (includeTelemetry && results?.pose && results.pose[11] && results.pose[12]) {
             const p11 = results.pose[11];
             const p12 = results.pose[12];
             const shoulderMid = {
@@ -332,19 +419,6 @@ export class LandmarkTracker {
         return this.lastTelemetry;
     }
 
-    /**
-     * Renders the full landmark tracking overlay on canvas:
-     *  - Motion trails.
-     *  - Body/finger color-coded skeleton segments.
-     *  - Landmark nodes with contrast rings and key-joint halos.
-     *  - Optional numeric ID badges.
-     *
-     * @param {CanvasRenderingContext2D} ctx - 2D canvas context
-     * @param {object} results - Smoothed landmarks
-     * @param {number} width - Canvas width
-     * @param {number} height - Canvas height
-     * @param {object} config - Rendering options
-     */
     render(ctx, results, width, height, config = {}) {
         if (!results) return;
 
@@ -358,17 +432,14 @@ export class LandmarkTracker {
             lineWidth = 2.5
         } = config;
 
-        // Clamp trail history length to configured bounds
         this.maxTrailLength = Math.max(2, Math.min(trailLength, 20));
 
         ctx.save();
 
-        // A. Motion trails
         if (showTrails) {
             this._drawMotionTrails(ctx, results, width, height, colorByPart);
         }
 
-        // B. Color-coded Pose skeleton
         if (results.pose && results.pose.length > 0) {
             this._drawPoseSegments(ctx, results.pose, width, height, {
                 colorByPart,
@@ -379,9 +450,9 @@ export class LandmarkTracker {
             });
         }
 
-        // C. Color-coded Hand skeletons
         if (results.hands && results.hands.length > 0) {
-            results.hands.forEach((handLandmarks, i) => {
+            for (let i = 0; i < results.hands.length; i++) {
+                const handLandmarks = results.hands[i];
                 const side = results.handedness?.[i]?.[0]?.categoryName ?? (i === 0 ? 'Left' : 'Right');
                 this._drawHandSegments(ctx, handLandmarks, side, width, height, {
                     colorByPart,
@@ -390,42 +461,38 @@ export class LandmarkTracker {
                     showLabels,
                     showHalos
                 });
-            });
+            }
         }
 
         ctx.restore();
     }
 
-    /**
-     * Clears tracking history buffers and last telemetry snapshot.
-     */
     reset() {
         this.pointHistory.clear();
         this.lastTelemetry = null;
     }
 
-    // Internal drawing helpers
-
-    /**
-     * Appends a new coordinate sample to a landmark's trail history.
-     */
-    _recordPointHistory(key, px, py, time) {
+    _recordPointHistory(key, px, py, time, tickId = this._tickId, color = '#00F3FF') {
         let history = this.pointHistory.get(key);
         if (!history) {
             history = [];
             this.pointHistory.set(key, history);
         }
-        history.push({ px, py, time });
-        if (history.length > this.maxTrailLength) {
-            history.shift();
+        history._tickId = tickId;
+        history._color = color;
+        if (history.length >= this.maxTrailLength) {
+            const recycled = history.shift();
+            recycled.px = px;
+            recycled.py = py;
+            recycled.time = time;
+            history.push(recycled);
+        } else {
+            history.push({ px, py, time });
         }
+        return history;
     }
 
-    /**
-     * Estimates a point's velocity in pixels per second.
-     */
-    _getPointSpeed(key) {
-        const history = this.pointHistory.get(key);
+    _getSpeedFromHistory(history) {
         if (!history || history.length < 2) return 0;
         const pLatest = history[history.length - 1];
         const pPrev = history[history.length - 2];
@@ -435,21 +502,14 @@ export class LandmarkTracker {
         return Math.round(dist / dt);
     }
 
-    /**
-     * Returns name and color metadata for a hand landmark based on its finger segment.
-     */
+    _getPointSpeed(key) {
+        return this._getSpeedFromHistory(this.pointHistory.get(key));
+    }
+
     _getHandSegmentMeta(lmIdx, side) {
         const sideKey = side === 'Right' ? 'Right' : 'Left';
-        for (const segment of Object.values(HAND_SEGMENTS)) {
-            if (segment.indices.includes(lmIdx)) {
-                return {
-                    fingerName: segment.name,
-                    fingerColor: segment.colors[sideKey].color,
-                    fingerGlow: segment.colors[sideKey].glow,
-                    isTip: segment.tipIndex === lmIdx
-                };
-            }
-        }
+        const cached = HAND_META_BY_SIDE[sideKey]?.[lmIdx];
+        if (cached) return cached;
         return {
             fingerName: 'Mano',
             fingerColor: sideKey === 'Right' ? '#9D4EDD' : '#7B2FF7',
@@ -458,39 +518,20 @@ export class LandmarkTracker {
         };
     }
 
-    /**
-     * Renders fading motion trails for all active tracked landmarks.
-     */
-    _drawMotionTrails(ctx, results, width, height, colorByPart) {
-        for (const [key, history] of this.pointHistory.entries()) {
-            if (history.length < 2) continue;
+    _drawMotionTrails(ctx, _results, _width, _height, colorByPart) {
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
 
-            // Resolve trail color by tracked key
-            let trailColor = '#00F3FF';
-            if (colorByPart) {
-                if (key.startsWith('pose_')) {
-                    const idx = parseInt(key.replace('pose_', ''), 10);
-                    if (idx <= 10) trailColor = POSE_SEGMENTS.face.color;
-                    else if ([11, 13, 15, 17, 19, 21].includes(idx)) trailColor = POSE_SEGMENTS.leftArm.color;
-                    else if ([12, 14, 16, 18, 20, 22].includes(idx)) trailColor = POSE_SEGMENTS.rightArm.color;
-                    else trailColor = POSE_SEGMENTS.torso.color;
-                } else if (key.startsWith('hand_')) {
-                    const parts = key.split('_');
-                    const side = parts[1];
-                    const lmIdx = parseInt(parts[2], 10);
-                    trailColor = this._getHandSegmentMeta(lmIdx, side).fingerColor;
-                }
-            }
+        for (const history of this.pointHistory.values()) {
+            const hLen = history.length;
+            if (hLen < 2) continue;
 
-            // Draw attenuated segmented trail
-            ctx.beginPath();
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
+            const trailColor = colorByPart && history._color ? history._color : '#00F3FF';
 
-            for (let i = 0; i < history.length - 1; i++) {
+            for (let i = 0; i < hLen - 1; i++) {
                 const ptA = history[i];
                 const ptB = history[i + 1];
-                const factor = (i + 1) / history.length;
+                const factor = (i + 1) / hLen;
                 const alpha = Math.max(0.1, factor * 0.7);
 
                 ctx.strokeStyle = this._hexToRgba(trailColor, alpha);
@@ -504,140 +545,113 @@ export class LandmarkTracker {
         }
     }
 
-    /**
-     * Renders pose skeleton segments and landmarks grouped by body region.
-     */
     _drawPoseSegments(ctx, pose, width, height, opts) {
         const { colorByPart, lineWidth, pointRadius, showLabels, showHalos } = opts;
 
-        // 1. Segmented bone connections
-        for (const segment of Object.values(POSE_SEGMENTS)) {
-            const segColor = colorByPart ? segment.color : '#00F3FF';
-            ctx.strokeStyle = segColor;
+        for (let sIdx = 0; sIdx < POSE_SEGMENT_LIST.length; sIdx++) {
+            const segment = POSE_SEGMENT_LIST[sIdx];
+            ctx.strokeStyle = colorByPart ? segment.color : '#00F3FF';
             ctx.lineWidth = lineWidth;
             ctx.beginPath();
 
-            for (const [a, b] of segment.connections) {
-                if (!pose[a] || !pose[b]) continue;
-                if ((pose[a].visibility ?? 1) < 0.25 || (pose[b].visibility ?? 1) < 0.25) continue;
-                const pa = this.project(pose[a], width, height);
-                const pb = this.project(pose[b], width, height);
-                ctx.moveTo(pa.px, pa.py);
-                ctx.lineTo(pb.px, pb.py);
+            const conns = segment.connections;
+            for (let cIdx = 0; cIdx < conns.length; cIdx++) {
+                const lmA = pose[conns[cIdx][0]];
+                const lmB = pose[conns[cIdx][1]];
+                if (!lmA || !lmB) continue;
+                if ((lmA.visibility ?? 1) < 0.25 || (lmB.visibility ?? 1) < 0.25) continue;
+                ctx.moveTo(lmA.x * width, lmA.y * height);
+                ctx.lineTo(lmB.x * width, lmB.y * height);
             }
             ctx.stroke();
         }
 
-        // 2. Landmark nodes
-        pose.forEach((lm, idx) => {
-            if (!lm || (lm.visibility ?? 1) < 0.25) return;
-            const { px, py } = this.project(lm, width, height);
+        const twoPi = Math.PI * 2;
+        for (let idx = 0; idx < pose.length; idx++) {
+            const lm = pose[idx];
+            if (!lm || (lm.visibility ?? 1) < 0.25) continue;
+            const px = lm.x * width;
+            const py = lm.y * height;
 
-            // Resolve segment color
-            let nodeColor = '#06B6D4';
-            let haloGlow = 'rgba(6, 182, 212, 0.45)';
-            if (colorByPart) {
-                if (idx <= 10) {
-                    nodeColor = POSE_SEGMENTS.face.color;
-                    haloGlow = POSE_SEGMENTS.face.glow;
-                } else if ([11, 13, 15, 17, 19, 21].includes(idx)) {
-                    nodeColor = POSE_SEGMENTS.leftArm.color;
-                    haloGlow = POSE_SEGMENTS.leftArm.glow;
-                } else if ([12, 14, 16, 18, 20, 22].includes(idx)) {
-                    nodeColor = POSE_SEGMENTS.rightArm.color;
-                    haloGlow = POSE_SEGMENTS.rightArm.glow;
-                } else {
-                    nodeColor = POSE_SEGMENTS.torso.color;
-                    haloGlow = POSE_SEGMENTS.torso.glow;
-                }
-            }
+            const meta = POSE_META_BY_INDEX[idx];
+            const nodeColor = colorByPart && meta ? meta.color : '#06B6D4';
+            const haloGlow = colorByPart && meta ? meta.glow : 'rgba(6, 182, 212, 0.45)';
+            const isKeyJoint = meta ? meta.isKeyJoint : false;
 
-            // Highlight halo on key joints (shoulders, elbows, wrists)
-            const isKeyJoint = [11, 12, 13, 14, 15, 16].includes(idx);
             if (showHalos && isKeyJoint) {
                 ctx.beginPath();
-                ctx.arc(px, py, pointRadius + 4, 0, Math.PI * 2);
+                ctx.arc(px, py, pointRadius + 4, 0, twoPi);
                 ctx.fillStyle = haloGlow;
                 ctx.fill();
             }
 
-            // Primary landmark node
             ctx.beginPath();
-            ctx.arc(px, py, isKeyJoint ? pointRadius + 1 : pointRadius, 0, Math.PI * 2);
+            ctx.arc(px, py, isKeyJoint ? pointRadius + 1 : pointRadius, 0, twoPi);
             ctx.fillStyle = nodeColor;
             ctx.fill();
             ctx.strokeStyle = '#FFFFFF';
             ctx.lineWidth = 1.5;
             ctx.stroke();
 
-            // ID badge
             if (showLabels) {
                 this._drawLabel(ctx, String(idx), px, py, nodeColor);
             }
-        });
+        }
     }
 
-    /**
-     * Renders hand skeleton segments and landmarks grouped by finger and palm.
-     */
     _drawHandSegments(ctx, handLandmarks, side, width, height, opts) {
         const { colorByPart, lineWidth, pointRadius, showLabels, showHalos } = opts;
         const sideKey = side === 'Right' ? 'Right' : 'Left';
+        const fallbackColor = sideKey === 'Right' ? '#9D4EDD' : '#7B2FF7';
 
-        // 1. Per-finger connections
-        for (const segment of Object.values(HAND_SEGMENTS)) {
-            const segColor = colorByPart
-                ? segment.colors[sideKey].color
-                : (sideKey === 'Right' ? '#9D4EDD' : '#7B2FF7');
-
-            ctx.strokeStyle = segColor;
+        for (let sIdx = 0; sIdx < HAND_SEGMENT_LIST.length; sIdx++) {
+            const segment = HAND_SEGMENT_LIST[sIdx];
+            ctx.strokeStyle = colorByPart ? segment.colors[sideKey].color : fallbackColor;
             ctx.lineWidth = lineWidth + 0.5;
             ctx.beginPath();
 
-            for (const [a, b] of segment.connections) {
-                if (!handLandmarks[a] || !handLandmarks[b]) continue;
-                const pa = this.project(handLandmarks[a], width, height);
-                const pb = this.project(handLandmarks[b], width, height);
-                ctx.moveTo(pa.px, pa.py);
-                ctx.lineTo(pb.px, pb.py);
+            const conns = segment.connections;
+            for (let cIdx = 0; cIdx < conns.length; cIdx++) {
+                const lmA = handLandmarks[conns[cIdx][0]];
+                const lmB = handLandmarks[conns[cIdx][1]];
+                if (!lmA || !lmB) continue;
+                ctx.moveTo(lmA.x * width, lmA.y * height);
+                ctx.lineTo(lmB.x * width, lmB.y * height);
             }
             ctx.stroke();
         }
 
-        // 2. Landmark nodes with fingertip and wrist halos
-        handLandmarks.forEach((lm, idx) => {
-            if (!lm) return;
-            const { px, py } = this.project(lm, width, height);
-            const { fingerColor, fingerGlow, isTip } = this._getHandSegmentMeta(idx, side);
-            const nodeColor = colorByPart ? fingerColor : '#FFFFFF';
+        const sideMeta = HAND_META_BY_SIDE[sideKey];
+        const twoPi = Math.PI * 2;
+        for (let idx = 0; idx < handLandmarks.length; idx++) {
+            const lm = handLandmarks[idx];
+            if (!lm) continue;
+            const px = lm.x * width;
+            const py = lm.y * height;
+            const meta = sideMeta[idx] || this._getHandSegmentMeta(idx, sideKey);
+            const nodeColor = colorByPart ? meta.fingerColor : '#FFFFFF';
 
-            // Halo on fingertips and wrist
-            if (showHalos && (isTip || idx === 0)) {
+            if (showHalos && (meta.isTip || idx === 0)) {
                 ctx.beginPath();
-                ctx.arc(px, py, pointRadius + 4.5, 0, Math.PI * 2);
-                ctx.fillStyle = colorByPart ? fingerGlow : 'rgba(255, 255, 255, 0.35)';
+                ctx.arc(px, py, pointRadius + 4.5, 0, twoPi);
+                ctx.fillStyle = colorByPart ? meta.fingerGlow : 'rgba(255, 255, 255, 0.35)';
                 ctx.fill();
             }
 
-            // Primary node
             ctx.beginPath();
-            ctx.arc(px, py, isTip ? pointRadius + 1.2 : pointRadius, 0, Math.PI * 2);
+            ctx.arc(px, py, meta.isTip ? pointRadius + 1.2 : pointRadius, 0, twoPi);
             ctx.fillStyle = nodeColor;
             ctx.fill();
             ctx.strokeStyle = '#000000';
             ctx.lineWidth = 1.2;
             ctx.stroke();
 
-            // ID badge
             if (showLabels) {
                 this._drawLabel(ctx, String(idx), px, py, nodeColor);
             }
-        });
+        }
     }
 
-    /**
-     * Draws a small numeric ID badge next to a landmark.
-     */
     _drawLabel(ctx, text, x, y, color) {
         ctx.save();
         ctx.font = 'bold 9px monospace';
@@ -648,18 +662,15 @@ export class LandmarkTracker {
         const boxX = x + 4;
         const boxY = y - 14;
 
-        // High-contrast dark background
         ctx.fillStyle = 'rgba(10, 10, 18, 0.85)';
         ctx.beginPath();
         ctx.roundRect(boxX, boxY, boxW, boxH, 3);
         ctx.fill();
 
-        // Part-colored border
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // Text
         ctx.fillStyle = '#FFFFFF';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -668,30 +679,25 @@ export class LandmarkTracker {
         ctx.restore();
     }
 
-    /**
-     * Converts a HEX color string to an `rgba(...)` string, normalizing shorthand forms.
-     */
     _hexToRgba(hex, alpha) {
-        // Strip leading '#' and whitespace
+        const quantized = Math.round(alpha * 20) / 20;
+        const cacheKey = `${hex}_${quantized}`;
+        const cached = TRAIL_RGBA_CACHE.get(cacheKey);
+        if (cached !== undefined) return cached;
+
         let cleaned = hex.replace('#', '').trim();
-        
-        // Reject invalid hex strings to prevent NaN channels
         if (!/^[0-9A-Fa-f]{3}(?:[0-9A-Fa-f]{3})?$/.test(cleaned)) {
             console.warn('[landmarkTracker] _hexToRgba: Código HEX inválido, usando transparente', hex);
             return 'rgba(0, 0, 0, 0)';
         }
-        
-        // Expand 3-digit shorthand to 6 digits
         if (cleaned.length === 3) {
             cleaned = cleaned[0] + cleaned[0] + cleaned[1] + cleaned[1] + cleaned[2] + cleaned[2];
         }
-        
-        let r = 0, g = 0, b = 0;
-        if (cleaned.length === 6) {
-            r = parseInt(cleaned.slice(0, 2), 16);
-            g = parseInt(cleaned.slice(2, 4), 16);
-            b = parseInt(cleaned.slice(4, 6), 16);
-        }
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        const r = parseInt(cleaned.slice(0, 2), 16);
+        const g = parseInt(cleaned.slice(2, 4), 16);
+        const b = parseInt(cleaned.slice(4, 6), 16);
+        const res = `rgba(${r}, ${g}, ${b}, ${quantized})`;
+        TRAIL_RGBA_CACHE.set(cacheKey, res);
+        return res;
     }
 }
