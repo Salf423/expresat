@@ -33,7 +33,6 @@ from models.feature_extractor import (
     mirror_raw_frame,
     mirror_features_178,
     compute_config_hash,
-    get_fixtures_sha256,
     validate_frame_hand_labels,
     assign_hands_to_anatomical_slots,
 )
@@ -67,12 +66,43 @@ class TestFeatureSpecCasesJson(unittest.TestCase):
         self.assertEqual(FEATURE_SPEC_VERSION, self.fixtures["feature_spec_version"])
         self.assertEqual(FEATURE_SPEC_VERSION, "1.4.0")
 
-    def test_config_hash_incorporates_fixtures_sha256(self):
-        fixtures_hash = get_fixtures_sha256()
-        self.assertEqual(len(fixtures_hash), 64)
-        c_hash = compute_config_hash(fixtures_hash)
-        self.assertEqual(len(c_hash), 64)
-        self.assertEqual(c_hash, compute_config_hash(fixtures_hash))
+    def test_config_hash_decoupled_from_fixtures_and_seals_v140_contract(self):
+        """v1.4.0 config_hash is decoupled from tests/fixtures/ and seals spec + .task SHA-256 hashes."""
+        self.assertFalse(
+            hasattr(fe_mod, "get_fixtures_sha256"),
+            "feature_extractor no debe depender de tests/fixtures/",
+        )
+        self.assertTrue(hasattr(fe_mod, "HAND_LANDMARKER_SHA256"))
+        self.assertTrue(hasattr(fe_mod, "POSE_LANDMARKER_SHA256"))
+        self.assertTrue(hasattr(fe_mod, "get_canonical_config_dict"))
+        self.assertTrue(hasattr(fe_mod, "serialize_canonical_config"))
+
+        cfg = fe_mod.get_canonical_config_dict()
+        self.assertNotIn("fixtures_sha256", cfg)
+        self.assertEqual(cfg["feature_spec_version"], "1.4.0")
+        self.assertEqual(cfg["d_metric"], "2d_iso_4_3")
+        self.assertEqual(cfg["handedness_convention"], "direct")
+        self.assertEqual(cfg["hand_landmarker_sha256"], fe_mod.HAND_LANDMARKER_SHA256)
+        self.assertEqual(cfg["pose_landmarker_sha256"], fe_mod.POSE_LANDMARKER_SHA256)
+
+        c_gpu = compute_config_hash(delegate="GPU", pose_cadence=1)
+        c_cpu = compute_config_hash(delegate="CPU", pose_cadence=1)
+        c_cad2 = compute_config_hash(delegate="GPU", pose_cadence=2)
+        c_alt_task = compute_config_hash(
+            delegate="GPU",
+            pose_cadence=1,
+            hand_landmarker_sha256="0" * 64,
+        )
+        self.assertEqual(len(c_gpu), 64)
+        self.assertEqual(c_gpu, compute_config_hash())
+        self.assertEqual(
+            c_gpu,
+            "7992397c3e4387e937c46b195fcb1e078109368f249bdc41171815212cae2ce5",
+            "El digest canónico v1.4.0 debe coincidir bit-a-bit con JS computeConfigHash()",
+        )
+        self.assertNotEqual(c_gpu, c_cpu)
+        self.assertNotEqual(c_gpu, c_cad2)
+        self.assertNotEqual(c_gpu, c_alt_task)
 
     def test_frame_cases_from_json(self):
         """Verify all shared JSON frame cases element-by-element."""

@@ -42,6 +42,12 @@ export const EMA_ALPHA = 0.50;
 export const WEIGHT_LABEL_PENALTY = 0.25;
 export const WEIGHT_TEMPORAL_CONTINUITY = 0.50;
 
+// Canonical SHA-256 checksums of the MediaPipe Tasks bundles used in production/capture
+export const HAND_LANDMARKER_SHA256 =
+  'fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1';
+export const POSE_LANDMARKER_SHA256 =
+  '59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a';
+
 const POSE_BILATERAL_PAIRS = Object.freeze([
   [11, 12],
   [13, 14],
@@ -1103,21 +1109,71 @@ export function mirrorFeatures178(features) {
 }
 
 /**
- * Build the canonical config object matching Python `compute_config_hash`.
- * @param {string} fixturesSha256 SHA-256 digest of feature_spec_cases.json
- * @returns {object} Canonical config object
+ * Build the canonical FEATURE_SPEC v1.4.0 config object matching Python `get_canonical_config_dict`.
+ * Decoupled from `tests/fixtures/`; seals spec parameters, delegate, pose_cadence, and `.task` SHA-256 hashes.
  */
-export function getCanonicalConfigObject(fixturesSha256, delegate = 'GPU') {
+export function getCanonicalConfigObject({
+  delegate = 'GPU',
+  poseCadence = 1,
+  handLandmarkerSha256 = HAND_LANDMARKER_SHA256,
+  poseLandmarkerSha256 = POSE_LANDMARKER_SHA256,
+} = {}) {
   return {
-    delegate,
-    duration_ms: 1000.0,
+    aspect_ratio: '4:3',
+    d_metric: '2d_iso_4_3',
+    delegate: String(delegate),
+    duration_ms: 1000,
+    ema_alpha: EMA_ALPHA,
     feature_spec_version: FEATURE_SPEC_VERSION,
-    fixtures_sha256: fixturesSha256,
+    hand_ambiguity_thresh: HAND_AMBIGUITY_THRESH,
+    hand_disconnected_thresh: HAND_DISCONNECTED_THRESH,
+    hand_landmarker_sha256: String(handLandmarkerSha256),
+    handedness_convention: 'direct',
+    max_bridge_count: MAX_BRIDGE_COUNT,
+    max_gap_ms: Math.trunc(MAX_GAP_MS),
+    min_unique_real_frames: MIN_UNIQUE_REAL_FRAMES,
+    pose_cadence: Math.trunc(poseCadence),
+    pose_landmarker_sha256: String(poseLandmarkerSha256),
+    pose_upper_indices: Array.from(POSE_UPPER_INDICES),
+    pose_wrist_min_vis: POSE_WRIST_MIN_VIS,
+    pose_z_clip_abs: Math.trunc(POSE_Z_CLIP_ABS),
+    pose_z_zero_indices: Array.from(POSE_Z_ZERO_INDICES),
     sequence_length: SEQUENCE_LENGTH,
+    shoulder_vis_thresh: SHOULDER_VIS_THRESH,
     shoulders_d_min: SHOULDERS_D_MIN,
     target_fps: 15,
     total_features: TOTAL_FEATURES,
     weight_label_penalty: WEIGHT_LABEL_PENALTY,
     weight_temporal_continuity: WEIGHT_TEMPORAL_CONTINUITY,
+    wrist_memory_ttl_ms: Math.trunc(WRIST_MEMORY_TTL_MS),
   };
+}
+
+/**
+ * Serialize canonical v1.4.0 config into compact sorted JSON bit-identical to Python `serialize_canonical_config`.
+ */
+export function serializeCanonicalConfig(options = {}) {
+  const cfg = getCanonicalConfigObject(options);
+  const sortedKeys = Object.keys(cfg).sort();
+  const ordered = {};
+  for (let i = 0; i < sortedKeys.length; i++) {
+    const k = sortedKeys[i];
+    ordered[k] = cfg[k];
+  }
+  return JSON.stringify(ordered);
+}
+
+/**
+ * Compute SHA-256 `config_hash` bit-identical to Python `compute_config_hash`.
+ */
+export async function computeConfigHash(options = {}) {
+  const serialized = serializeCanonicalConfig(options);
+  const bytes = new TextEncoder().encode(serialized);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  const view = new Uint8Array(digest);
+  let hex = '';
+  for (let i = 0; i < view.length; i++) {
+    hex += view[i].toString(16).padStart(2, '0');
+  }
+  return hex;
 }

@@ -536,5 +536,41 @@ describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.4.0', () => {
       expect(nanRes.valid).toBe(false);
       expect(nanRes.features).toBeNull();
     });
+
+    it('config_hash v1.4.0 desacoplado de fixtures: sella contrato, delegate, pose_cadence y hashes .task', async () => {
+      expect(typeof feMod.HAND_LANDMARKER_SHA256).toBe('string');
+      expect(feMod.HAND_LANDMARKER_SHA256.length).toBe(64);
+      expect(typeof feMod.POSE_LANDMARKER_SHA256).toBe('string');
+      expect(feMod.POSE_LANDMARKER_SHA256.length).toBe(64);
+      expect(typeof feMod.getCanonicalConfigObject).toBe('function');
+      expect(typeof feMod.serializeCanonicalConfig).toBe('function');
+      expect(typeof feMod.computeConfigHash).toBe('function');
+
+      const cfg = feMod.getCanonicalConfigObject();
+      expect(cfg).not.toHaveProperty('fixtures_sha256');
+      expect(cfg.feature_spec_version).toBe('1.4.0');
+      expect(cfg.d_metric).toBe('2d_iso_4_3');
+      expect(cfg.handedness_convention).toBe('direct');
+      expect(cfg.hand_landmarker_sha256).toBe(feMod.HAND_LANDMARKER_SHA256);
+      expect(cfg.pose_landmarker_sha256).toBe(feMod.POSE_LANDMARKER_SHA256);
+
+      const serialized = feMod.serializeCanonicalConfig();
+      expect(serialized).not.toContain('fixtures_sha256');
+
+      const hGpu = await feMod.computeConfigHash({ delegate: 'GPU', poseCadence: 1 });
+      const hCpu = await feMod.computeConfigHash({ delegate: 'CPU', poseCadence: 1 });
+      const hCad2 = await feMod.computeConfigHash({ delegate: 'GPU', poseCadence: 2 });
+      const hAltTask = await feMod.computeConfigHash({
+        delegate: 'GPU',
+        poseCadence: 1,
+        handLandmarkerSha256: '0'.repeat(64),
+      });
+      expect(hGpu).toMatch(/^[0-9a-f]{64}$/);
+      expect(hGpu).toBe(await feMod.computeConfigHash());
+      expect(hGpu).toBe('7992397c3e4387e937c46b195fcb1e078109368f249bdc41171815212cae2ce5');
+      expect(hGpu).not.toBe(hCpu);
+      expect(hGpu).not.toBe(hCad2);
+      expect(hGpu).not.toBe(hAltTask);
+    });
   });
 });

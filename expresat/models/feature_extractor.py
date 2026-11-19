@@ -25,7 +25,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -87,6 +86,10 @@ EMA_ALPHA: float = 0.50
 WEIGHT_LABEL_PENALTY: float = 0.25
 WEIGHT_TEMPORAL_CONTINUITY: float = 0.50
 
+# Canonical SHA-256 checksums of the MediaPipe Tasks bundles used in production/capture
+HAND_LANDMARKER_SHA256: str = "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1"
+POSE_LANDMARKER_SHA256: str = "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a"
+
 
 def dist2d_iso(x1: float, y1: float, x2: float, y2: float, aspect_ratio: float = ASPECT_RATIO) -> float:
     """Isotropic 2D Euclidean distance in 4:3 normalized image coordinates."""
@@ -100,34 +103,76 @@ def _is_finite_num(val: Any) -> bool:
         return False
 
 
-def get_fixtures_sha256(fixtures_path: Optional[Path] = None) -> str:
-    """Compute the SHA-256 digest of tests/fixtures/feature_spec_cases.json."""
-    if fixtures_path is None:
-        fixtures_path = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "feature_spec_cases.json"
-    if not fixtures_path.exists():
-        return "fixtures_not_found"
-    with open(fixtures_path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
-
-
-def compute_config_hash(fixtures_sha256: Optional[str] = None, delegate: str = "GPU") -> str:
-    """Compute the canonical config_hash sealing artifacts, delegate, and normalization parameters."""
-    if fixtures_sha256 is None:
-        fixtures_sha256 = get_fixtures_sha256()
-
-    canonical_dict = {
-        "delegate": delegate,
-        "duration_ms": 1000.0,
+def get_canonical_config_dict(
+    delegate: str = "GPU",
+    pose_cadence: int = 1,
+    hand_landmarker_sha256: str = HAND_LANDMARKER_SHA256,
+    pose_landmarker_sha256: str = POSE_LANDMARKER_SHA256,
+) -> dict[str, Any]:
+    """
+    Build the canonical FEATURE_SPEC v1.4.0 configuration dictionary sealed into `config_hash`.
+    Completely decoupled from `tests/fixtures/` so production builds never depend on test artifacts.
+    """
+    return {
+        "aspect_ratio": "4:3",
+        "d_metric": "2d_iso_4_3",
+        "delegate": str(delegate),
+        "duration_ms": 1000,
+        "ema_alpha": EMA_ALPHA,
         "feature_spec_version": FEATURE_SPEC_VERSION,
-        "fixtures_sha256": fixtures_sha256,
+        "hand_ambiguity_thresh": HAND_AMBIGUITY_THRESH,
+        "hand_disconnected_thresh": HAND_DISCONNECTED_THRESH,
+        "hand_landmarker_sha256": str(hand_landmarker_sha256),
+        "handedness_convention": "direct",
+        "max_bridge_count": MAX_BRIDGE_COUNT,
+        "max_gap_ms": int(MAX_GAP_MS),
+        "min_unique_real_frames": MIN_UNIQUE_REAL_FRAMES,
+        "pose_cadence": int(pose_cadence),
+        "pose_landmarker_sha256": str(pose_landmarker_sha256),
+        "pose_upper_indices": list(POSE_UPPER_INDICES),
+        "pose_wrist_min_vis": POSE_WRIST_MIN_VIS,
+        "pose_z_clip_abs": int(POSE_Z_CLIP_ABS),
+        "pose_z_zero_indices": list(POSE_Z_ZERO_INDICES),
         "sequence_length": SEQUENCE_LENGTH,
+        "shoulder_vis_thresh": SHOULDER_VIS_THRESH,
         "shoulders_d_min": SHOULDERS_D_MIN,
         "target_fps": 15,
         "total_features": TOTAL_FEATURES,
         "weight_label_penalty": WEIGHT_LABEL_PENALTY,
         "weight_temporal_continuity": WEIGHT_TEMPORAL_CONTINUITY,
+        "wrist_memory_ttl_ms": int(WRIST_MEMORY_TTL_MS),
     }
-    raw_bytes = json.dumps(canonical_dict, sort_keys=True).encode("utf-8")
+
+
+def serialize_canonical_config(
+    delegate: str = "GPU",
+    pose_cadence: int = 1,
+    hand_landmarker_sha256: str = HAND_LANDMARKER_SHA256,
+    pose_landmarker_sha256: str = POSE_LANDMARKER_SHA256,
+) -> str:
+    """Serialize canonical v1.4.0 config into compact sorted JSON identical to JS `serializeCanonicalConfig`."""
+    canonical_dict = get_canonical_config_dict(
+        delegate=delegate,
+        pose_cadence=pose_cadence,
+        hand_landmarker_sha256=hand_landmarker_sha256,
+        pose_landmarker_sha256=pose_landmarker_sha256,
+    )
+    return json.dumps(canonical_dict, sort_keys=True, separators=(",", ":"))
+
+
+def compute_config_hash(
+    delegate: str = "GPU",
+    pose_cadence: int = 1,
+    hand_landmarker_sha256: str = HAND_LANDMARKER_SHA256,
+    pose_landmarker_sha256: str = POSE_LANDMARKER_SHA256,
+) -> str:
+    """Compute SHA-256 `config_hash` sealing FEATURE_SPEC v1.4.0, delegate, pose_cadence, and .task hashes."""
+    raw_bytes = serialize_canonical_config(
+        delegate=delegate,
+        pose_cadence=pose_cadence,
+        hand_landmarker_sha256=hand_landmarker_sha256,
+        pose_landmarker_sha256=pose_landmarker_sha256,
+    ).encode("utf-8")
     return hashlib.sha256(raw_bytes).hexdigest()
 
 

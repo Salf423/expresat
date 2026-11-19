@@ -15,23 +15,116 @@ from typing import Optional
 import numpy as np
 
 try:
-    from models.feature_extractor import extract_window, FEATURE_SPEC_VERSION
+    from models.feature_extractor import (
+        FEATURE_SPEC_VERSION,
+        SEQUENCE_LENGTH,
+        TOTAL_FEATURES,
+        compute_config_hash,
+        extract_window,
+    )
 except ImportError:
     try:
-        from feature_extractor import extract_window, FEATURE_SPEC_VERSION
+        from feature_extractor import (
+            FEATURE_SPEC_VERSION,
+            SEQUENCE_LENGTH,
+            TOTAL_FEATURES,
+            compute_config_hash,
+            extract_window,
+        )
     except ImportError:
-        from expresat.models.feature_extractor import extract_window, FEATURE_SPEC_VERSION
+        from expresat.models.feature_extractor import (
+            FEATURE_SPEC_VERSION,
+            SEQUENCE_LENGTH,
+            TOTAL_FEATURES,
+            compute_config_hash,
+            extract_window,
+        )
 
 
-# Must match train_and_export.py
-SEQUENCE_LENGTH = 15
-# Upper-body MediaPipe Pose indices (nose, shoulders, elbows, wrists, hand anchors)
-POSE_UPPER_INDICES = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-POSE_COORDS = 4
-HAND_LANDMARKS = 21
-HAND_COORDS = 3
+NUM_FEATURES = TOTAL_FEATURES
 
-NUM_FEATURES = (len(POSE_UPPER_INDICES) * POSE_COORDS) + (HAND_LANDMARKS * HAND_COORDS * 2)
+
+class IncompatibleFeatureSpecError(RuntimeError):
+    """Raised when `model_metadata.json` violates the active FEATURE_SPEC contract or `config_hash`."""
+
+
+def _major_minor(version_str: str) -> tuple[str, str]:
+    parts = str(version_str).strip().split(".")
+    if len(parts) < 2:
+        return ("", "")
+    return (parts[0], parts[1])
+
+
+def validate_metadata_feature_spec(
+    metadata: dict,
+    expected_delegate: Optional[str] = None,
+    expected_pose_cadence: Optional[int] = None,
+) -> tuple[str, str]:
+    """
+    Strictly validate `model_metadata.json` against active `FEATURE_SPEC_VERSION` and `config_hash`.
+    Raises `IncompatibleFeatureSpecError` on missing fields, major.minor mismatch, delegate/cadence
+    mismatch, tensor shape mismatch, or digest mismatch.
+    """
+    if not isinstance(metadata, dict):
+        raise IncompatibleFeatureSpecError("model_metadata.json inválido: se esperaba un objeto JSON.")
+
+    meta_version = metadata.get("feature_spec_version")
+    if not isinstance(meta_version, str) or not meta_version.strip():
+        raise IncompatibleFeatureSpecError(
+            f"model_metadata.json carece de 'feature_spec_version' obligatorio (esperado {FEATURE_SPEC_VERSION})."
+        )
+
+    if _major_minor(meta_version) != _major_minor(FEATURE_SPEC_VERSION):
+        raise IncompatibleFeatureSpecError(
+            f"Versión FEATURE_SPEC incompatible: modelo={meta_version}, runtime={FEATURE_SPEC_VERSION}. "
+            f"Re-entrena y exporta el modelo con FEATURE_SPEC {FEATURE_SPEC_VERSION}."
+        )
+
+    meta_seq_len = metadata.get("sequence_length")
+    if meta_seq_len is not None and int(meta_seq_len) != SEQUENCE_LENGTH:
+        raise IncompatibleFeatureSpecError(
+            f"sequence_length incompatible: modelo={meta_seq_len}, runtime={SEQUENCE_LENGTH}."
+        )
+
+    meta_num_features = metadata.get("num_features")
+    if meta_num_features is not None and int(meta_num_features) != TOTAL_FEATURES:
+        raise IncompatibleFeatureSpecError(
+            f"num_features incompatible: modelo={meta_num_features}, runtime={TOTAL_FEATURES}."
+        )
+
+    meta_delegate = str(metadata.get("delegate", "GPU"))
+    try:
+        meta_pose_cadence = int(metadata.get("pose_cadence", 1))
+    except (TypeError, ValueError) as exc:
+        raise IncompatibleFeatureSpecError(
+            f"pose_cadence inválido en model_metadata.json: {metadata.get('pose_cadence')!r}"
+        ) from exc
+
+    if expected_delegate is not None and meta_delegate != str(expected_delegate):
+        raise IncompatibleFeatureSpecError(
+            f"Delegado incompatible: modelo={meta_delegate}, esperado={expected_delegate}."
+        )
+
+    if expected_pose_cadence is not None and meta_pose_cadence != int(expected_pose_cadence):
+        raise IncompatibleFeatureSpecError(
+            f"pose_cadence incompatible: modelo={meta_pose_cadence}, esperado={expected_pose_cadence}."
+        )
+
+    meta_hash = metadata.get("config_hash")
+    if not isinstance(meta_hash, str) or len(meta_hash) != 64:
+        raise IncompatibleFeatureSpecError(
+            "model_metadata.json carece de 'config_hash' SHA-256 válido (64 hex)."
+        )
+
+    expected_hash = compute_config_hash(delegate=meta_delegate, pose_cadence=meta_pose_cadence)
+    if meta_hash != expected_hash:
+        raise IncompatibleFeatureSpecError(
+            f"config_hash incompatible (delegate={meta_delegate}, pose_cadence={meta_pose_cadence}): "
+            f"modelo={meta_hash[:12]}..., runtime={expected_hash[:12]}.... "
+            f"Verifica parámetros FEATURE_SPEC {FEATURE_SPEC_VERSION} y checksums .task."
+        )
+
+    return meta_version, meta_hash
 
 
 class InferenceEngine:
@@ -39,24 +132,37 @@ class InferenceEngine:
     Thread-safe ONNX Runtime inference wrapper for ExpresaT sign classification.
     """
 
-    def __init__(self, model_dir: str, confidence_threshold: float = 0.5):
+    def __init__(
+        self,
+        model_dir: str,
+        confidence_threshold: float = 0.5,
+        expected_delegate: Optional[str] = None,
+        expected_pose_cadence: Optional[int] = None,
+    ):
         """
         Initialize the inference engine from `model_dir` containing the `.onnx`
-        artifact and `model_metadata.json`.
+        artifact and `model_metadata.json`. Validates FEATURE_SPEC and `config_hash`
+        before creating the ONNX Runtime session.
         """
         self.model_dir = Path(model_dir)
         self.confidence_threshold = confidence_threshold
         self._lock = threading.Lock()
 
         self.metadata = self._load_metadata()
+        self.feature_spec_version, self.config_hash = validate_metadata_feature_spec(
+            self.metadata,
+            expected_delegate=expected_delegate,
+            expected_pose_cadence=expected_pose_cadence,
+        )
         self.labels = self.metadata["labels"]
         self.num_classes = self.metadata["num_classes"]
 
         self.session = self._create_onnx_session()
         self._input_name = self.session.get_inputs()[0].name
 
-        print(f"    InferenceEngine inicializado")
+        print("    InferenceEngine inicializado")
         print(f"    Modelo:     {self._get_model_path().name}")
+        print(f"    Spec:       {self.feature_spec_version} ({self.config_hash[:12]}...)")
         print(f"    Clases:     {self.num_classes}")
         print(f"    Features:   {NUM_FEATURES}")
         print(f"    Threshold:  {self.confidence_threshold}")
@@ -122,91 +228,6 @@ class InferenceEngine:
             raise ValueError(f"Preprocesamiento de inferencia falló: {error} (prohibido caer a coordenadas crudas)")
         return tensor
 
-    def _extract_pose_upper(self, pose_landmarks: Optional[list]) -> np.ndarray:
-        """Extract the 13 upper-body pose landmarks with visibility into a (52,) array."""
-        if not pose_landmarks:
-            return np.zeros(len(POSE_UPPER_INDICES) * POSE_COORDS, dtype=np.float32)
-
-        features = []
-        for idx in POSE_UPPER_INDICES:
-            if idx < len(pose_landmarks):
-                lm = pose_landmarks[idx]
-                features.extend([
-                    lm.get("x", 0.0),
-                    lm.get("y", 0.0),
-                    lm.get("z", 0.0),
-                    lm.get("visibility", 0.0)
-                ])
-            else:
-                features.extend([0.0, 0.0, 0.0, 0.0])
-
-        return np.array(features, dtype=np.float32)
-
-    def _extract_hand(self, hand_landmarks: Optional[list]) -> np.ndarray:
-        """Extract 21 hand landmarks into a (63,) float32 array."""
-        if not hand_landmarks:
-            return np.zeros(HAND_LANDMARKS * HAND_COORDS, dtype=np.float32)
-
-        try:
-            hand_array = np.array(
-                [[lm.get("x", 0.0), lm.get("y", 0.0), lm.get("z", 0.0)]
-                 for lm in hand_landmarks[:HAND_LANDMARKS]],
-                dtype=np.float32
-            )
-            result = hand_array.flatten()
-
-            if result.shape[0] < HAND_LANDMARKS * HAND_COORDS:
-                result = np.pad(
-                    result,
-                    (0, HAND_LANDMARKS * HAND_COORDS - result.shape[0])
-                )
-            return result
-
-        except (ValueError, TypeError):
-            return np.zeros(HAND_LANDMARKS * HAND_COORDS, dtype=np.float32)
-
-    def _normalize_to_shoulders(self, features: np.ndarray,
-                                 pose_landmarks: list) -> np.ndarray:
-        """
-        Normalize coordinates relative to the shoulder midpoint (pose 11 and 12)
-        and scale by 3D inter-shoulder distance, matching the C++ extractor.
-        """
-        try:
-            left_shoulder = pose_landmarks[11]
-            right_shoulder = pose_landmarks[12]
-
-            center_x = (left_shoulder.get("x", 0) + right_shoulder.get("x", 0)) / 2.0
-            center_y = (left_shoulder.get("y", 0) + right_shoulder.get("y", 0)) / 2.0
-            center_z = (left_shoulder.get("z", 0) + right_shoulder.get("z", 0)) / 2.0
-
-            # Full 3D Euclidean shoulder distance to match C++ normalization
-            dx = left_shoulder.get("x", 0) - right_shoulder.get("x", 0)
-            dy = left_shoulder.get("y", 0) - right_shoulder.get("y", 0)
-            dz = left_shoulder.get("z", 0) - right_shoulder.get("z", 0)
-            shoulder_dist = np.sqrt(dx*dx + dy*dy + dz*dz)
-
-            scale = max(shoulder_dist, 1e-6)
-            normalized = features.copy()
-
-            # Upper pose: preserve visibility at offset +3
-            pose_end = len(POSE_UPPER_INDICES) * POSE_COORDS
-            for j in range(0, pose_end, POSE_COORDS):
-                normalized[j]     = (features[j]     - center_x) / scale
-                normalized[j + 1] = (features[j + 1] - center_y) / scale
-                normalized[j + 2] = (features[j + 2] - center_z) / scale
-
-            hand_start = pose_end
-            hand_total = HAND_LANDMARKS * HAND_COORDS * 2
-            for j in range(hand_start, hand_start + hand_total, HAND_COORDS):
-                normalized[j]     = (features[j]     - center_x) / scale
-                normalized[j + 1] = (features[j + 1] - center_y) / scale
-                normalized[j + 2] = (features[j + 2] - center_z) / scale
-
-            return normalized
-
-        except (IndexError, KeyError, TypeError):
-            return features
-
     def predict(self, raw_frames: list[dict]) -> dict:
         """
         Run preprocessing, ONNX Runtime inference, and softmax post-processing
@@ -271,6 +292,8 @@ class InferenceEngine:
             "engine": "ONNX Runtime",
             "model_file": model_path.name,
             "model_size_kb": round(model_path.stat().st_size / 1024, 1),
+            "feature_spec_version": self.feature_spec_version,
+            "config_hash": self.config_hash,
             "num_classes": self.num_classes,
             "labels": self.labels,
             "sequence_length": SEQUENCE_LENGTH,
