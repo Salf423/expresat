@@ -1,15 +1,17 @@
 """
-Numerical conformance suite against docs/dataset-generator/FEATURE_SPEC.md v1.2.2.
+Numerical conformance suite against docs/dataset-generator/FEATURE_SPEC.md v1.4.0.
 
 Compares against tests/fixtures/feature_spec_cases.json element-by-element under
-L_inf <= 1e-6 for frame cases, window cases, and analytical invariants
-(translation, scale, mirror commutativity/involution, and input immutability).
+L_inf <= 1e-6 for frame cases, window cases, hand-calculated analytical mini-fixtures,
+and v1.4.0 quality gates (strict <=100ms gaps, D_2D_iso 4:3, P15..P22 z'=0, direct
+laterality, wrist TTL expiry, density/bridge/tail gates, and mirror involution).
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -21,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "schemas"))
 
 from validate_recording import validate_recording
 
+import models.feature_extractor as fe_mod
 from models.feature_extractor import (
     FEATURE_SPEC_VERSION,
     TOTAL_FEATURES,
@@ -62,7 +65,7 @@ class TestFeatureSpecCasesJson(unittest.TestCase):
 
     def test_version_matches_fixtures(self):
         self.assertEqual(FEATURE_SPEC_VERSION, self.fixtures["feature_spec_version"])
-        self.assertEqual(FEATURE_SPEC_VERSION, "1.3.0")
+        self.assertEqual(FEATURE_SPEC_VERSION, "1.4.0")
 
     def test_config_hash_incorporates_fixtures_sha256(self):
         fixtures_hash = get_fixtures_sha256()
@@ -267,17 +270,17 @@ class TestFeatureSpecCasesJson(unittest.TestCase):
         pose[16]["y"] = 0.50
         pose[16]["visibility"] = 0.95
 
-        # Physical left hand ('Right' label) near P15; physical right hand ('Left' label) near P16
+        # Physical left hand ('Left' label in v1.4.0 direct convention) near P15; physical right hand ('Right') near P16
         hand_left = [{"x": 0.40, "y": 0.50, "z": 0.0}] * 21
         hand_right = [{"x": 0.60, "y": 0.50, "z": 0.0}] * 21
 
         raw["hands"] = [
-            {"landmarks": hand_left, "categoryName": "Right", "score": 0.95},
-            {"landmarks": hand_right, "categoryName": "Left", "score": 0.95},
+            {"landmarks": hand_left, "categoryName": "Left", "score": 0.95},
+            {"landmarks": hand_right, "categoryName": "Right", "score": 0.95},
         ]
         raw["handedness"] = [
-            [{"categoryName": "Right", "score": 0.95}],
             [{"categoryName": "Left", "score": 0.95}],
+            [{"categoryName": "Right", "score": 0.95}],
         ]
 
         assigned_l, assigned_r, is_ambig = assign_hands_to_anatomical_slots(raw, pose, D)
@@ -309,12 +312,12 @@ class TestFeatureSpecCasesJson(unittest.TestCase):
         hand_right = [{"x": 0.65, "y": 0.50, "z": 0.0}] * 21
 
         raw["hands"] = [
-            {"landmarks": hand_left, "categoryName": "Right", "score": 0.95},
-            {"landmarks": hand_right, "categoryName": "Left", "score": 0.95},
+            {"landmarks": hand_left, "categoryName": "Left", "score": 0.95},
+            {"landmarks": hand_right, "categoryName": "Right", "score": 0.95},
         ]
         raw["handedness"] = [
-            [{"categoryName": "Right", "score": 0.95}],
             [{"categoryName": "Left", "score": 0.95}],
+            [{"categoryName": "Right", "score": 0.95}],
         ]
 
         assigned_l, assigned_r, is_ambig = assign_hands_to_anatomical_slots(raw, pose, D)
@@ -373,23 +376,25 @@ class TestRecorderSchemaAndObjectMirror(unittest.TestCase):
         self.assertTrue(v1 and v6)
         self.assertLessEqual(float(np.max(np.abs(feats_01 - feats_06))), 1e-6)
 
-    @unittest.expectedFailure
     def test_mirror_raw_frame_object_hands_flips_x_category_and_involution(self):
-        """Expected failure: mirror_raw_frame does not yet handle object-wrapped hand entries."""
+        """v1.4.0: mirror_raw_frame handles {landmarks, categoryName, score} and is an exact involution."""
         raw = copy.deepcopy(self.fixtures["frame_cases"]["TC_06_recorder_object_hands"]["input"])
+        orig_cat0 = raw["hands"][0]["categoryName"]
+        orig_cat1 = raw["hands"][1]["categoryName"]
+        exp_cat0 = "Left" if orig_cat0 == "Right" else "Right"
+        exp_cat1 = "Left" if orig_cat1 == "Right" else "Right"
         mirrored = mirror_raw_frame(raw)
 
-        self.assertEqual(mirrored["hands"][0]["categoryName"], "Left")
-        self.assertEqual(mirrored["hands"][1]["categoryName"], "Right")
+        self.assertEqual(mirrored["hands"][0]["categoryName"], exp_cat0)
+        self.assertEqual(mirrored["hands"][1]["categoryName"], exp_cat1)
         self.assertAlmostEqual(mirrored["hands"][0]["landmarks"][0]["x"], 1.0 - 0.70, places=6)
         self.assertAlmostEqual(mirrored["hands"][1]["landmarks"][0]["x"], 1.0 - 0.30, places=6)
 
         double_mirrored = mirror_raw_frame(mirrored)
         self.assertEqual(double_mirrored, raw)
 
-    @unittest.expectedFailure
     def test_mirror_raw_frame_object_hands_asymmetric_commutativity_linf(self):
-        """Expected failure: asymmetric mirror commutativity on object-wrapped hands."""
+        """v1.4.0: asymmetric mirror commutativity on object-wrapped hands."""
         base = copy.deepcopy(self.fixtures["frame_cases"]["TC_06_recorder_object_hands"]["input"])
         one_hand = {"pose": base["pose"], "hands": [base["hands"][0]]}
 
@@ -403,11 +408,10 @@ class TestRecorderSchemaAndObjectMirror(unittest.TestCase):
         self.assertLessEqual(max_diff, 1e-6, f"Conmutatividad objeto rota: L_inf={max_diff:.6f}")
 
 
-class TestRealRecordingLateralityV140XFail(unittest.TestCase):
+class TestRealRecordingLateralityV140(unittest.TestCase):
     """
-    Expected-failure tests targeting proposed v1.4.0 direct laterality
-    ('Left' -> leftHand, 'Right' -> rightHand) on 15 real dev recording frames
-    while FEATURE_SPEC remains at v1.3.0.
+    Mandatory v1.4.0 direct laterality tests ('Left' -> leftHand, 'Right' -> rightHand)
+    on 15 real dev recording frames.
     """
 
     @classmethod
@@ -416,9 +420,8 @@ class TestRealRecordingLateralityV140XFail(unittest.TestCase):
         with open(fixture_path, "r", encoding="utf-8") as f:
             cls.real_fixture = json.load(f)
 
-    @unittest.expectedFailure
     def test_real_15f_direct_laterality_frame_blocks_v140(self):
-        """Expected failure pre-v1.4.0: direct Left->leftHand[52:115] and Right->rightHand[115:178] mapping."""
+        """v1.4.0: direct Left->leftHand[52:115] and Right->rightHand[115:178] mapping."""
         for fr in self.real_fixture["frames"]:
             raw = {
                 "pose": copy.deepcopy(fr["pose"]),
@@ -446,9 +449,8 @@ class TestRealRecordingLateralityV140XFail(unittest.TestCase):
                 expected_cat = "Left" if slot == "leftHand" else "Right"
                 self.assertEqual(hand_obj["categoryName"], expected_cat)
 
-    @unittest.expectedFailure
     def test_real_15f_window_sequence_direct_laterality_and_ambig_v140(self):
-        """Expected failure pre-v1.4.0: extract_window direct laterality mapping across transition and AMBIG frames."""
+        """v1.4.0: extract_window direct laterality mapping across transition and AMBIG frames."""
         dt_step = 1000.0 / 15.0
         window_frames = [
             {
@@ -476,6 +478,287 @@ class TestRealRecordingLateralityV140XFail(unittest.TestCase):
                 "rightHand" in expected_slots,
                 f"Slot k={k} (frame {fr['source_frame_idx']}) discrepa en rightHand",
             )
+
+
+class TestFeatureSpecV140AnalyticalAndGates(unittest.TestCase):
+    """
+    Independent hand-calculated mini-fixtures and strict FEATURE_SPEC v1.4.0 gates:
+      - D_2D_iso (4:3) immune to pose.z noise
+      - pose.z' = 0.0 on P15..P22 and clip [-2.0, 2.0] on P00, P11..P14
+      - Hand-calculated 3-frame LERP and 4-step EMA with absence reset
+      - Strict <=100ms raw gap, tail extrapolation, unique_real_frames >= 12, bridges <= 3/14
+      - Unified 1-hand spatial+label cost, wrist TTL expiry (>200ms), NaN rejection, leftHand/rightHand mirror swap
+    """
+
+    @staticmethod
+    def _make_base_pose() -> list[dict]:
+        pose = [{"x": 0.50, "y": 0.50, "z": 0.00, "visibility": 0.95} for _ in range(33)]
+        pose[0] = {"x": 0.50, "y": 0.20, "z": -0.05, "visibility": 0.99}
+        pose[11] = {"x": 0.65, "y": 0.40, "z": 0.00, "visibility": 0.95}
+        pose[12] = {"x": 0.35, "y": 0.40, "z": 0.00, "visibility": 0.95}
+        pose[13] = {"x": 0.70, "y": 0.55, "z": -0.05, "visibility": 0.90}
+        pose[14] = {"x": 0.30, "y": 0.55, "z": -0.05, "visibility": 0.90}
+        pose[15] = {"x": 0.70, "y": 0.70, "z": -0.80, "visibility": 0.95}
+        pose[16] = {"x": 0.30, "y": 0.70, "z": -0.80, "visibility": 0.95}
+        for idx in range(17, 23):
+            pose[idx] = {"x": 0.70 if idx % 2 == 1 else 0.30, "y": 0.72, "z": -1.40, "visibility": 0.90}
+        return pose
+
+    def _make_window_from_ts(self, ts_list: list[float]) -> list[dict]:
+        pose = self._make_base_pose()
+        hand_l = [{"x": 0.70, "y": 0.70, "z": -0.02} for _ in range(21)]
+        return [
+            {
+                "t_ms": float(t),
+                "pose": copy.deepcopy(pose),
+                "hands": [{"landmarks": copy.deepcopy(hand_l), "categoryName": "Left", "score": 0.96}],
+            }
+            for t in ts_list
+        ]
+
+    def test_hand_calculated_d_2d_iso_and_pose_z_policy(self):
+        """Exact analytical rational check: tilted shoulders D_2D_iso=0.375, P0 z' clipped -2.0, P15..P22 z'=0.0."""
+        pose = [{"x": 0.55, "y": 0.40, "z": 0.0, "visibility": 0.90} for _ in range(33)]
+        # P11=(0.70, 0.55, 0.40), P12=(0.40, 0.25, -0.40):
+        # dx=0.30 -> dx*4/3=0.40, dy=0.30 -> hypot(0.40,0.30)=0.50 -> D_2D_iso = 0.50/(4/3) = 0.375 exact (immune to dz=0.80!)
+        pose[0] = {"x": 0.55, "y": 0.25, "z": -1.20, "visibility": 1.25}   # raw z' = -1.20/0.375 = -3.20 -> clip -2.0; vis -> 1.0
+        pose[11] = {"x": 0.70, "y": 0.55, "z": 0.40, "visibility": 0.95}   # z' = +0.40/0.375 = +1.0666667
+        pose[12] = {"x": 0.40, "y": 0.25, "z": -0.40, "visibility": 0.95}  # z' = -0.40/0.375 = -1.0666667
+        pose[13] = {"x": 0.70, "y": 0.65, "z": 1.125, "visibility": 0.90}  # raw z' = +3.0 -> clip +2.0
+        pose[14] = {"x": 0.40, "y": 0.65, "z": -0.375, "visibility": 0.90} # z' = -1.0
+        pose[15] = {"x": 0.70, "y": 0.70, "z": -1.50, "visibility": 0.90}  # P15..P22 -> z' MUST be 0.0
+        pose[16] = {"x": 0.40, "y": 0.70, "z": -1.50, "visibility": 0.90}
+        for idx in range(17, 23):
+            pose[idx] = {"x": 0.70, "y": 0.70, "z": -1.80, "visibility": 0.90}
+
+        hand_l = [{"x": 0.70, "y": 0.70, "z": -0.05} for _ in range(21)]
+        hand_l[8] = {"x": 0.70, "y": 0.55, "z": -0.20}  # y'=(0.55-0.40)/0.375=0.40, z'=(-0.20+0.05)/0.375=-0.40
+
+        frame = {
+            "pose": pose,
+            "hands": [{"landmarks": hand_l, "categoryName": "Left", "score": 0.98}],
+        }
+        feats, valid, err = extract_frame_features(frame)
+        self.assertTrue(valid, f"Error inesperado: {err}")
+        self.assertIsNone(err)
+
+        # P00 [0..3]: x'=0, y'=-0.40, z'=-2.0 (clipped), vis=1.0 (clamped)
+        self.assertAlmostEqual(float(feats[0]), 0.0, places=6)
+        self.assertAlmostEqual(float(feats[1]), -0.40, places=6)
+        self.assertAlmostEqual(float(feats[2]), -2.0, places=6)
+        self.assertAlmostEqual(float(feats[3]), 1.0, places=6)
+
+        # P11 [4..7] and P13 [12..15]
+        self.assertAlmostEqual(float(feats[4]), 0.40, places=6)
+        self.assertAlmostEqual(float(feats[5]), 0.40, places=6)
+        self.assertAlmostEqual(float(feats[6]), 0.40 / 0.375, places=5)
+        self.assertAlmostEqual(float(feats[14]), 2.0, places=6)  # P13 z' clipped +2.0
+
+        # P15..P22 (upper indices 5..12) MUST have exact z' == 0.0
+        for upper_i in range(5, 13):
+            self.assertEqual(float(feats[upper_i * 4 + 2]), 0.0, f"upper pose idx {upper_i} z' debe ser 0.0")
+
+        # Left hand [52..114]: wrist=(0.40, 0.80, 0.0), index tip #8=(0.40, 0.40, -0.40)
+        self.assertAlmostEqual(float(feats[52 + 0]), 0.40, places=6)
+        self.assertAlmostEqual(float(feats[52 + 1]), 0.80, places=6)
+        self.assertAlmostEqual(float(feats[52 + 2]), 0.0, places=6)
+        self.assertAlmostEqual(float(feats[52 + 8 * 3 + 0]), 0.40, places=6)
+        self.assertAlmostEqual(float(feats[52 + 8 * 3 + 1]), 0.40, places=6)
+        self.assertAlmostEqual(float(feats[52 + 8 * 3 + 2]), -0.40, places=6)
+
+        # Right hand [115..177] absent -> 63 exact zeros
+        self.assertTrue(np.all(feats[115:178] == 0.0))
+
+    def test_hand_calculated_3frame_lerp_helper(self):
+        """Independent hand-computed 3-frame LERP verification (zero circularity)."""
+        self.assertTrue(hasattr(fe_mod, "resample_sequence_blocks"), "Falta resample_sequence_blocks")
+        p0 = [{"x": 0.20, "y": 0.10, "z": 0.00, "visibility": 0.80}] * 33
+        p1 = [{"x": 0.40, "y": 0.30, "z": -0.20, "visibility": 0.90}] * 33
+        p2 = [{"x": 1.00, "y": 0.50, "z": 0.20, "visibility": 1.00}] * 33
+        lh0 = [{"x": 0.60, "y": 0.50, "z": 0.00}] * 21
+        lh1 = [{"x": 0.80, "y": 0.70, "z": -0.10}] * 21
+        blocks = [
+            {"timestamp_ms": 0.0, "pose": p0, "left_hand": lh0, "right_hand": None},
+            {"timestamp_ms": 50.0, "pose": p1, "left_hand": lh1, "right_hand": None},
+            {"timestamp_ms": 100.0, "pose": p2, "left_hand": None, "right_hand": None},
+        ]
+        targets = [0.0, 25.0, 50.0, 60.0, 75.0, 100.0]
+        out = fe_mod.resample_sequence_blocks(blocks, targets)
+        self.assertEqual(len(out), 6)
+
+        exp_px = [0.20, 0.30, 0.40, 0.52, 0.70, 1.00]
+        exp_py = [0.10, 0.20, 0.30, 0.34, 0.40, 0.50]
+        exp_pz = [0.00, -0.10, -0.20, -0.12, 0.00, 0.20]
+        exp_pv = [0.80, 0.85, 0.90, 0.92, 0.95, 1.00]
+        exp_lhx = [0.60, 0.70, 0.80, 0.80, None, None]
+
+        for idx in range(6):
+            self.assertAlmostEqual(out[idx]["pose"][0]["x"], exp_px[idx], places=6)
+            self.assertAlmostEqual(out[idx]["pose"][0]["y"], exp_py[idx], places=6)
+            self.assertAlmostEqual(out[idx]["pose"][0]["z"], exp_pz[idx], places=6)
+            self.assertAlmostEqual(out[idx]["pose"][0]["visibility"], exp_pv[idx], places=6)
+            if exp_lhx[idx] is None:
+                self.assertIsNone(out[idx]["left_hand"])
+            else:
+                self.assertIsNotNone(out[idx]["left_hand"])
+                self.assertAlmostEqual(out[idx]["left_hand"][0]["x"], exp_lhx[idx], places=6)
+
+    def test_hand_calculated_4step_ema_helper_with_hand_reset(self):
+        """Independent hand-computed 4-step EMA (alpha=0.50) with hand absence reset."""
+        self.assertTrue(hasattr(fe_mod, "apply_block_ema"), "Falta apply_block_ema")
+        pose_xs = [1.0, 3.0, 5.0, 9.0]
+        pose_vs = [0.9, 0.8, 0.7, 0.6]
+        lh_xs = [0.20, 0.60, None, 0.90]
+        blocks = [
+            {
+                "timestamp_ms": k * 66.67,
+                "pose": [{"x": pose_xs[k], "y": 0.0, "z": 0.0, "visibility": pose_vs[k]}] * 33,
+                "left_hand": ([{"x": lh_xs[k], "y": 0.0, "z": 0.0}] * 21) if lh_xs[k] is not None else None,
+                "right_hand": None,
+            }
+            for k in range(4)
+        ]
+        out = fe_mod.apply_block_ema(blocks, alpha=0.50)
+        exp_pose_x = [1.0, 2.0, 3.5, 6.25]
+        exp_lh_x = [0.20, 0.40, None, 0.90]
+        for k in range(4):
+            self.assertAlmostEqual(out[k]["pose"][0]["x"], exp_pose_x[k], places=6)
+            self.assertAlmostEqual(out[k]["pose"][0]["visibility"], pose_vs[k], places=6)
+            if exp_lh_x[k] is None:
+                self.assertIsNone(out[k]["left_hand"])
+            else:
+                self.assertAlmostEqual(out[k]["left_hand"][0]["x"], exp_lh_x[k], places=6)
+
+    def test_strict_raw_gap_gate_rejects_above_100ms_regardless_of_duration(self):
+        """Strict <=100.0ms raw gap gate: must reject 100.1ms/166.6ms (1000ms) and 150ms (2500ms)."""
+        # 100.1ms gap inside an otherwise dense 1000ms window
+        ts_100_1 = [0.0, 100.1] + [100.1 + 60.0 * k for k in range(1, 18)]
+        _, valid, err = extract_window(self._make_window_from_ts(ts_100_1), target_fps=15, duration_ms=1000.0)
+        self.assertFalse(valid)
+        self.assertEqual(err, "ERR_INVALID_FRAME_GAP_TOO_LARGE")
+
+        # 166.6ms gap (previously accepted under broken gap - dt_nominal!)
+        ts_166_6 = [0.0, 166.6] + [166.6 + 60.0 * k for k in range(1, 18)]
+        _, valid2, err2 = extract_window(self._make_window_from_ts(ts_166_6), target_fps=15, duration_ms=1000.0)
+        self.assertFalse(valid2)
+        self.assertEqual(err2, "ERR_INVALID_FRAME_GAP_TOO_LARGE")
+
+        # 150.0ms gap with duration_ms=2500.0 MUST ALSO be rejected (absolute, no scaling)
+        ts_2500 = [0.0, 150.0] + [150.0 + 60.0 * k for k in range(1, 45)]
+        _, valid3, err3 = extract_window(self._make_window_from_ts(ts_2500), target_fps=15, duration_ms=2500.0)
+        self.assertFalse(valid3)
+        self.assertEqual(err3, "ERR_INVALID_FRAME_GAP_TOO_LARGE")
+
+    def test_plan_mejora_density_bridge_and_tail_gates(self):
+        """Verify PLAN_MEJORA §1.3 worked cases: PASA, BORDE, FALLA (unique<12), HIGH_INTERP (>3/14), and TAIL."""
+        # Case 1 — PASA (16 FPS alternating 60/65ms)
+        ts_pasa = [0.0]
+        for i in range(20):
+            ts_pasa.append(ts_pasa[-1] + (60.0 if i % 2 == 0 else 65.0))
+        t1, v1, e1 = extract_window(self._make_window_from_ts(ts_pasa), target_fps=15, duration_ms=1000.0)
+        self.assertTrue(v1, f"Case 1 PASA falló: {e1}")
+        self.assertEqual(t1.shape, (1, 15, 178))
+
+        # Case 2 — BORDE (max_gap=90ms, unique=12/15, bridges=3/14)
+        ts_borde = [0.0, 90.0, 180.0, 262.0, 344.0, 426.0, 508.0, 590.0, 672.0, 754.0, 836.0, 918.0, 1000.0]
+        t2, v2, e2 = extract_window(self._make_window_from_ts(ts_borde), target_fps=15, duration_ms=1000.0)
+        self.assertTrue(v2, f"Case 2 BORDE falló: {e2}")
+        self.assertEqual(t2.shape, (1, 15, 178))
+
+        # Case 3 — FALLA (89ms steps: max_gap<=100, tail=0, but unique=11/15 < 12)
+        ts_falla = [0.0, 89.0, 178.0, 267.0, 356.0, 445.0, 534.0, 623.0, 712.0, 801.0, 890.0, 979.0]
+        t3, v3, e3 = extract_window(self._make_window_from_ts(ts_falla), target_fps=15, duration_ms=1000.0)
+        self.assertFalse(v3)
+        self.assertIsNone(t3)
+        self.assertEqual(e3, "ERR_WINDOW_LOW_UNIQUE_FRAMES")
+
+        # Case 4 — HIGH_INTERP (unique>=12, max_gap=85<=100, tail=0, bridges=5/14 > 3/14)
+        ts_bridge = [0.0, 85.0, 170.0, 255.0, 340.0] + [340.0 + 50.0 * k for k in range(1, 14)]
+        t4, v4, e4 = extract_window(self._make_window_from_ts(ts_bridge), target_fps=15, duration_ms=1000.0)
+        self.assertFalse(v4)
+        self.assertIsNone(t4)
+        self.assertEqual(e4, "ERR_WINDOW_HIGH_INTERPOLATION")
+
+        # Case 5 — TAIL EXTRAPOLATION (15 frames @ 30 FPS = 466.7ms < 933.33ms; and all t_ms=0.0)
+        ts_30fps_short = [i * (1000.0 / 30.0) for i in range(15)]
+        t5, v5, e5 = extract_window(self._make_window_from_ts(ts_30fps_short), target_fps=15, duration_ms=1000.0)
+        self.assertFalse(v5)
+        self.assertIsNone(t5)
+        self.assertEqual(e5, "ERR_WINDOW_TAIL_EXTRAPOLATION")
+
+        ts_zero = [0.0] * 15
+        t6, v6, e6 = extract_window(self._make_window_from_ts(ts_zero), target_fps=15, duration_ms=1000.0)
+        self.assertFalse(v6)
+        self.assertIsNone(t6)
+        self.assertEqual(e6, "ERR_WINDOW_TAIL_EXTRAPOLATION")
+
+    def test_single_hand_unified_cost_resists_mislabeled_hand_far_from_wrong_wrist(self):
+        """Unified 1-hand scoring: spatial proximity to P15/P16 rescues a mislabeled hand on both sides."""
+        pose = self._make_base_pose()
+        D = 0.30
+        hand_at_p15 = [{"x": 0.70, "y": 0.70, "z": 0.0} for _ in range(21)]
+        for lbl in ("Left", "Right"):
+            al, ar, _ = assign_hands_to_anatomical_slots(
+                {"pose": pose, "hands": [{"landmarks": hand_at_p15, "categoryName": lbl, "score": 0.80}]},
+                pose,
+                D,
+            )
+            self.assertIsNotNone(al, f"Mano sobre P15 con etiqueta '{lbl}' debe ir a leftHand")
+            self.assertIsNone(ar)
+
+        hand_at_p16 = [{"x": 0.30, "y": 0.70, "z": 0.0} for _ in range(21)]
+        for lbl in ("Left", "Right"):
+            al, ar, _ = assign_hands_to_anatomical_slots(
+                {"pose": pose, "hands": [{"landmarks": hand_at_p16, "categoryName": lbl, "score": 0.80}]},
+                pose,
+                D,
+            )
+            self.assertIsNone(al)
+            self.assertIsNotNone(ar, f"Mano sobre P16 con etiqueta '{lbl}' debe ir a rightHand")
+
+    def test_stale_wrist_memory_expires_after_200ms_absence(self):
+        """prev_left_w must expire after >200ms absence so an unlabeled hand on P16 lands in rightHand."""
+        pose = self._make_base_pose()
+        frames = []
+        # Frame 0 (t=0): unlabeled hand at x=0.55 (closer to P15=0.70 than P16=0.30) -> sets prev_left_w
+        frames.append({
+            "t_ms": 0.0,
+            "pose": copy.deepcopy(pose),
+            "hands": [[{"x": 0.55, "y": 0.70, "z": 0.0}] * 21],
+            "handedness": [],
+        })
+        # Frames 1..5 (t=66.67..333.33ms): no hands (>200ms absence!)
+        for k in range(1, 6):
+            frames.append({"t_ms": k * (1000.0 / 15.0), "pose": copy.deepcopy(pose), "hands": []})
+        # Frames 6..14 (t=400..933.33ms): unlabeled hand right on top of P16 (0.30, 0.70)
+        for k in range(6, 15):
+            frames.append({
+                "t_ms": k * (1000.0 / 15.0),
+                "pose": copy.deepcopy(pose),
+                "hands": [[{"x": 0.30, "y": 0.70, "z": 0.0}] * 21],
+                "handedness": [],
+            })
+        tensor, valid, err = extract_window(frames, target_fps=15, duration_ms=1000.0)
+        self.assertTrue(valid, f"Error inesperado: {err}")
+        # At k=6..14, rightHand [115:178] MUST be active and leftHand [52:115] MUST be zero
+        self.assertEqual(float(np.linalg.norm(tensor[0, 6, 52:115])), 0.0)
+        self.assertGreater(float(np.linalg.norm(tensor[0, 6, 115:178])), 0.1)
+
+    def test_mirror_raw_frame_swaps_lefthand_righthand_keys_and_rejects_nan(self):
+        """mirror_raw_frame must swap leftHand<->rightHand keys; non-finite coords must be rejected."""
+        pose = self._make_base_pose()
+        lh = [{"x": 0.70, "y": 0.70, "z": 0.0} for _ in range(21)]
+        frame = {"pose": pose, "leftHand": lh, "rightHand": None}
+        mirrored = mirror_raw_frame(frame)
+        self.assertIsNone(mirrored["leftHand"])
+        self.assertIsNotNone(mirrored["rightHand"])
+        self.assertAlmostEqual(mirrored["rightHand"][0]["x"], 0.30, places=6)
+
+        bad_nan = {"pose": copy.deepcopy(pose), "hands": []}
+        bad_nan["pose"][11]["x"] = float("nan")
+        feats, valid, err = extract_frame_features(bad_nan)
+        self.assertFalse(valid)
+        self.assertIsNone(feats)
 
 
 if __name__ == "__main__":
