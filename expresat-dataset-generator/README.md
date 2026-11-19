@@ -1,116 +1,87 @@
-# expresat-dataset-generator
+# `expresat-dataset-generator` — Pipeline Offline de Datasets LSM (`FEATURE_SPEC v1.4.0`)
 
-Native C++ desktop tool for capturing **sign language gesture samples** in real-time, normalizing MediaPipe landmarks, and generating synthetic augmented datasets ready for training the ExpresaT GRU model via GitHub Actions.
+> [!IMPORTANT]
+> **Retiro del generador C++ legacy (`ERR_CPP_NOT_CONFORMANT`):** La antigua herramienta C++/ImGui con modo stub fue retirada. La única fuente de verdad activa en la rama `dataset-v2` es el pipeline **JS ↔ Python `FEATURE_SPEC v1.4.0`** con paridad verificada ($L_\infty \le 10^{-6}$). Consulta [`docs/NATIVE_ISOLATION_POLICY.md`](../docs/NATIVE_ISOLATION_POLICY.md) para la política de aislamiento de `expresat-native/`.
 
 ---
 
-## Architecture
+## Arquitectura del Pipeline en 2 Etapas
 
+```text
+Etapa 1 (Navegador — DevRecorder.jsx)
+  Cámara 4:3 real -> MediaPipe Tasks (Hand + Pose, GPU/CPU, pose_cadence=1)
+  -> Exporta *.raw.json v1.4.0 (landmarks crudos + t_ms + config_hash + SHA-256 .task)
+        │
+        ▼
+Etapa 2 (Python Offline — expresat-dataset-generator/scripts/)
+  1. validate_recording.py  -> Verifica esquema v1.4.0, FPS >= 15, max_gap <= 100 ms,
+                               aspect 4:3, presencia activa de manos y config_hash.
+  2. build_dataset_v140.py  -> Segmenta ventanas (reposo / estatica / dinamica),
+                               divide con StratifiedGroupKFold por (subject_id, session_id, take_id),
+                               aplica data augmentation isotrópico 4:3 SOLO en train,
+                               extrae tensores (N, 15, 178) float32 vectorizados
+                               y sella shards X_{train,val,test}.npy + y_*.npy + manifest.json.
+        │
+        ▼
+Etapa 3 (Entrenamiento y Export — expresat/models/train_and_export.py)
+  Consume shards .npy (mmap_mode='r') + manifest.json validado
+  -> Ablación A/B justa: DS-TCN 1D vs BiGRU (Macro-F1 Early Stopping)
+  -> Calibración post-hoc Temperature Scaling (ECE < 0.03)
+  -> Export ONNX autocontenido FP32 + INT8 (cero .onnx.data)
+  -> Destino canónico: expresat/models/exported_model/
 ```
+
+---
+
+## Estructura de Scripts Activos
+
+```text
 expresat-dataset-generator/
-├── CMakeLists.txt              # CMake build (OpenCV 5, GLFW, ImGui, nlohmann/json)
-├── scripts/
-│   ├── setup_third_party.sh   # Fetch ImGui, GLAD, nlohmann/json
-│   └── build.sh               # One-command build (debug | release | mediapipe)
-├── src/
-│   ├── types.h                 # Shared constants & data structures (178D layout)
-│   ├── camera_stream.h/.cpp    # Background OpenCV capture → GL texture
-│   ├── mediapipe_extractor.h/.cpp  # Landmark extraction + shoulder normalization
-│   ├── data_augmenter.h/.cpp   # Synthetic augmentation engine
-│   ├── dataset_writer.h/.cpp   # JSON serializer compatible with train_and_export.py
-│   ├── gui_manager.h/.cpp      # Dear ImGui GUI (GLFW/OpenGL 3.3)
-│   └── main.cpp
-└── dataset/                    # Generated JSON files land here
+├── README.md
+└── scripts/
+    ├── validate_recording.py   # Validador estricto de tomas *.raw.json v1.4.0
+    ├── build_dataset_v140.py   # Pipeline Stage-2 vectorizado -> shards .npy + manifest.json
+    ├── validate_dataset.py     # Auditor anti-stub y contrato 178D v1.4.0
+    └── inspect_recording.py    # Inspector forense de tomas crudas y rangos z'
 ```
 
-## Feature Vector Layout (178D per frame)
+---
 
-| Segment | Landmarks | Coords | Dim |
-|---------|-----------|--------|-----|
-| Upper Pose | 13 pts (0, 11–22) | x, y, z, visibility | **52** |
-| Left Hand | 21 pts (0–20) | x, y, z | **63** |
-| Right Hand | 21 pts (0–20) | x, y, z | **63** |
-| **Total** | | | **178** |
+## Topología Canónica del Tensor `(1, 15, 178)` (`float32`)
 
-**Normalization**: Shoulder-center subtraction — all x,y,z coordinates are shifted by the midpoint of landmarks 11 (left shoulder) and 12 (right shoulder). This makes the data invariant to user position and distance from the camera.
+| Bloque | Landmarks | Coordenadas | Dimensión | Regla `v1.4.0` |
+|---|---|---|---|---|
+| Upper Pose | 13 pts (`0, 11–22`) | `x', y', z', visibility` | **52** (`0:52`) | Escala $D_{\text{2D\_iso}}$ 4:3 (`>= 0.08`), `z' = 0.0` en `P15..P22`, clip `[-2.0, 2.0]` en `P00, P11..P14` |
+| Mano Izquierda | 21 pts (`0–20`) | `x', y', z'` | **63** (`52:115`) | Lateralidad directa `'Left' -> leftHand`, `z'` relativa a muñeca; `63` ceros si ausente |
+| Mano Derecha | 21 pts (`0–20`) | `x', y', z'` | **63** (`115:178`) | Lateralidad directa `'Right' -> rightHand`, `z'` relativa a muñeca; `63` ceros si ausente |
+| **Total** | | | **178** | Ventana `1000 ms` remuestreada a `15` frames, brecha cruda estricta `<= 100 ms` |
 
-## Quick Start
+---
 
-### 1. Install system dependencies (Arch Linux)
+## Uso Rápido
 
 ```bash
-sudo pacman -S opencv cmake base-devel libx11 libxrandr libxinerama libxcursor libxi
+# 1. Validar una grabación cruda exportada desde DevRecorder
+./expresat/venv/bin/python expresat-dataset-generator/scripts/validate_recording.py \
+  --input recordings_local/mi_toma.raw.json \
+  --catalog catalog/signs_catalog.json
+
+# 2. Construir shards .npy + manifest.json sin fuga de sesión (StratifiedGroupKFold)
+./expresat/venv/bin/python expresat-dataset-generator/scripts/build_dataset_v140.py \
+  --raw-dir recordings_local/ \
+  --output-dir /tmp/expresat_shards_v140 \
+  --catalog catalog/signs_catalog.json
+
+# 3. Entrenar ablación A/B (DS-TCN 1D vs BiGRU) y exportar a expresat/models/exported_model
+./expresat/venv/bin/python expresat/models/train_and_export.py \
+  --manifest /tmp/expresat_shards_v140/manifest.json \
+  --ablation \
+  --output expresat/models/exported_model
 ```
 
-### 2. Fetch third-party libs
-
-```bash
-bash scripts/setup_third_party.sh
-```
-
-### 3. Build & run (stub mode — no MediaPipe required)
-
-```bash
-bash scripts/build.sh release
-./build_release/expresat_dataset_generator
-```
-
-### 4. Build with real MediaPipe
-
-```bash
-export MEDIAPIPE_ROOT=/path/to/mediapipe
-bash scripts/build.sh mediapipe
-```
-
-## GUI Workflow
-
-1. **Configure** body parts (checkboxes), label name, number of synthetic samples, sequence length.
-2. **Click "Grabar Muestra Base"** — 3-second countdown, then live recording of N frames.
-3. **Click "Generar y Guardar Dataset Sintético"** — background worker applies augmentation and writes `./dataset/<label>.json`.
-4. **Push to GitHub** — Actions automatically trains and exports the ONNX model.
-
-## Data Augmentation Pipeline
-
-Each synthetic sample is generated from the real base sequence by sequentially applying:
-
-| Transform | Algorithm | Parameters |
-|-----------|-----------|------------|
-| Gaussian Noise | `P' = P + N(0, σ²)` | σ ∈ [0.005, 0.02] |
-| Spatial Scale | `P'' = P' × s` | s ~ U(0.9, 1.1) |
-| 2D XY Rotation | Standard 2D rotation matrix | θ ~ U(−5°, +5°) |
-| Temporal Warp | Frame-index resampling with linear interpolation | ±10% speed |
-
-## Output Format
-
-```json
-{
-  "label": "hola",
-  "num_samples": 500,
-  "sequence_length": 15,
-  "feature_dim": 178,
-  "data": [
-    [ [f0, f1, ..., f177], ... ],  // 15 frames × 178 features
-    ...
-  ]
-}
-```
-
-One file per label: `./dataset/<label>.json`  
-Combined: `./dataset/dataset.json` (for CI/training scripts)
-
-## Build Modes
-
-| Mode | Command | MediaPipe | Use case |
-|------|---------|-----------|---------|
-| `debug` | `bash scripts/build.sh debug` | Stub | Fast GUI iteration |
-| `release` | `bash scripts/build.sh release` | Stub | Demo / testing |
-| `mediapipe` | `bash scripts/build.sh mediapipe` | Real | Production |
-
-## GitHub Actions
-
-The workflow at `.github/workflows/train_model.yml` triggers automatically when JSON files are pushed to `expresat-dataset-generator/dataset/`:
-
-1. Validates all label JSON files
-2. Trains `SignLanguageGRU` with real labels
-3. Exports `expresat_gru_float32.onnx` + quantizes to `expresat_gru_int8.onnx`
-4. Uploads artifacts + optionally commits model back to `main`
+> **Smoke-test de CI (nunca para producción):**
+> ```bash
+> ./expresat/venv/bin/python expresat/models/train_and_export.py \
+>   --allow-synthetic-smoke-test --ablation --epochs 18 --output /tmp/expresat_smoke
+> ```
+> Los artefactos de smoke-test quedan sellados con `is_smoke_test: true` y `production_ready: false` y son bloqueados por `InferenceEngine` en producción.

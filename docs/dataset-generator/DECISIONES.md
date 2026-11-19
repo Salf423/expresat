@@ -174,3 +174,20 @@ Todo script de benchmark o captura debe emitir un JSON autodescriptivo con:
 | **CPU con gobernador `performance` a `~1.89 GHz` constante** | **`INVALIDADA / RETIRADA`** | Prosa previa en §2.1 de este documento | Commit `3f40f40` | Sin archivo `sysmon` ni lectura guardada de `scaling_governor` / `scaling_cur_freq`. Reemplazada por Paso 0 de Fase 1. |
 | **Desglose 4.4 FPS (`18 ms` canvas + `22 ms` React + `18 ms` GC = `221–227 ms`)** | **`INVALIDADA`** | Prosa previa en §2.1 de este documento | Commit `3f40f40` | No medido con `performance.mark`; conjetura por resta respecto a los ~164 ms CPU de arnés sintético. Se medirá en Fase 1. |
 | **Pose `z` en "metros" (`+0.8 m / -0.7 m / -1.5 m`)** | **`INVALIDADA (CORREGIDA)`** | Prosa previa en §3 de este documento e `inspect_recording.py` | Commit `3f40f40` | `NormalizedLandmark.z` usa **unidades de imagen normalizadas** (~escala `x`), NO metros (`poseWorldLandmarks` usa metros). Corregido en ambos archivos. |
+
+---
+
+## 7. Consolidación Arquitectónica `v1.4.0` (Fases A–D) y Bloqueo de `expresat-native/`
+
+Sin alterar los registros históricos auditados en §§1–6, se formalizan las decisiones aprobadas e implementadas sobre la rama **`dataset-v2`**:
+
+1. **Única Fuente de Verdad (`dataset-v2`, JS ↔ Python):**
+   - `FEATURE_SPEC v1.4.0` implementa escala isotrópica 4:3 $D_{\text{2D\_iso}} = \frac{1}{A}\sqrt{((x_{11}-x_{12})\cdot A)^2 + (y_{11}-y_{12})^2}$ ($A = 4/3$, `SHOULDERS_D_MIN = 0.08`), política `z' = 0.0` en `P15..P22` con clip `[-2.0, 2.0]` en `P00, P11..P14`, lateralidad directa (`'Left' -> leftHand`, `'Right' -> rightHand`), brecha cruda estricta $\Delta t \le 100.0\text{ ms}$ y `config_hash` desacoplado de `tests/fixtures/`.
+2. **Retiro del Generador C++ Legacy y Bloqueo Explícito de `expresat-native/` (`ERR_CPP_NOT_CONFORMANT`):**
+   - El generador C++ legacy fue retirado; la generación offline vive en `expresat-dataset-generator/scripts/build_dataset_v140.py` (`StratifiedGroupKFold` por `(subject_id, session_id, take_id)` y augmentation 4:3 exclusivo en `train`).
+   - `expresat-native/` permanece **explícitamente aislado y bloqueado** (`ERR_CPP_NOT_CONFORMANT`) fuera del pipeline activo y de CI hasta portar y verificar `ExtractWindow v1.4.0` ($L_\infty \le 10^{-6}$). Ver [`docs/NATIVE_ISOLATION_POLICY.md`](../NATIVE_ISOLATION_POLICY.md).
+3. **Entrenamiento, Ablación A/B (`DS-TCN 1D` vs `BiGRU`), Calibración y Exportación Canónica:**
+   - `expresat/models/train_and_export.py` consume exclusivamente shards `.npy` (`mmap_mode='r'`) + `manifest.json` v1.4.0 sin fallback sintético silencioso (smoke-test requiere `--allow-synthetic-smoke-test` en directorio temporal y marca `is_smoke_test=true`, `production_ready=false`).
+   - `DS-TCN 1D` con capa cinemática enmascarada `[x, Δx]` + `LayerNorm` es el candidato principal para despliegue edge/web por cuantización INT8 real (`>= 85%` de parámetros cuantizados, archivo autocontenido sin `.onnx.data`, latencia CPU `p99 < 3 ms`), calibrado vía Temperature Scaling (`ECE < 0.03`) y protegido en `InferenceEngine` con política de rechazo de 3 compuertas (`min_confidence`, `min_margin`, `max_normalized_entropy`) hacia fallback seguro (`reposo` / indeterminado).
+   - La única ruta canónica de exportación en producción y CI (`.github/workflows/train_model.yml`) es `expresat/models/exported_model/`.
+
