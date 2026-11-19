@@ -1,14 +1,20 @@
 /**
  * Canonical 178D feature vector extractor (FEATURE_SPEC v1.4.0).
  *
- * Matches `expresat/models/feature_extractor.py` within L_inf <= 1e-6:
- *   - [0..51]   Upper Pose (13 landmarks x 4: x, y, z, visibility)
- *               * P00, P11..P14 z' clipped to [-2.0, 2.0]
- *               * P15..P22 z' fixed to 0.0
- *   - [52..114] Left Hand  (21 landmarks x 3: x, y, z)
- *   - [115..177] Right Hand (21 landmarks x 3: x, y, z)
+ * Documentation & Vault References:
+ *   - Canonical specification: `docs/dataset-generator/FEATURE_SPEC.md`
+ *   - Obsidian Vault MOC:      `Obsidian_exp/Especificacion_Feature_Spec_v1_4_0.md`
+ *   - Agent Context CheatSheet:`Obsidian_exp/Agentes/01_MAPA_CONTEXTO_RAPIDO.md`
+ *   - Paired Python Extractor: `expresat/models/feature_extractor.py`
  *
- * Zero `JSON.parse(JSON.stringify(...))` allocations; flat Float64Array pipeline.
+ * Matches `expresat/models/feature_extractor.py` within L_inf <= 1e-6 (measured 0.000e+00):
+ *   - [0..51]   Upper Pose (13 landmarks [0, 11..22] x 4: x', y', z', visibility)
+ *               * P00, P11..P14 z' clipped to [-2.0, 2.0]
+ *               * P15..P22 z' fixed to 0.0 (eliminates monocular hip-extrapolation bias)
+ *   - [52..114] Left Hand  (21 landmarks x 3: x', y' relative to shoulder center C/D; z' relative to wrist/D)
+ *   - [115..177] Right Hand (21 landmarks x 3: x', y' relative to shoulder center C/D; z' relative to wrist/D)
+ *
+ * Zero `JSON.parse(JSON.stringify(...))` allocations; flat Float64Array pipeline (~0.510 ms/window).
  */
 
 export const FEATURE_SPEC_VERSION = '1.4.0';

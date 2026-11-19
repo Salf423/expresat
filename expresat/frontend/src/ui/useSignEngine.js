@@ -1,13 +1,18 @@
 /**
  * React hook integrating SignEngine, Classifier (GeometricClassifier), and WSClient.
  *
+ * Documentation & Vault References:
+ *   - Data Flow Diagram:   `Obsidian_exp/Flujo de datos.md`
+ *   - Frontend Code Guide: `Obsidian_exp/Explicacion del codigo/Frontend/Vite_React.md`
+ *   - Agent Playbook #5:   `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
+ *
  * Guarantees (FEATURE_SPEC v1.4.0):
  * - Tracking and geometric recognition run locally in the browser without backend or login.
  * - Idempotent cleanup under React 19 StrictMode (no leaked camera streams or AbortError).
  * - Separate real FPS counters (`cameraFps` and `inferenceFps`).
  * - Explicit WebSocket transport state (`idle | connecting | open | auth_error | failed`).
  * - Sends unsmoothed `frameData.raw` with real monotonic `t_ms` in a time-bounded window
- *   over WebSocket (eliminating double EMA and k=1..14 cloning).
+ *   (>= 12 frames, span >= 933.33 ms) over WebSocket (eliminating double EMA and k=1..14 cloning).
  * - Enables PoseLandmarker whenever neural remote transport or explicit pose mode is active.
  */
 

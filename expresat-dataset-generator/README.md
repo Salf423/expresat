@@ -61,10 +61,8 @@ expresat-dataset-generator/
 ## Uso Rápido
 
 ```bash
-# 1. Validar una grabación cruda exportada desde DevRecorder
-./expresat/venv/bin/python expresat-dataset-generator/scripts/validate_recording.py \
-  --input recordings_local/mi_toma.raw.json \
-  --catalog catalog/signs_catalog.json
+# 1. Validar una grabación cruda exportada desde DevRecorder contra recording_raw.schema.json
+./expresat/venv/bin/python tests/schemas/validate_recording.py recordings_local/mi_toma.raw.json
 
 # 2. Construir shards .npy + manifest.json sin fuga de sesión (StratifiedGroupKFold)
 ./expresat/venv/bin/python expresat-dataset-generator/scripts/build_dataset_v140.py \

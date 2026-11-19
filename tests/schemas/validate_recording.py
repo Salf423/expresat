@@ -1,7 +1,14 @@
-"""Validate .raw.json recordings against tests/schemas/recording_raw.schema.json.
+"""Validate .raw.json recordings against tests/schemas/recording_raw.schema.json (FEATURE_SPEC v1.4.0).
+
+Documentation & Vault References:
+  - Schema definition: `tests/schemas/recording_raw.schema.json`
+  - Stage-2 consumer:  `expresat-dataset-generator/scripts/build_dataset_v140.py`
+  - Obsidian Playbook: `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
 
 Uses only the Python standard library; if `jsonschema` is installed, it also runs
-Draft202012Validator for a second check.
+Draft202012Validator for a second check, plus strict v1.4.x contract field checks
+(`feature_spec_version`, `config_hash`, `model_artifacts`, `track_settings`,
+`edge_metrics`, `hand_presence_metrics`).
 """
 
 from __future__ import annotations

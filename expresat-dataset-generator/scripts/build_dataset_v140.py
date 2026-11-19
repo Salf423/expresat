@@ -2,6 +2,11 @@
 """
 build_dataset_v140.py — Stage-2 Vectorized Offline Dataset Pipeline (FEATURE_SPEC v1.4.0).
 
+Documentation & Vault References:
+  - Stage-2 Architecture: `Obsidian_exp/Explicacion del codigo/Dataset_Generator/06_Arquitectura_Dataset_Generator_v2.md`
+  - Agent Playbook #2:    `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
+  - Feature Contract:     `Obsidian_exp/Especificacion_Feature_Spec_v1_4_0.md`
+
 Pipeline stages:
   1. Raw take validation against `tests/schemas/recording_raw.schema.json` + strict v1.4.0 gates
      (4:3 aspect ratio ±0.05, FPS >= 15.0, max raw gap <= 100.0 ms, canonical `config_hash`).

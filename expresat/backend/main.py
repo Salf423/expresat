@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """
-ExpresaT FastAPI server with WebSocket inference endpoint.
+ExpresaT FastAPI server with real-time WebSocket inference endpoint (FEATURE_SPEC v1.4.0).
+
+Documentation & Vault References:
+  - Backend Architecture: `Obsidian_exp/Explicacion del codigo/Backend/Python_FastAPI.md`
+  - WebSocket Protocol:   `Obsidian_exp/Websocket.md`
+  - Inference Engine:     `expresat/models/inference_engine.py` (Temperature Scaling + 3-Gate Rejection)
 
 Handles:
-  - `/ws/translate` WebSocket endpoint for 15-frame landmark batches
-  - Offloaded CPU inference via `asyncio.to_thread` (non-blocking event loop)
-  - Supabase JWT authentication and Origin validation
-  - Health checks and latency metrics
+  - `/ws/translate` WebSocket endpoint for 15-frame (or variable raw window >= 12 frames) landmark batches
+  - Offloaded CPU inference via `asyncio.to_thread` (non-blocking ASGI event loop)
+  - Supabase JWT authentication and strict Origin allowlist validation (closes with 1008 on violation)
+  - Calibrated 3-gate rejection filtering (`result.get("label") is not None` before emitting `translation`)
+  - Health checks and model metadata inspection (`/`, `/health`, `/labels`)
 
-Run with `--workers 1` so the ONNX model is loaded into memory once per instance.
+Run with `--workers 1` so the quantized INT8 ONNX model (`DS-TCN 1D`, ~89.8 KB) is loaded once per instance.
 """
 
 import asyncio
@@ -325,8 +331,14 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                     continue
 
                 try:
+                    # Offload CPU-bound FEATURE_SPEC v1.4.0 ExtractWindow + ONNX Runtime inference
+                    # to a worker thread so the ASGI event loop never blocks concurrent sockets.
                     result = await run_inference_async(frames_to_process)
 
+                    # InferenceEngine applies Temperature Scaling (softmax(logits / T)) and
+                    # evaluates the 3 rejection gates (min_confidence, min_margin, max_entropy).
+                    # Rejected frames return `label=None` and `safe_label="reposo"`, preventing
+                    # false-positive translation events from being broadcast to the client UI.
                     if result.get("label") is not None:
                         await manager.send_personal({
                             "type": "translation",

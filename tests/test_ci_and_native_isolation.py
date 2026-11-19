@@ -88,6 +88,28 @@ class TestCIWorkflowAndNativeIsolation(unittest.TestCase):
         self.assertEqual(list(gen_dir.rglob("*.cpp")), [])
         self.assertEqual(list(gen_dir.rglob("CMakeLists.txt")), [])
 
+    def test_obsidian_agent_context_engine_integrity(self):
+        """Verify Obsidian_exp/ v2.4.0 agent hub, v1.4.0 spec note, and physical code_anchors exist."""
+        vault = REPO_ROOT / "Obsidian_exp"
+        if not vault.exists():
+            self.skipTest("Local Obsidian_exp/ vault not present in clean CI checkout")
+        required_notes = [
+            vault / "00_INDICE_MAESTRO.md",
+            vault / "README.md",
+            vault / "Especificacion_Feature_Spec_v1_4_0.md",
+            vault / "Caracteristicas.md",
+            vault / "Estructura del proyecto.md",
+            vault / "Flujo de datos.md",
+            vault / "Agentes" / "00_PROTOCOLO_AGENTES_IA.md",
+            vault / "Agentes" / "01_MAPA_CONTEXTO_RAPIDO.md",
+            vault / "Agentes" / "02_PLAYBOOKS_POR_TAREA.md",
+            vault / "Agentes" / "03_GRAFO_DEPENDENCIAS_Y_CONTRATOS.md",
+        ]
+        for note in required_notes:
+            self.assertTrue(note.exists(), f"Missing canonical Obsidian note: {note}")
+            txt = note.read_text(encoding="utf-8")
+            self.assertIn('feature_spec_version: "1.4.0"', txt, f"Note {note.name} missing v1.4.0 frontmatter")
+
 
 if __name__ == "__main__":
     unittest.main()

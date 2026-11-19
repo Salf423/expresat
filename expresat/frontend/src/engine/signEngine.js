@@ -1,10 +1,23 @@
 /**
- * Main-thread camera capture and MediaPipe vision engine (no Workers).
+ * Main-thread camera capture and MediaPipe vision engine (no Workers — FEATURE_SPEC v1.4.0).
+ *
+ * Documentation & Vault References:
+ *   - Frontend Architecture: `docs/ARQUITECTURA.md`
+ *   - Obsidian Code Guide:   `Obsidian_exp/Explicacion del codigo/Frontend/Vite_React.md`
+ *   - Agent Playbook #5:     `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
+ *
+ * Key v1.4.0 Invariants:
+ *   - Deduplicates video frames via `video.currentTime` (`_lastProcessedVideoTime`) so 60 Hz rAF
+ *     never re-runs WASM inference on duplicate camera frames (`poseCadence = 1`).
+ *   - Passes valid `ImageProcessingOptions` `{ rotationDegrees: 0 }` as 3rd argument to
+ *     `detectForVideo(video, ts, { rotationDegrees: 0 })` with unified `0.50` confidence thresholds.
+ *   - Validates 4:3 (±0.05) camera aspect ratio (`ERR_INVALID_ASPECT_RATIO`).
+ *   - Exposes `frameData.raw` lazily (`buildRawSlotsLazy`) so WebSocket inference and DevRecorder
+ *     consume unsmoothed landmarks while UI canvas renders single-pass anatomical-slot EMA.
  *
  * Exposes `start(videoElement)`, `stop()`, `onFrame(cb)`, `onFps(cb)`, and `onError(cb)`
  * with idempotent cleanup across React 19 StrictMode double-mounts (`runId` cancellation
- * and `video.play()` AbortError handling). Runs `@mediapipe/tasks-vision` (`CPU` or `GPU`
- * delegate) with optional PoseLandmarker and legacy CDN fallback.
+ * and `video.play()` AbortError handling).
  */
 
 import {

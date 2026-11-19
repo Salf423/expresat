@@ -1,6 +1,11 @@
 /**
  * Pure utilities, quality gates, reusable AudioContext tone player, and
  * FEATURE_SPEC v1.4.0 metadata payload builder for DevRecorder (.raw.json).
+ *
+ * Documentation & Vault References:
+ *   - Stage-1 & Stage-2 Pipeline: `Obsidian_exp/Explicacion del codigo/Dataset_Generator/06_Arquitectura_Dataset_Generator_v2.md`
+ *   - Contract & Hash Graph:      `Obsidian_exp/Agentes/03_GRAFO_DEPENDENCIAS_Y_CONTRATOS.md`
+ *   - Raw Recording JSON Schema:  `tests/schemas/recording_raw.schema.json`
  */
 
 import {

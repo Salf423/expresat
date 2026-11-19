@@ -1,6 +1,11 @@
 """
 ExpresaT v1.4.0 Training, Fair A/B Ablation, Calibration & Single-File INT8 ONNX Export.
 
+Documentation & Vault References:
+  - Training & Export Note: `Obsidian_exp/Explicacion del codigo/Funciones_Modelo/ENTRENO Y EXPORTACION.md`
+  - Agent Playbook #3:      `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
+  - Feature Contract:       `Obsidian_exp/Especificacion_Feature_Spec_v1_4_0.md`
+
 Consumes exclusively Stage-2 `.npy` shards (`mmap_mode='r'`) + `manifest.json`
 sealed against `FEATURE_SPEC v1.4.0` and canonical `config_hash`.
 
@@ -9,7 +14,8 @@ unless `--allow-synthetic-smoke-test` is explicitly supplied (in which case expo
 artifacts are permanently marked `is_smoke_test=true`, `production_ready=false`).
 
 Architectures compared in fair A/B ablation (identical splits, seed, loss & early stopping):
-  - `ds_tcn`: Depthwise-Separable 1D Temporal Convolutional Network (primary edge/web target)
+  - `ds_tcn`: Depthwise-Separable 1D Temporal Convolutional Network (primary edge/web target,
+              ~89.8 KB INT8, 96.5% quantized parameters, ORT CPU p99 = 0.625 ms)
   - `bigru`:  Bidirectional GRU recurrent baseline
 Both consume identical `(batch, 15, 178)` float32 tensors through a masked kinematic
 stem `[x, Δx]` + `LayerNorm(356)` inside `forward()`.

@@ -1,7 +1,11 @@
 /**
- * landmarkFilter.js — Exponential Moving Average (EMA) Low-Pass Filter
+ * landmarkFilter.js — Exponential Moving Average (EMA) Low-Pass Filter (FEATURE_SPEC v1.4.0)
  *
- * Reduces jitter in MediaPipe landmark coordinates by smoothing
+ * Documentation & Vault References:
+ *   - Frontend Code Guide: `Obsidian_exp/Explicacion del codigo/Frontend/Vite_React.md`
+ *   - Feature Contract:    `Obsidian_exp/Especificacion_Feature_Spec_v1_4_0.md`
+ *
+ * Reduces jitter in MediaPipe landmark coordinates for UI rendering by smoothing
  * each (x, y, z) independently per anatomical slot (`pose`, `leftHand`, `rightHand`):
  *
  *   S_t = α · x_t + (1 - α) · S_{t−1}
@@ -11,6 +15,8 @@
  *     instead of array index (`hand_0`/`hand_1`), preventing cross-hand EMA corruption
  *     whenever MediaPipe reorders detections.
  *   - Explicitly clears absent hand slots on every frame so reappearances start fresh.
+ *   - NOTE: Only used for local UI/canvas smoothing; WebSocket neural batches and
+ *     DevRecorder consume `frameData.raw` to avoid double EMA filtering.
  */
 
 export class LandmarkEMAFilter {

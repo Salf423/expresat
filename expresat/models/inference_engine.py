@@ -1,10 +1,17 @@
 """
 Production CPU-only ONNX Runtime inference engine (FEATURE_SPEC v1.4.0).
 
+Documentation & Vault References:
+  - Inference Engine Note: `Obsidian_exp/Explicacion del codigo/Funciones_Modelo/INFERENCIA.md`
+  - Agent Playbook #4:     `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
+  - Contract Graph:        `Obsidian_exp/Agentes/03_GRAFO_DEPENDENCIAS_Y_CONTRATOS.md`
+
 Loads a validated self-contained INT8 (or FP32 fallback) ONNX model (`DS-TCN 1D`
 or `BiGRU`), enforces `FEATURE_SPEC v1.4.0` + `config_hash` + production readiness,
-applies post-hoc Temperature Scaling, and evaluates the 3-gate rejection policy
-(calibrated confidence, top-1/top-2 margin, and normalized entropy -> safe fallback).
+configures 1-thread ORT execution for lightweight models (< 2 MB, achieving p50=0.319 ms,
+p99=0.625 ms), applies post-hoc Temperature Scaling, and evaluates the 3-gate rejection
+policy (calibrated confidence >= 0.65, top-1/top-2 margin >= 0.20, and normalized
+entropy <= 0.55 -> safe fallback to `reposo` / indeterminate).
 """
 
 from __future__ import annotations

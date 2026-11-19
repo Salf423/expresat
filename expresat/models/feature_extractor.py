@@ -1,23 +1,29 @@
 """
 Canonical 178D feature vector extractors (FEATURE_SPEC v1.4.0).
 
-Frame layout:
-  - [0..51]   Upper Pose (13 landmarks x 4: x, y, z, visibility)
+Documentation & Vault References:
+  - Canonical specification: `docs/dataset-generator/FEATURE_SPEC.md`
+  - Obsidian Vault MOC:      `Obsidian_exp/Especificacion_Feature_Spec_v1_4_0.md`
+  - Agent Context CheatSheet:`Obsidian_exp/Agentes/01_MAPA_CONTEXTO_RAPIDO.md`
+  - Paired JS Extractor:     `expresat/frontend/src/engine/featureExtractor.js` (L_inf <= 1e-6)
+
+Frame layout (178 float32 features per frame):
+  - [0..51]   Upper Pose (13 landmarks [0, 11..22] x 4: x', y', z', visibility)
               * P00, P11..P14 z' clipped to [-2.0, 2.0]
               * P15..P22 z' fixed to 0.0 (eliminates monocular hip-extrapolation bias)
-  - [52..114] Left Hand  (21 landmarks x 3: x, y, z)
-  - [115..177] Right Hand (21 landmarks x 3: x, y, z)
+  - [52..114] Left Hand  (21 landmarks x 3: x', y' relative to shoulder center C/D; z' relative to wrist/D)
+  - [115..177] Right Hand (21 landmarks x 3: x', y' relative to shoulder center C/D; z' relative to wrist/D)
 Total: 178 float32 features per frame; window tensor shape (1, 15, 178).
 
-v1.4.0 invariants:
-  - Isotropic 2D 4:3 shoulder scale D = hypot((x11 - x12) * A, y11 - y12) / A, A = 4/3
+v1.4.0 invariants (NEVER violate without bumping FEATURE_SPEC_VERSION & config_hash):
+  - Isotropic 2D 4:3 shoulder scale D = hypot((x11 - x12) * A, y11 - y12) / A, A = 4/3 (D >= 0.08)
   - Direct MediaPipe Tasks laterality: 'Left' -> leftHand [52..114] (P15),
     'Right' -> rightHand [115..177] (P16)
-  - Unified spatial + label + temporal assignment with wrist memory TTL = 200 ms
+  - Unified spatial + label (0.25*D) + temporal (0.50*dist2d_iso) assignment with wrist memory TTL = 200 ms
   - Strict raw temporal gap <= 100.0 ms (absolute, independent of duration_ms)
   - Window density gates: tail_extrapolation == 0, unique_real_frames >= 12/15,
     interpolated_bridge_fraction <= 3/14
-  - Vectorized NumPy core (zero copy.deepcopy in extract_window)
+  - Vectorized NumPy core (zero copy.deepcopy in extract_window; ~1.605 ms/window)
 """
 
 from __future__ import annotations
