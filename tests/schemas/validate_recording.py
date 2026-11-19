@@ -145,6 +145,21 @@ def validate_recording(payload: Any, schema: Optional[Dict[str, Any]] = None) ->
                 f"$.total_frames ({payload.get('total_frames')}) != len($.frames) ({len(payload.get('frames', []))})"
             )
 
+        # Strict v1.4.x contract seal enforcement (while preserving backward compat with v1.3.x takes)
+        version_str = str(payload.get("version", ""))
+        if version_str.startswith("1.4."):
+            v140_required = (
+                "feature_spec_version",
+                "config_hash",
+                "model_artifacts",
+                "track_settings",
+                "edge_metrics",
+                "hand_presence_metrics",
+            )
+            for req_key in v140_required:
+                if req_key not in payload or payload[req_key] is None:
+                    errors.append(f"$: versión {version_str} requiere propiedad obligatoria {req_key!r}")
+
     try:
         import jsonschema  # type: ignore
 

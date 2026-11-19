@@ -4,50 +4,41 @@ import { getActiveDevCollector } from '../engine/index.js';
 import {
   PROMPT_TIMELINE,
   createPromptTransitionEntry,
+  createReusableTonePlayer,
   extractTrackSettings,
-  buildDevRecordingPayload,
+  buildDevRecordingPayloadAsync,
 } from './devRecorderUtils.js';
 
 /**
- * Development-only raw landmark recorder (guarded by `import.meta.env.DEV`).
+ * Development-only raw landmark recorder (guarded by `import.meta.env.DEV`, v1.4.0).
  *
- * Enforces >= 15 FPS capture quality gate, persists strict per-hand handedness,
- * drives on-screen countdown/audio cues, and captures an unmirrored 5s PNG snapshot.
+ * Guarantees:
+ * - Zero `setState` per frame inside `engine.onFrame` (counters kept in refs).
+ * - UI refresh throttled to <= 4 Hz (250 ms interval) during active capture.
+ * - Single reusable `AudioContext` closed cleanly on unmount (zero leaks).
+ * - Enforces >= 15 FPS, <= 100 ms gap, 4:3 aspect ratio, active-sign hand presence,
+ *   edge clipping telemetry, and canonical v1.4.0 `config_hash` + `.task` SHA-256 sealing.
  */
 
-/** Synthesize short notification tones via Web Audio API. */
-function playTone(freq = 660, durationSec = 0.2) {
-  try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, ctx.currentTime);
-    gain.gain.setValueAtTime(0.35, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationSec);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + durationSec);
-  } catch {
-    // Ignore browser autoplay restrictions
-  }
-}
+const RECORDING_DURATION_MS = 18000;
+const MIN_FPS_THRESHOLD = 15.0;
+const UI_THROTTLE_INTERVAL_MS = 250; // 4 Hz max UI updates while recording
 
-export function DevRecorder({ engineRef, videoRef }) {
+export function DevRecorder({ engineRef, videoRef, signLabel = null }) {
   const [isRecording, setIsRecording] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
   const [liveFps, setLiveFps] = useState(0);
   const [handsDetectedCount, setHandsDetectedCount] = useState(0);
   const [poseDetectedCount, setPoseDetectedCount] = useState(0);
+  const [pngCaptured, setPngCaptured] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   const [rejectionError, setRejectionError] = useState(null);
   const [activePromptIdx, setActivePromptIdx] = useState(0);
 
   const framesBufferRef = useRef([]);
+  const handsDetectedCountRef = useRef(0);
+  const poseDetectedCountRef = useRef(0);
   const startTimeRef = useRef(null);
   const unsubRef = useRef(null);
   const timerIntervalRef = useRef(null);
@@ -56,11 +47,16 @@ export function DevRecorder({ engineRef, videoRef }) {
   const lastPromptIdxRef = useRef(-1);
   const trackSettingsRef = useRef(null);
   const executedTransitionsRef = useRef([]);
+  const tonePlayerRef = useRef(null);
 
-  const RECORDING_DURATION_MS = 18000;
-  const MIN_FPS_THRESHOLD = 15.0;
+  const getTonePlayer = useCallback(() => {
+    if (!tonePlayerRef.current) {
+      tonePlayerRef.current = createReusableTonePlayer();
+    }
+    return tonePlayerRef.current;
+  }, []);
 
-  const stopAndDownload = useCallback(() => {
+  const stopAndDownload = useCallback(async () => {
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
@@ -79,13 +75,17 @@ export function DevRecorder({ engineRef, videoRef }) {
       : 0;
 
     setIsRecording(false);
+    setFrameCount(recordedFrames.length);
+    setHandsDetectedCount(handsDetectedCountRef.current);
+    setPoseDetectedCount(poseDetectedCountRef.current);
+    setPngCaptured(Boolean(capturedPngDataUrlRef.current));
 
     if (recordedFrames.length === 0) {
       setStatusMsg('Grabación finalizada sin frames capturados.');
       return;
     }
 
-    const payload = buildDevRecordingPayload({
+    const payload = await buildDevRecordingPayloadAsync({
       recordedFrames,
       finalDurationMs,
       minFpsThreshold: MIN_FPS_THRESHOLD,
@@ -93,9 +93,16 @@ export function DevRecorder({ engineRef, videoRef }) {
       engine: engineRef?.current,
       fallbackTrackSettings: trackSettingsRef.current,
       executedTransitions: executedTransitionsRef.current,
+      signLabel,
     });
 
-    const { avg_fps: avgFps, valid: isValid, error: errCode, interval_metrics: metrics } = payload;
+    const {
+      avg_fps: avgFps,
+      valid: isValid,
+      error: errCode,
+      interval_metrics: metrics,
+      hand_presence_metrics: handPresence,
+    } = payload;
 
     if (errCode === 'ERR_CAPTURE_FPS_TOO_LOW') {
       setRejectionError(
@@ -104,6 +111,14 @@ export function DevRecorder({ engineRef, videoRef }) {
     } else if (errCode === 'ERR_CAPTURE_GAP_TOO_LARGE') {
       setRejectionError(
         `ERR_CAPTURE_GAP_TOO_LARGE: Intervalo máximo entre frames de ${metrics.max_ms} ms supera el límite de 100 ms (${metrics.gaps_over_100ms} intervalos > 100 ms; p50: ${metrics.p50_ms} ms, p95: ${metrics.p95_ms} ms)`
+      );
+    } else if (errCode === 'ERR_INVALID_ASPECT_RATIO') {
+      setRejectionError(
+        `ERR_INVALID_ASPECT_RATIO: Resolución ${payload.videoWidth}x${payload.videoHeight} fuera de contrato 4:3 (±0.05)`
+      );
+    } else if (errCode === 'ERR_CAPTURE_NO_HANDS_IN_ACTIVE_SIGN') {
+      setRejectionError(
+        `ERR_CAPTURE_NO_HANDS_IN_ACTIVE_SIGN: Presencia de manos ${(handPresence.hand_presence_ratio * 100).toFixed(1)}% < ${(handPresence.min_required_ratio * 100).toFixed(0)}% requerido para '${handPresence.sign_label}'`
       );
     } else {
       setRejectionError(null);
@@ -134,18 +149,18 @@ export function DevRecorder({ engineRef, videoRef }) {
 
       if (isValid) {
         setStatusMsg(
-          `✅ Toma APROBADA: ${filename} (${recordedFrames.length} frames a ${avgFps} FPS). PNG a los 5s descargado.`
+          `Toma APROBADA (v${payload.version}): ${filename} (${recordedFrames.length} frames a ${avgFps} FPS; hash ${payload.config_hash.slice(0, 10)}…).`
         );
       } else {
         setStatusMsg(
-          `❌ Toma RECHAZADA: ${filename} (${recordedFrames.length} frames a ${avgFps} FPS; p95 Δt ${metrics.p95_ms} ms). Archivo marcado con ${errCode}.`
+          `Toma RECHAZADA: ${filename} (${recordedFrames.length} frames a ${avgFps} FPS; p95 Δt ${metrics.p95_ms} ms). Código: ${errCode}.`
         );
       }
     } catch (err) {
       console.error('[DevRecorder] Error generando descarga:', err);
       setStatusMsg('Error al descargar archivo JSON.');
     }
-  }, [videoRef, engineRef]);
+  }, [videoRef, engineRef, signLabel]);
 
   const startRecording = useCallback(() => {
     const engine = engineRef?.current;
@@ -158,6 +173,8 @@ export function DevRecorder({ engineRef, videoRef }) {
       engine.setDevPhase?.('grabando');
     }
     framesBufferRef.current = [];
+    handsDetectedCountRef.current = 0;
+    poseDetectedCountRef.current = 0;
     recentTimestampsRef.current = [];
     capturedPngDataUrlRef.current = null;
     lastPromptIdxRef.current = 0;
@@ -173,28 +190,27 @@ export function DevRecorder({ engineRef, videoRef }) {
     setLiveFps(0);
     setHandsDetectedCount(0);
     setPoseDetectedCount(0);
+    setPngCaptured(false);
     setRejectionError(null);
     setActivePromptIdx(0);
     setStatusMsg('Iniciando toma de 18s...');
     setIsRecording(true);
 
-    playTone(PROMPT_TIMELINE[0].toneFreq, PROMPT_TIMELINE[0].toneDuration);
+    const player = getTonePlayer();
+    player.play(PROMPT_TIMELINE[0].toneFreq, PROMPT_TIMELINE[0].toneDuration);
 
-    // 50 ms UI timer for countdown and phase audio cues
+    // Throttled <= 4 Hz (250 ms) UI ticker: batches all counters & phase transitions
     timerIntervalRef.current = setInterval(() => {
       if (!startTimeRef.current) return;
       const now = performance.now();
       const elapsedMs = now - startTimeRef.current;
       const elapsedSeconds = elapsedMs / 1000.0;
-      setElapsedSec(Number(elapsedSeconds.toFixed(1)));
 
       const promptIdx = PROMPT_TIMELINE.findIndex(
         (p) => elapsedMs >= p.start_ms && elapsedMs < p.end_ms
       );
       const safeIdx = promptIdx !== -1 ? promptIdx : PROMPT_TIMELINE.length - 1;
-      setActivePromptIdx(safeIdx);
 
-      // Close previous phase entry and emit tone on prompt transition
       if (safeIdx !== lastPromptIdxRef.current) {
         lastPromptIdxRef.current = safeIdx;
         const prevEntry = executedTransitionsRef.current[executedTransitionsRef.current.length - 1];
@@ -205,18 +221,34 @@ export function DevRecorder({ engineRef, videoRef }) {
         executedTransitionsRef.current.push(
           createPromptTransitionEntry(currentPrompt, safeIdx, elapsedMs)
         );
-        playTone(currentPrompt.toneFreq, currentPrompt.toneDuration);
+        player.play(currentPrompt.toneFreq, currentPrompt.toneDuration);
       }
 
-      // Rolling 1000 ms live FPS window
+      // Rolling 1000 ms live FPS window (in-place pruning)
       const cutoff = now - 1000.0;
-      recentTimestampsRef.current = recentTimestampsRef.current.filter((t) => t >= cutoff);
-      setLiveFps(recentTimestampsRef.current.length);
+      const tsBuf = recentTimestampsRef.current;
+      let dropCount = 0;
+      while (dropCount < tsBuf.length && tsBuf[dropCount] < cutoff) {
+        dropCount++;
+      }
+      if (dropCount > 0) {
+        tsBuf.splice(0, dropCount);
+      }
+
+      setElapsedSec(Number(elapsedSeconds.toFixed(1)));
+      setActivePromptIdx(safeIdx);
+      setLiveFps(tsBuf.length);
+      setFrameCount(framesBufferRef.current.length);
+      setHandsDetectedCount(handsDetectedCountRef.current);
+      setPoseDetectedCount(poseDetectedCountRef.current);
+      if (capturedPngDataUrlRef.current) {
+        setPngCaptured(true);
+      }
 
       if (elapsedMs >= RECORDING_DURATION_MS) {
         stopAndDownload();
       }
-    }, 50);
+    }, UI_THROTTLE_INTERVAL_MS);
 
     const devTel = import.meta.env.DEV ? engine._devTelemetry : null;
     unsubRef.current = engine.onFrame((framePayload) => {
@@ -231,8 +263,8 @@ export function DevRecorder({ engineRef, videoRef }) {
       const rawHands = Array.isArray(raw.hands) ? raw.hands : [];
       const rawHandedness = Array.isArray(raw.handedness) ? raw.handedness : [];
 
-      // Preserve categoryName and score per hand entry
-      const formattedHands = rawHands.map((h, i) => {
+      const formattedHands = new Array(rawHands.length);
+      for (let i = 0; i < rawHands.length; i++) {
         const catItem = rawHandedness[i];
         const catObj = Array.isArray(catItem) ? catItem[0] : catItem;
         const fallbackCat = framePayload.handedness?.[i]?.[0];
@@ -247,12 +279,12 @@ export function DevRecorder({ engineRef, videoRef }) {
 
         const scoreVal = Number(catObj?.score ?? fallbackCat?.score ?? 0.95);
 
-        return {
-          landmarks: h,
+        formattedHands[i] = {
+          landmarks: rawHands[i],
           categoryName: catName,
           score: scoreVal,
         };
-      });
+      }
 
       const videoEl = videoRef?.current;
       const vWidth = videoEl?.videoWidth || 640;
@@ -272,23 +304,21 @@ export function DevRecorder({ engineRef, videoRef }) {
         }
       }
 
-      const frameData = {
+      framesBufferRef.current.push({
         t_ms: tMs,
         videoWidth: vWidth,
         videoHeight: vHeight,
         hands: formattedHands,
         handedness: rawHandedness,
         pose: Array.isArray(raw.pose) ? raw.pose : null,
-      };
+      });
 
-      framesBufferRef.current.push(frameData);
-      setFrameCount(framesBufferRef.current.length);
-
+      // Pure O(1) ref counters — ZERO setState per frame
       if (formattedHands.length > 0) {
-        setHandsDetectedCount((c) => c + 1);
+        handsDetectedCountRef.current++;
       }
       if (raw.pose && raw.pose.length > 0) {
-        setPoseDetectedCount((c) => c + 1);
+        poseDetectedCountRef.current++;
       }
 
       const recMs = devTel?.endAndMeasure(
@@ -300,12 +330,14 @@ export function DevRecorder({ engineRef, videoRef }) {
         devTel?.recordStageDuration('recorder_onframe', recMs);
       }
     });
-  }, [engineRef, videoRef, stopAndDownload]);
+  }, [engineRef, videoRef, stopAndDownload, getTonePlayer]);
 
   useEffect(() => {
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       if (unsubRef.current) unsubRef.current();
+      tonePlayerRef.current?.dispose();
+      tonePlayerRef.current = null;
       if (import.meta.env.DEV) {
         getActiveDevCollector()?.setPhase('reposo');
       }
@@ -357,7 +389,7 @@ export function DevRecorder({ engineRef, videoRef }) {
               fontSize: '0.75rem',
             }}
           >
-            DEV
+            DEV v1.4.0
           </span>
           <span style={{ fontWeight: '700', fontSize: '1rem' }}>
             Grabador Canónico de Tomas (18s) — Quality Gate 15 FPS
@@ -427,6 +459,7 @@ export function DevRecorder({ engineRef, videoRef }) {
 
           {!isRecording ? (
             <button
+              type="button"
               onClick={startRecording}
               style={{
                 display: 'flex',
@@ -448,6 +481,7 @@ export function DevRecorder({ engineRef, videoRef }) {
             </button>
           ) : (
             <button
+              type="button"
               onClick={stopAndDownload}
               style={{
                 display: 'flex',
@@ -527,8 +561,8 @@ export function DevRecorder({ engineRef, videoRef }) {
           <span>Frames: <b style={{ color: '#fff' }}>{frameCount}</b></span>
           <span>Manos detectadas: <b style={{ color: '#fff' }}>{handsDetectedCount}</b></span>
           <span>Pose detectada: <b style={{ color: '#fff' }}>{poseDetectedCount}</b></span>
-          <span>PNG a 5s: <b style={{ color: capturedPngDataUrlRef.current ? '#34d399' : '#f59e0b' }}>
-            {capturedPngDataUrlRef.current ? 'Capturado ✅' : 'Pendiente...'}
+          <span>PNG a 5s: <b style={{ color: pngCaptured ? '#34d399' : '#f59e0b' }}>
+            {pngCaptured ? 'Capturado' : 'Pendiente...'}
           </b></span>
         </div>
       )}
@@ -536,6 +570,7 @@ export function DevRecorder({ engineRef, videoRef }) {
       {/* Quality gate rejection banner */}
       {rejectionError && !isRecording && (
         <div
+          role="alert"
           style={{
             marginTop: '0.65rem',
             background: 'rgba(239, 68, 68, 0.15)',
@@ -550,13 +585,17 @@ export function DevRecorder({ engineRef, videoRef }) {
           data-testid="rejection-error-banner"
         >
           <AlertTriangle size={18} color="#ef4444" />
-          <span><b>CALIDAD INSUFICIENTE:</b> {rejectionError}. La toma fue rechazada porque la compuerta exige ≥ 15 FPS para prevenir brechas &gt; 100 ms.</span>
+          <span><b>CALIDAD INSUFICIENTE:</b> {rejectionError}.</span>
         </div>
       )}
 
       {/* Final status message */}
       {statusMsg && !isRecording && (
-        <div style={{ marginTop: '0.5rem', color: rejectionError ? '#f87171' : '#38bdf8', fontSize: '0.825rem' }}>
+        <div
+          role="status"
+          aria-live="polite"
+          style={{ marginTop: '0.5rem', color: rejectionError ? '#f87171' : '#38bdf8', fontSize: '0.825rem' }}
+        >
           {statusMsg}
         </div>
       )}

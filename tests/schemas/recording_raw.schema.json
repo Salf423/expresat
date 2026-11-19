@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://expresat.local/schemas/recording_raw.schema.json",
-  "title": "ExpresaT Raw Development Recording",
-  "description": "Esquema canonico de grabaciones crudas generadas por DevRecorder (.raw.json, v1.3.0 / v1.3.1) con manos como objetos {landmarks, categoryName, score}.",
+  "title": "ExpresaT Raw Development Recording (v1.4.0)",
+  "description": "Esquema canonico de grabaciones crudas generadas por DevRecorder (.raw.json, compatible con v1.3.x y sellado estricto v1.4.0) con manos como objetos {landmarks, categoryName, score}.",
   "type": "object",
   "required": [
     "version",
@@ -20,6 +20,27 @@
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$"
     },
+    "feature_spec_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "config_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "pose_cadence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "model_artifacts": {
+      "type": "object",
+      "required": ["hand_landmarker_sha256", "pose_landmarker_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "hand_landmarker_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pose_landmarker_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
     "type": {
       "type": "string",
       "const": "expresat_dev_recording_raw"
@@ -31,6 +52,35 @@
     "delegate": {
       "type": ["string", "null"],
       "enum": ["GPU", "CPU", "WASM", null]
+    },
+    "track_settings": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "width": { "type": "number", "minimum": 0 },
+        "height": { "type": "number", "minimum": 0 },
+        "videoWidth": { "type": "integer", "minimum": 1 },
+        "videoHeight": { "type": "integer", "minimum": 1 },
+        "effective_resolution": { "type": "string", "minLength": 3 },
+        "frameRate": { "type": "number", "minimum": 0 },
+        "aspectRatio": { "type": "number", "minimum": 0 },
+        "facingMode": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "groupId": { "type": "string" },
+        "resizeMode": { "type": "string" }
+      }
+    },
+    "recording_metadata": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "subject_id": { "type": "string", "minLength": 1 },
+        "session_id": { "type": "string", "minLength": 1 },
+        "take_id": { "type": "string", "minLength": 1 },
+        "sign_label": { "type": ["string", "null"] },
+        "sign_type": { "type": ["string", "null"], "enum": ["static", "dynamic", "rest", "calibration", null] },
+        "rest_subregime": { "type": ["string", "null"] }
+      }
     },
     "duration_ms": {
       "type": "number",
@@ -53,11 +103,52 @@
       "required": ["p50_ms", "p95_ms", "max_ms", "max_allowed_ms", "gaps_over_100ms_count"],
       "additionalProperties": false,
       "properties": {
+        "count": { "type": "integer", "minimum": 0 },
         "p50_ms": { "type": "number", "minimum": 0 },
         "p95_ms": { "type": "number", "minimum": 0 },
+        "p99_ms": { "type": "number", "minimum": 0 },
         "max_ms": { "type": "number", "minimum": 0 },
         "max_allowed_ms": { "type": "number", "minimum": 0 },
+        "gaps_over_100ms": { "type": "integer", "minimum": 0 },
         "gaps_over_100ms_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "edge_metrics": {
+      "type": "object",
+      "required": [
+        "border_margin",
+        "frames_checked",
+        "frames_with_hand_near_edge",
+        "edge_clip_ratio",
+        "pose_shoulders_oob_frames"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "border_margin": { "type": "number", "minimum": 0, "maximum": 0.5 },
+        "frames_checked": { "type": "integer", "minimum": 0 },
+        "frames_with_hand_near_edge": { "type": "integer", "minimum": 0 },
+        "edge_clip_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "pose_shoulders_oob_frames": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "hand_presence_metrics": {
+      "type": "object",
+      "required": [
+        "sign_label",
+        "is_active_sign",
+        "frames_with_hands",
+        "hand_presence_ratio",
+        "min_required_ratio",
+        "passed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sign_label": { "type": ["string", "null"] },
+        "is_active_sign": { "type": "boolean" },
+        "frames_with_hands": { "type": "integer", "minimum": 0 },
+        "hand_presence_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "min_required_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "passed": { "type": "boolean" }
       }
     },
     "valid": {
@@ -147,8 +238,12 @@
       "type": "object",
       "required": ["start_ms", "end_ms", "label", "instruction"],
       "properties": {
+        "index": { "type": "integer", "minimum": 0 },
         "start_ms": { "type": "number", "minimum": 0 },
         "end_ms": { "type": "number", "minimum": 0 },
+        "actual_start_ms": { "type": ["number", "null"], "minimum": 0 },
+        "actual_end_ms": { "type": ["number", "null"], "minimum": 0 },
+        "actual_timestamp_iso": { "type": "string", "minLength": 1 },
         "label": { "type": "string", "minLength": 1 },
         "instruction": { "type": "string" },
         "subText": { "type": "string" },
