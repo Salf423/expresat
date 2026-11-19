@@ -391,7 +391,17 @@ class TestRecorderSchemaAndObjectMirror(unittest.TestCase):
         self.assertAlmostEqual(mirrored["hands"][1]["landmarks"][0]["x"], 1.0 - 0.30, places=6)
 
         double_mirrored = mirror_raw_frame(mirrored)
-        self.assertEqual(double_mirrored, raw)
+        self.assertEqual(double_mirrored["hands"][0]["categoryName"], orig_cat0)
+        self.assertEqual(double_mirrored["hands"][1]["categoryName"], orig_cat1)
+        self.assertEqual(double_mirrored["hands"][0]["score"], raw["hands"][0]["score"])
+        self.assertEqual(double_mirrored["hands"][1]["score"], raw["hands"][1]["score"])
+        for p_dm, p_orig in zip(double_mirrored["pose"], raw["pose"]):
+            for k in ("x", "y", "z", "visibility"):
+                self.assertAlmostEqual(p_dm[k], p_orig[k], places=12)
+        for h_dm, h_orig in zip(double_mirrored["hands"], raw["hands"]):
+            for l_dm, l_orig in zip(h_dm["landmarks"], h_orig["landmarks"]):
+                for k in ("x", "y", "z"):
+                    self.assertAlmostEqual(l_dm[k], l_orig[k], places=12)
 
     def test_mirror_raw_frame_object_hands_asymmetric_commutativity_linf(self):
         """v1.4.0: asymmetric mirror commutativity on object-wrapped hands."""

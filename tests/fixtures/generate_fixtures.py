@@ -1,5 +1,5 @@
 """
-Canonical test fixture generator (v1.2.2).
+Canonical test fixture generator (FEATURE_SPEC v1.4.0).
 
 Generates tests/fixtures/feature_spec_cases.json for element-by-element
 cross-runtime comparison (Python and JavaScript) under L_inf <= 1e-6.
@@ -67,11 +67,11 @@ def generate_all_cases() -> dict:
         "window_cases": {},
     }
 
-    # 1. TC_01_canonical_frame
+    # 1. TC_01_canonical_frame (hand_a at P15 -> 'Left', hand_b at P16 -> 'Right')
     raw_tc01 = {
         "pose": copy.deepcopy(canonical_pose),
         "hands": [copy.deepcopy(hand_a), copy.deepcopy(hand_b)],
-        "handedness": [[{"categoryName": "Right"}], [{"categoryName": "Left"}]],
+        "handedness": [[{"categoryName": "Left"}], [{"categoryName": "Right"}]],
     }
     feats_01, val_01, err_01 = extract_frame_features(raw_tc01)
     cases["frame_cases"]["TC_01_canonical_frame"] = {
@@ -83,11 +83,11 @@ def generate_all_cases() -> dict:
         },
     }
 
-    # 2. TC_02_missing_left_hand
+    # 2. TC_02_missing_left_hand (only hand_b at P16 -> 'Right' -> rightHand [115..177])
     raw_tc02 = {
         "pose": copy.deepcopy(canonical_pose),
         "hands": [copy.deepcopy(hand_b)],
-        "handedness": [[{"categoryName": "Left"}]],
+        "handedness": [[{"categoryName": "Right"}]],
     }
     feats_02, val_02, err_02 = extract_frame_features(raw_tc02)
     cases["frame_cases"]["TC_02_missing_left_hand"] = {
@@ -136,7 +136,7 @@ def generate_all_cases() -> dict:
     raw_tc05a = {
         "pose": copy.deepcopy(canonical_pose),
         "hands": [copy.deepcopy(hand_b), copy.deepcopy(hand_a)],
-        "handedness": [[{"categoryName": "Left"}], [{"categoryName": "Right"}]],
+        "handedness": [[{"categoryName": "Right"}], [{"categoryName": "Left"}]],
     }
     feats_05a, val_05a, err_05a = extract_frame_features(raw_tc05a)
     cases["frame_cases"]["TC_05A_order_invariance"] = {
@@ -148,7 +148,7 @@ def generate_all_cases() -> dict:
         },
     }
 
-    # 6. TC_05B_centered_hand_left (categoryName = Left -> Right Hand [115..177])
+    # 6. TC_05B_centered_hand_left (direct v1.4.0: categoryName = Left -> Left Hand [52..114])
     centered_hand = [{"x": 0.50, "y": 0.70, "z": 0.00} for _ in range(21)]
     raw_tc05b_left = {
         "pose": copy.deepcopy(canonical_pose),
@@ -165,7 +165,7 @@ def generate_all_cases() -> dict:
         },
     }
 
-    # 7. TC_05B_centered_hand_right (categoryName = Right -> Left Hand [52..114])
+    # 7. TC_05B_centered_hand_right (direct v1.4.0: categoryName = Right -> Right Hand [115..177])
     raw_tc05b_right = {
         "pose": copy.deepcopy(canonical_pose),
         "hands": [copy.deepcopy(centered_hand)],
@@ -216,14 +216,14 @@ def generate_all_cases() -> dict:
     }
 
     # Window cases (ExtractWindow)
-    # 10. TC_WINDOW_nominal_15_frames (25 frames at 33.33 ms)
+    # 10. TC_WINDOW_nominal_15_frames (30 frames at 33.333 ms -> t_last = 966.657 ms >= 933.333 ms)
     win_nominal = []
-    for i in range(25):
+    for i in range(30):
         t_ms = i * 33.333
         win_nominal.append({
             "pose": copy.deepcopy(canonical_pose),
             "hands": [copy.deepcopy(hand_a), copy.deepcopy(hand_b)],
-            "handedness": [[{"categoryName": "Right"}], [{"categoryName": "Left"}]],
+            "handedness": [[{"categoryName": "Left"}], [{"categoryName": "Right"}]],
             "timestamp_ms": t_ms,
         })
     tens_nom, val_w_nom, err_w_nom = extract_window(win_nominal, target_fps=15, duration_ms=1000.0)
@@ -237,16 +237,21 @@ def generate_all_cases() -> dict:
         },
     }
 
-    # 11. TC_WINDOW_isolated_invalid_gap (53.3 ms gap <= 100 ms allowed)
+    # 11. TC_WINDOW_isolated_invalid_gap (90 ms gap <= 100 ms allowed; unique=12/15, bridges=3/14)
+    ts_gap_ok = [0.0, 90.0, 180.0, 262.0, 344.0, 426.0, 508.0, 590.0, 672.0, 754.0, 836.0, 918.0, 1000.0]
     win_gap_ok = [
-        {"pose": copy.deepcopy(canonical_pose), "hands": [copy.deepcopy(hand_a)], "timestamp_ms": 0.0},
-        {"pose": copy.deepcopy(canonical_pose), "hands": [copy.deepcopy(hand_a)], "timestamp_ms": 120.0},
-        {"pose": copy.deepcopy(canonical_pose), "hands": [copy.deepcopy(hand_a)], "timestamp_ms": 200.0},
+        {
+            "pose": copy.deepcopy(canonical_pose),
+            "hands": [copy.deepcopy(hand_a)],
+            "handedness": [[{"categoryName": "Left"}]],
+            "timestamp_ms": t_ms,
+        }
+        for t_ms in ts_gap_ok
     ]
-    tens_gok, val_gok, err_gok = extract_window(win_gap_ok, target_fps=15, duration_ms=300.0)
+    tens_gok, val_gok, err_gok = extract_window(win_gap_ok, target_fps=15, duration_ms=1000.0)
     cases["window_cases"]["TC_WINDOW_isolated_invalid_gap"] = {
         "input": win_gap_ok,
-        "options": {"targetFps": 15, "durationMs": 300.0},
+        "options": {"targetFps": 15, "durationMs": 1000.0},
         "expected": {
             "valid": val_gok,
             "error": err_gok,
@@ -254,16 +259,21 @@ def generate_all_cases() -> dict:
         },
     }
 
-    # 12. TC_WINDOW_excessive_gap_rejected (183.3 ms gap > 100 ms rejected)
+    # 12. TC_WINDOW_excessive_gap_rejected (150 ms raw gap > 100 ms rejected)
+    ts_gap_bad = [0.0, 150.0] + [150.0 + 60.0 * k for k in range(1, 16)]
     win_gap_bad = [
-        {"pose": copy.deepcopy(canonical_pose), "hands": [copy.deepcopy(hand_a)], "timestamp_ms": 0.0},
-        {"pose": copy.deepcopy(canonical_pose), "hands": [copy.deepcopy(hand_a)], "timestamp_ms": 250.0},
-        {"pose": copy.deepcopy(canonical_pose), "hands": [copy.deepcopy(hand_a)], "timestamp_ms": 300.0},
+        {
+            "pose": copy.deepcopy(canonical_pose),
+            "hands": [copy.deepcopy(hand_a)],
+            "handedness": [[{"categoryName": "Left"}]],
+            "timestamp_ms": t_ms,
+        }
+        for t_ms in ts_gap_bad
     ]
-    tens_gbad, val_gbad, err_gbad = extract_window(win_gap_bad, target_fps=15, duration_ms=300.0)
+    tens_gbad, val_gbad, err_gbad = extract_window(win_gap_bad, target_fps=15, duration_ms=1000.0)
     cases["window_cases"]["TC_WINDOW_excessive_gap_rejected"] = {
         "input": win_gap_bad,
-        "options": {"targetFps": 15, "durationMs": 300.0},
+        "options": {"targetFps": 15, "durationMs": 1000.0},
         "expected": {
             "valid": val_gbad,
             "error": err_gbad,
@@ -274,14 +284,14 @@ def generate_all_cases() -> dict:
     # 13. TC_WINDOW_hand_swap_between_frames
     # Verify per-frame anatomical slot assignment preserves trajectory continuity when array order swaps
     win_swap = []
-    for i in range(25):
+    for i in range(30):
         t_ms = i * 33.333
         if i % 2 == 0:
             h_order = [copy.deepcopy(hand_a), copy.deepcopy(hand_b)]
-            lbl_order = [[{"categoryName": "Right"}], [{"categoryName": "Left"}]]
+            lbl_order = [[{"categoryName": "Left"}], [{"categoryName": "Right"}]]
         else:
             h_order = [copy.deepcopy(hand_b), copy.deepcopy(hand_a)]
-            lbl_order = [[{"categoryName": "Left"}], [{"categoryName": "Right"}]]
+            lbl_order = [[{"categoryName": "Right"}], [{"categoryName": "Left"}]]
         win_swap.append({
             "pose": copy.deepcopy(canonical_pose),
             "hands": h_order,
@@ -299,15 +309,15 @@ def generate_all_cases() -> dict:
         },
     }
 
-    # 14. TC_06_recorder_object_hands (recorder schema without top-level handedness)
+    # 14. TC_06_recorder_object_hands (recorder schema without top-level handedness; direct v1.4.0 labels)
     raw_tc06 = {
         "t_ms": 500.0,
         "videoWidth": 640,
         "videoHeight": 480,
         "pose": copy.deepcopy(canonical_pose),
         "hands": [
-            {"landmarks": copy.deepcopy(hand_a), "categoryName": "Right", "score": 0.94},
-            {"landmarks": copy.deepcopy(hand_b), "categoryName": "Left", "score": 0.97},
+            {"landmarks": copy.deepcopy(hand_a), "categoryName": "Left", "score": 0.94},
+            {"landmarks": copy.deepcopy(hand_b), "categoryName": "Right", "score": 0.97},
         ],
     }
     feats_06, val_06, err_06 = extract_frame_features(raw_tc06)
@@ -328,8 +338,8 @@ def generate_all_cases() -> dict:
             "videoHeight": 480,
             "pose": copy.deepcopy(canonical_pose),
             "hands": [
-                {"landmarks": copy.deepcopy(hand_a), "categoryName": "Right", "score": 0.94},
-                {"landmarks": copy.deepcopy(hand_b), "categoryName": "Left", "score": 0.97},
+                {"landmarks": copy.deepcopy(hand_a), "categoryName": "Left", "score": 0.94},
+                {"landmarks": copy.deepcopy(hand_b), "categoryName": "Right", "score": 0.97},
             ],
         }
         for i in range(25)
@@ -361,19 +371,19 @@ def generate_recorder_sample() -> dict:
             hands = []
             handedness = []
         elif i < 9:
-            hands = [{"landmarks": copy.deepcopy(hand_b), "categoryName": "Left", "score": 0.96}]
-            handedness = [[{"categoryName": "Left", "score": 0.96, "index": 0}]]
+            hands = [{"landmarks": copy.deepcopy(hand_b), "categoryName": "Right", "score": 0.96}]
+            handedness = [[{"categoryName": "Right", "score": 0.96, "index": 0}]]
         elif i < 14:
-            hands = [{"landmarks": copy.deepcopy(hand_a), "categoryName": "Right", "score": 0.95}]
-            handedness = [[{"categoryName": "Right", "score": 0.95, "index": 1}]]
+            hands = [{"landmarks": copy.deepcopy(hand_a), "categoryName": "Left", "score": 0.95}]
+            handedness = [[{"categoryName": "Left", "score": 0.95, "index": 1}]]
         else:
             hands = [
-                {"landmarks": copy.deepcopy(hand_a), "categoryName": "Right", "score": 0.94},
-                {"landmarks": copy.deepcopy(hand_b), "categoryName": "Left", "score": 0.97},
+                {"landmarks": copy.deepcopy(hand_a), "categoryName": "Left", "score": 0.94},
+                {"landmarks": copy.deepcopy(hand_b), "categoryName": "Right", "score": 0.97},
             ]
             handedness = [
-                [{"categoryName": "Right", "score": 0.94, "index": 1}],
-                [{"categoryName": "Left", "score": 0.97, "index": 0}],
+                [{"categoryName": "Left", "score": 0.94, "index": 1}],
+                [{"categoryName": "Right", "score": 0.97, "index": 0}],
             ]
 
         frames.append(

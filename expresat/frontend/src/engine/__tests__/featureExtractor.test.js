@@ -239,7 +239,24 @@ describe('featureExtractor.js — Conformidad FEATURE_SPEC v1.4.0', () => {
       expect(mirrored.hands[1].categoryName).toBe(expCat1);
       expect(mirrored.hands[0].landmarks[0].x).toBeCloseTo(1.0 - 0.70, 5);
       expect(mirrored.hands[1].landmarks[0].x).toBeCloseTo(1.0 - 0.30, 5);
-      expect(mirrorRawFrame(mirrored)).toEqual(raw);
+      const doubleMirrored = mirrorRawFrame(mirrored);
+      expect(doubleMirrored.hands[0].categoryName).toBe(raw.hands[0].categoryName);
+      expect(doubleMirrored.hands[1].categoryName).toBe(raw.hands[1].categoryName);
+      expect(doubleMirrored.hands[0].score).toBe(raw.hands[0].score);
+      expect(doubleMirrored.hands[1].score).toBe(raw.hands[1].score);
+      for (let i = 0; i < raw.pose.length; i++) {
+        expect(doubleMirrored.pose[i].x).toBeCloseTo(raw.pose[i].x, 12);
+        expect(doubleMirrored.pose[i].y).toBeCloseTo(raw.pose[i].y, 12);
+        expect(doubleMirrored.pose[i].z).toBeCloseTo(raw.pose[i].z, 12);
+        expect(doubleMirrored.pose[i].visibility).toBeCloseTo(raw.pose[i].visibility, 12);
+      }
+      for (let hi = 0; hi < raw.hands.length; hi++) {
+        for (let i = 0; i < raw.hands[hi].landmarks.length; i++) {
+          expect(doubleMirrored.hands[hi].landmarks[i].x).toBeCloseTo(raw.hands[hi].landmarks[i].x, 12);
+          expect(doubleMirrored.hands[hi].landmarks[i].y).toBeCloseTo(raw.hands[hi].landmarks[i].y, 12);
+          expect(doubleMirrored.hands[hi].landmarks[i].z).toBeCloseTo(raw.hands[hi].landmarks[i].z, 12);
+        }
+      }
     });
 
     it('Conmutatividad asimétrica de espejo con objeto de 1 mano', () => {

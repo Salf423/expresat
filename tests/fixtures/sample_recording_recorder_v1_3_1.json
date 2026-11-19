@@ -992,14 +992,14 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.96
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.96,
             "index": 0
           }
@@ -1319,14 +1319,14 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.96
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.96,
             "index": 0
           }
@@ -1646,14 +1646,14 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.96
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.96,
             "index": 0
           }
@@ -1973,14 +1973,14 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.96
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.96,
             "index": 0
           }
@@ -2300,14 +2300,14 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.96
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.96,
             "index": 0
           }
@@ -2627,14 +2627,14 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.95
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.95,
             "index": 1
           }
@@ -2954,14 +2954,14 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.95
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.95,
             "index": 1
           }
@@ -3281,14 +3281,14 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.95
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.95,
             "index": 1
           }
@@ -3608,14 +3608,14 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.95
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.95,
             "index": 1
           }
@@ -3935,14 +3935,14 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.95
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.95,
             "index": 1
           }
@@ -4262,7 +4262,7 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.94
         },
         {
@@ -4373,21 +4373,21 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.97
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.94,
             "index": 1
           }
         ],
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.97,
             "index": 0
           }
@@ -4707,7 +4707,7 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.94
         },
         {
@@ -4818,21 +4818,21 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.97
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.94,
             "index": 1
           }
         ],
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.97,
             "index": 0
           }
@@ -5152,7 +5152,7 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.94
         },
         {
@@ -5263,21 +5263,21 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.97
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.94,
             "index": 1
           }
         ],
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.97,
             "index": 0
           }
@@ -5597,7 +5597,7 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.94
         },
         {
@@ -5708,21 +5708,21 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.97
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.94,
             "index": 1
           }
         ],
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.97,
             "index": 0
           }
@@ -6042,7 +6042,7 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.94
         },
         {
@@ -6153,21 +6153,21 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.97
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.94,
             "index": 1
           }
         ],
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.97,
             "index": 0
           }
@@ -6487,7 +6487,7 @@
               "z": 0.05
             }
           ],
-          "categoryName": "Right",
+          "categoryName": "Left",
           "score": 0.94
         },
         {
@@ -6598,21 +6598,21 @@
               "z": -0.05
             }
           ],
-          "categoryName": "Left",
+          "categoryName": "Right",
           "score": 0.97
         }
       ],
       "handedness": [
         [
           {
-            "categoryName": "Right",
+            "categoryName": "Left",
             "score": 0.94,
             "index": 1
           }
         ],
         [
           {
-            "categoryName": "Left",
+            "categoryName": "Right",
             "score": 0.97,
             "index": 0
           }
