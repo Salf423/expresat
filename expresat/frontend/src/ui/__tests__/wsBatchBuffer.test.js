@@ -28,6 +28,74 @@ describe('ui/useSignEngine — Lote WebSocket crudo + t_ms monotónico y enableP
         configEnablePose: false,
       })
     ).toBe(false);
+    expect(
+      useSignEngineMod.resolveEnablePose({
+        enablePose: false,
+        enableRemoteTransport: false,
+        devRecorderActive: true,
+        configEnablePose: false,
+      })
+    ).toBe(true);
+  });
+
+  it('expira la tarjeta activa al recibir label=null, evita carrera WS y acumula historial solo en committed', () => {
+    expect(typeof useSignEngineMod.shouldApplyLocalPrediction).toBe('function');
+    expect(typeof useSignEngineMod.applyGesturePrediction).toBe('function');
+    expect(typeof useSignEngineMod.appendCommittedSign).toBe('function');
+
+    // En modo demo local (sin WS) siempre aplica predicción local
+    expect(
+      useSignEngineMod.shouldApplyLocalPrediction({
+        enableRemoteTransport: false,
+        wsState: 'idle',
+      })
+    ).toBe(true);
+
+    // Con WS OPEN en modo neural, el clasificador local NO sobrescribe al servidor
+    expect(
+      useSignEngineMod.shouldApplyLocalPrediction({
+        enableRemoteTransport: true,
+        wsState: 'open',
+      })
+    ).toBe(false);
+
+    // Expiración automática en reposo (label=null limpia la tarjeta activa en lugar de congelarla)
+    const active = {
+      label: 'Mano Abierta',
+      confidence: 0.96,
+      source: 'local',
+      state: 'confirmed',
+      details: { states: { thumb: true, index: true, middle: true, ring: true, pinky: true } },
+    };
+    const expired = useSignEngineMod.applyGesturePrediction(active, {
+      label: null,
+      confidence: 0,
+      state: 'idle',
+      details: { reason: 'INVALID_OR_NOISY_LANDMARKS', states: null },
+    });
+    expect(expired.label).toBeNull();
+    expect(expired.confidence).toBe(0);
+    expect(expired.state).toBe('idle');
+
+    // Historial solo agrega en flanco committed === true y adjunta speakText canónico del catálogo
+    const h0 = [];
+    const h1 = useSignEngineMod.appendCommittedSign(h0, {
+      label: 'OK / Pinza',
+      confidence: 0.92,
+      committed: false,
+      committedLabel: null,
+    });
+    expect(h1).toHaveLength(0);
+
+    const h2 = useSignEngineMod.appendCommittedSign(h1, {
+      label: 'OK / Pinza',
+      confidence: 0.92,
+      committed: true,
+      committedLabel: 'OK / Pinza',
+    });
+    expect(h2).toHaveLength(1);
+    expect(h2[0].label).toBe('OK / Pinza');
+    expect(h2[0].speakText).toBe('OK');
   });
 
   it('buildWsInferenceFrame extrae frameData.raw (sin doble EMA) con t_ms real y ventana válida para extractWindow v1.4.0', () => {

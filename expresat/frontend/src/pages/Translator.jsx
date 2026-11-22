@@ -1,12 +1,14 @@
-import React, { Profiler, useRef, useState } from 'react';
+import React, { Profiler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   Activity,
   MessageSquare,
   Sparkles,
   Volume2,
+  VolumeX,
   Copy,
   Check,
+  Trash2,
   Info,
   Layers,
   ChevronDown,
@@ -17,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useSignEngine } from '../ui/index.js';
 import { onDevProfilerRender } from '../engine/index.js';
+import { SIGN_CATALOG, getSignCatalogEntry } from '../recognition/index.js';
 import { WS_STATES } from '../transport/index.js';
 import { COLOR_LEGEND_ITEMS } from '../services/landmarkTracker.js';
 import { CONFIG } from '../config.js';
@@ -24,7 +27,7 @@ import { DevRecorder } from '../components/DevRecorder.jsx';
 import { DevInstrumentationPanel } from '../components/DevInstrumentationPanel.jsx';
 
 const WS_STATE_LABELS = Object.freeze({
-  [WS_STATES.IDLE]: 'Modo Local',
+  [WS_STATES.IDLE]: 'Modo Demo Local',
   [WS_STATES.CONNECTING]: 'Conectando…',
   [WS_STATES.OPEN]: 'Conectado',
   [WS_STATES.AUTH_ERROR]: 'Modo Demo Local (Sin Token)',
@@ -39,11 +42,34 @@ const FINGER_NAMES_ES = Object.freeze([
   { key: 'pinky', label: 'Meñique' },
 ]);
 
+function speakTextOffline(text, onStart, onEnd) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text) {
+    return false;
+  }
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'es-MX';
+    utterance.rate = 1.0;
+    utterance.onstart = () => onStart?.();
+    utterance.onend = () => onEnd?.();
+    utterance.onerror = () => onEnd?.();
+    window.speechSynthesis.speak(utterance);
+    return true;
+  } catch (err) {
+    console.warn('[Translator] Error en síntesis de voz offline:', err?.message || err);
+    onEnd?.();
+    return false;
+  }
+}
+
 const Translator = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   const [copied, setCopied] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [debugVisible, setDebugVisible] = useState(false);
   const [trackingConfig, setTrackingConfig] = useState({
     enabled: true,
@@ -56,29 +82,60 @@ const Translator = () => {
   const [showTelemetryDrawer, setShowTelemetryDrawer] = useState(false);
   const [selectedPartFilter, setSelectedPartFilter] = useState('all');
 
+  const autoSpeakRef = useRef(autoSpeak);
+  useEffect(() => {
+    autoSpeakRef.current = autoSpeak;
+  }, [autoSpeak]);
+
+  const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+
+  const handleSignCommitted = useCallback((entry) => {
+    if (!autoSpeakRef.current || !entry?.speakText) return;
+    speakTextOffline(
+      entry.speakText,
+      () => setIsSpeaking(true),
+      () => setIsSpeaking(false)
+    );
+  }, []);
+
+  // Modo Demo Local 100% en navegador: sin backend WS ni PoseLandmarker (máximos FPS reales).
+  // DevRecorder activa PoseLandmarker bajo demanda únicamente durante grabaciones de dataset v1.4.0.
   const {
     fps,
     engineStatus,
     engineError,
     gesture,
+    history,
     wsSnapshot,
     landmarksCount,
     telemetry,
     devSnapshot,
     refreshDevSnapshot,
     reconnectTransport,
+    clearGesture,
     engineRef,
   } = useSignEngine({
     videoRef,
     canvasRef,
     trackingConfig,
-    enableRemoteTransport: true,
-    enablePose: true,
+    enableRemoteTransport: false,
+    enablePose: false,
     telemetryDrawerOpen: showTelemetryDrawer,
+    showDiagnosticBadges: debugVisible,
+    onSignCommitted: handleSignCommitted,
   });
 
+  // Cancel any active speech synthesis on unmount
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
   // Keyboard shortcuts: Ctrl+Shift+D (Debug) and Ctrl+Shift+T (Tracker)
-  React.useEffect(() => {
+  useEffect(() => {
     const handleKey = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'D') {
         e.preventDefault();
@@ -98,22 +155,68 @@ const Translator = () => {
   const isWsOpen = wsSnapshot.state === WS_STATES.OPEN;
   const wsStatusLabel = WS_STATE_LABELS[wsSnapshot.state] || wsSnapshot.state;
 
-  const handleSpeak = () => {
-    if ('speechSynthesis' in window && translation) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(translation);
-      utterance.lang = 'es-MX';
-      window.speechSynthesis.speak(utterance);
-    }
-  };
+  const sentenceDisplayText = useMemo(
+    () => history.map((item) => item.label).join(' · '),
+    [history]
+  );
 
-  const handleCopy = () => {
-    if (translation && navigator.clipboard) {
-      navigator.clipboard.writeText(translation);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const sentenceSpeakText = useMemo(
+    () => history.map((item) => item.speakText || item.label).join(', '),
+    [history]
+  );
+
+  const copyPayload = sentenceDisplayText || translation;
+  const speakPayload =
+    sentenceSpeakText ||
+    (translation ? getSignCatalogEntry(translation)?.speakText || translation : '');
+
+  const handleSpeakSentence = useCallback(() => {
+    if (!speakPayload) return;
+    speakTextOffline(
+      speakPayload,
+      () => setIsSpeaking(true),
+      () => setIsSpeaking(false)
+    );
+  }, [speakPayload]);
+
+  const handleCopy = useCallback(() => {
+    if (!copyPayload || !navigator.clipboard) return;
+    navigator.clipboard
+      .writeText(copyPayload)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch((err) => {
+        console.warn('[Translator] No se pudo copiar al portapapeles:', err?.message || err);
+      });
+  }, [copyPayload]);
+
+  const handleClearAll = useCallback(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
     }
-  };
+    clearGesture();
+  }, [clearGesture]);
+
+  const emptyStateMessage =
+    gesture.state === 'detecting'
+      ? 'Estabilizando seña…'
+      : gesture.state === 'rejected'
+        ? 'Mano en reposo o postura no reconocida'
+        : 'Esperando señas frente a la cámara…';
+
+  const confidenceBadgeStyle =
+    confidencePct >= 85
+      ? {
+          background: 'var(--success-bg)',
+          color: 'var(--success-color)',
+        }
+      : {
+          background: 'var(--warning-bg)',
+          color: 'var(--warning-color)',
+        };
 
   const content = (
     <div
@@ -163,16 +266,15 @@ const Translator = () => {
             </span>
           </div>
           <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-            Posiciónate frente a la cámara con las manos visibles. Reconocimiento geométrico 100% en
-            navegador.
+            Posiciónate frente a la cámara con las manos visibles. Reconocimiento geométrico y voz
+            100% offline en tu navegador.
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
-          {/* Telemetry Indicator (WCAG aria-live="polite") */}
+          {/* Telemetry Indicator (non-live region so 1 Hz FPS updates never spam screen readers) */}
           <div
-            role="status"
-            aria-live="polite"
+            aria-label="Métricas de rendimiento y modo de operación"
             className="glass-panel"
             style={{
               display: 'flex',
@@ -219,7 +321,7 @@ const Translator = () => {
 
             <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
 
-            {/* Explicit WebSocket transport status */}
+            {/* Explicit Local / WebSocket transport status */}
             <div
               data-testid="ws-status"
               data-ws-state={wsSnapshot.state}
@@ -227,7 +329,11 @@ const Translator = () => {
               title={wsSnapshot.detail}
             >
               <span
-                className={`status-dot ${isWsOpen ? 'status-dot--online' : 'status-dot--offline'}`}
+                className={`status-dot ${
+                  isWsOpen || wsSnapshot.state === WS_STATES.IDLE
+                    ? 'status-dot--online'
+                    : 'status-dot--offline'
+                }`}
                 aria-hidden="true"
               />
               <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)' }}>
@@ -311,7 +417,7 @@ const Translator = () => {
         </div>
       )}
 
-      {/* Info banner when operating offline or without token (does not block tracking) */}
+      {/* Info banner when remote transport is configured but unavailable */}
       {!engineError &&
         (wsSnapshot.state === WS_STATES.FAILED || wsSnapshot.state === WS_STATES.AUTH_ERROR) && (
           <div
@@ -411,6 +517,7 @@ const Translator = () => {
           <div className="video-container" style={{ position: 'relative' }}>
             <video
               ref={videoRef}
+              aria-label="Vista previa de cámara para detección de señas"
               style={{
                 position: 'absolute',
                 width: 0,
@@ -583,7 +690,7 @@ const Translator = () => {
                     alignItems: 'center',
                   }}
                 >
-                  {COLOR_LEGEND_ITEMS.map((item) => (
+                  {COLOR_LEGEND_ITEMS.filter((item) => item.group === 'Mano').map((item) => (
                     <span
                       key={item.label}
                       style={{
@@ -703,60 +810,147 @@ const Translator = () => {
           )}
         </section>
 
-        {/* Panel 2: Live Translation & Finger State */}
+        {/* Panel 2: Live Translation, Sentence History, Offline TTS & Unified Guide */}
         <section className="glass-panel translator-panel" aria-label="Resultado de Traducción">
-          <div className="panel-header">
+          <div className="panel-header" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
             <MessageSquare size={20} color="var(--accent-secondary)" />
             <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>Gesto Detectado</h2>
-            {translation && (
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.35rem' }}>
-                <button
-                  type="button"
-                  onClick={handleSpeak}
-                  className="btn-icon"
-                  title="Pronunciar texto en voz alta"
-                  aria-label="Pronunciar traducción"
-                  style={{ width: '32px', height: '32px' }}
-                >
-                  <Volume2 size={16} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="btn-icon"
-                  title="Copiar al portapapeles"
-                  aria-label="Copiar traducción al portapapeles"
-                  style={{ width: '32px', height: '32px' }}
-                >
-                  {copied ? <Check size={16} color="var(--success-color)" /> : <Copy size={16} />}
-                </button>
-              </div>
-            )}
+            <div
+              style={{
+                marginLeft: 'auto',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                flexWrap: 'wrap',
+              }}
+            >
+              <button
+                type="button"
+                data-testid="auto-speak-toggle"
+                onClick={() => setAutoSpeak((v) => !v)}
+                disabled={!ttsSupported}
+                aria-pressed={autoSpeak}
+                className="chip"
+                title={
+                  ttsSupported
+                    ? 'Activar o desactivar pronunciación automática en es-MX al confirmar cada seña'
+                    : 'Síntesis de voz no soportada en este navegador'
+                }
+                style={{
+                  cursor: ttsSupported ? 'pointer' : 'not-allowed',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  fontSize: '0.73rem',
+                  fontWeight: 600,
+                  background: autoSpeak ? 'var(--accent-secondary-bg)' : 'var(--input-bg)',
+                  color: autoSpeak ? 'var(--accent-secondary)' : 'var(--text-muted)',
+                  border: `1px solid ${
+                    autoSpeak ? 'var(--accent-secondary)' : 'var(--panel-border)'
+                  }`,
+                }}
+              >
+                {autoSpeak ? <Volume2 size={13} /> : <VolumeX size={13} />}
+                <span>Voz automática: {autoSpeak ? 'Sí' : 'No'}</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="speak-sentence-btn"
+                onClick={handleSpeakSentence}
+                disabled={!ttsSupported || !speakPayload}
+                className="btn-icon"
+                title="Leer oración en voz alta (es-MX offline)"
+                aria-label="Leer oración en voz alta"
+                style={{
+                  padding: '0.28rem 0.65rem',
+                  fontSize: '0.74rem',
+                  fontWeight: 600,
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  cursor: ttsSupported && speakPayload ? 'pointer' : 'not-allowed',
+                  opacity: ttsSupported && speakPayload ? 1 : 0.5,
+                  border: `1px solid ${isSpeaking ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                  background: isSpeaking ? 'var(--accent-primary-bg)' : 'var(--input-bg)',
+                  color: isSpeaking ? 'var(--accent-primary)' : 'var(--text-color)',
+                }}
+              >
+                <Volume2 size={14} />
+                <span>Leer oración</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="copy-translation-btn"
+                onClick={handleCopy}
+                disabled={!copyPayload}
+                className="btn-icon"
+                title="Copiar al portapapeles"
+                aria-label="Copiar traducción al portapapeles"
+                style={{
+                  width: '30px',
+                  height: '30px',
+                  opacity: copyPayload ? 1 : 0.45,
+                  cursor: copyPayload ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {copied ? <Check size={15} color="var(--success-color)" /> : <Copy size={15} />}
+              </button>
+
+              <button
+                type="button"
+                data-testid="clear-translation-btn"
+                onClick={handleClearAll}
+                disabled={!translation && history.length === 0}
+                className="btn-icon"
+                title="Limpiar gesto actual e historial"
+                aria-label="Limpiar oración e historial"
+                style={{
+                  padding: '0.28rem 0.6rem',
+                  fontSize: '0.74rem',
+                  fontWeight: 600,
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  opacity: translation || history.length > 0 ? 1 : 0.45,
+                  cursor: translation || history.length > 0 ? 'pointer' : 'not-allowed',
+                  border: '1px solid var(--border-color)',
+                  background: 'var(--input-bg)',
+                  color: 'var(--text-color)',
+                }}
+              >
+                <Trash2 size={13} />
+                <span>Limpiar</span>
+              </button>
+            </div>
           </div>
 
+          {/* Active Sign Card (auto-expires cleanly to idle/rejected when hand drops or rests) */}
           <div
             className="translation-output"
-            role="region"
-            aria-live="polite"
+            data-gesture-state={gesture.state}
             style={{
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'center',
               alignItems: 'center',
-              minHeight: '220px',
+              minHeight: '170px',
               position: 'relative',
             }}
           >
             {translation ? (
               <div style={{ textAlign: 'center', animation: 'fade-up 0.2s ease-out' }}>
                 <span
+                  data-testid="gesture-confidence-badge"
                   className="chip"
                   style={{
-                    marginBottom: '0.75rem',
-                    background: 'var(--success-bg)',
-                    color: 'var(--success-color)',
+                    marginBottom: '0.65rem',
                     borderColor: 'transparent',
+                    ...confidenceBadgeStyle,
                   }}
                 >
                   Confianza: {confidencePct}% ({gesture.source === 'remote' ? 'Servidor' : 'Local'})
@@ -776,24 +970,127 @@ const Translator = () => {
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  gap: '0.75rem',
+                  gap: '0.65rem',
                 }}
               >
-                <Sparkles size={32} color="var(--text-subtle)" />
+                <Sparkles
+                  size={28}
+                  color={
+                    gesture.state === 'detecting' ? 'var(--accent-primary)' : 'var(--text-subtle)'
+                  }
+                />
                 <p
                   data-testid="detected-gesture"
                   className="translation-placeholder"
                   style={{ margin: 0 }}
                 >
-                  Esperando señas frente a la cámara…
+                  {emptyStateMessage}
                 </p>
+                {gesture.state === 'detecting' && gesture.details?.stabilityProgress > 0 && (
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      width: '140px',
+                      height: '4px',
+                      borderRadius: 'var(--radius-full)',
+                      background: 'var(--border-color)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${Math.round(gesture.details.stabilityProgress * 100)}%`,
+                        height: '100%',
+                        background: 'var(--accent-primary)',
+                        transition: 'width 80ms linear',
+                      }}
+                    />
+                  </div>
+                )}
                 <span
-                  style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', maxWidth: '300px' }}
+                  style={{ fontSize: '0.78rem', color: 'var(--text-subtle)', maxWidth: '320px' }}
                 >
-                  Realiza Mano Abierta, Puño, Uno, Dos, OK/Pinza, Bien, Te Quiero, Lunes u Hola
+                  Mantén cada seña firme ~0.3 s para agregarla a la oración.
                 </span>
               </div>
             )}
+          </div>
+
+          {/* Accumulated Sentence / History Box (WCAG 2.2 AA polite incremental announcements) */}
+          <div
+            style={{
+              marginTop: '0.75rem',
+              padding: '0.85rem 1rem',
+              background: 'var(--panel-bg)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--panel-border)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.5rem',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '0.5rem',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                Oración acumulada ({history.length})
+              </span>
+              {!ttsSupported && (
+                <span style={{ fontSize: '0.7rem', color: 'var(--warning-color)' }}>
+                  TTS no disponible en este navegador
+                </span>
+              )}
+            </div>
+            <div
+              data-testid="sentence-history"
+              role="status"
+              aria-live="polite"
+              aria-atomic="false"
+              style={{
+                minHeight: '44px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontSize: '0.92rem',
+                color: 'var(--text-color)',
+              }}
+            >
+              {history.length > 0 ? (
+                history.map((item) => (
+                  <span
+                    key={item.id}
+                    className="chip"
+                    style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      background: 'var(--accent-primary-bg)',
+                      color: 'var(--text-color)',
+                      border: '1px solid var(--accent-primary-border)',
+                    }}
+                  >
+                    {item.label}
+                  </span>
+                ))
+              ) : (
+                <span style={{ fontSize: '0.82rem', color: 'var(--text-subtle)' }}>
+                  Las señas confirmadas aparecerán aquí formando tu oración…
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Live geometric finger state */}
@@ -844,8 +1141,9 @@ const Translator = () => {
             </div>
           </div>
 
-          {/* Quick Guide Card */}
+          {/* Unified Quick Guide Card (Single Source of Truth: SIGN_CATALOG) */}
           <div
+            data-testid="sign-catalog-guide"
             style={{
               marginTop: '0.85rem',
               padding: '0.9rem 1rem',
@@ -866,34 +1164,31 @@ const Translator = () => {
                 letterSpacing: '0.04em',
               }}
             >
-              Señas geométricas soportadas (Modo Demo):
+              Catálogo verificado ({SIGN_CATALOG.length} señas — Modo Demo Local):
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-              {[
-                'Mano Abierta',
-                'Puño / Sí',
-                'Uno / No',
-                'Dos / V',
-                'OK / Pinza',
-                'Bien (Pulgar)',
-                'Te Quiero (ILY)',
-                'Lunes (L)',
-                'Hola (Saludo)',
-              ].map((sign) => (
-                <span
-                  key={sign}
-                  style={{
-                    fontSize: '0.74rem',
-                    padding: '0.2rem 0.6rem',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'var(--input-bg)',
-                    color: 'var(--text-muted)',
-                    border: '1px solid var(--panel-border)',
-                  }}
-                >
-                  {sign}
-                </span>
-              ))}
+              {SIGN_CATALOG.map((sign) => {
+                const isActive = translation === sign.label;
+                return (
+                  <span
+                    key={sign.id}
+                    title={sign.hint}
+                    style={{
+                      fontSize: '0.74rem',
+                      padding: '0.2rem 0.6rem',
+                      borderRadius: 'var(--radius-sm)',
+                      fontWeight: isActive ? 700 : 500,
+                      background: isActive ? 'var(--success-bg)' : 'var(--input-bg)',
+                      color: isActive ? 'var(--success-color)' : 'var(--text-muted)',
+                      border: `1px solid ${
+                        isActive ? 'var(--success-color)' : 'var(--panel-border)'
+                      }`,
+                    }}
+                  >
+                    {sign.label}
+                  </span>
+                );
+              })}
             </div>
           </div>
         </section>
@@ -925,9 +1220,13 @@ const Translator = () => {
           <div>Configuración: {CONFIG.validation.summary}</div>
           <div>
             Motor: {engineStatus.state} | Backend: {engineStatus.backendInfo?.type || '—'} (
-            {engineStatus.backendInfo?.delegate || '—'})
+            {engineStatus.backendInfo?.delegate || '—'}) | Pose:{' '}
+            {String(Boolean(engineStatus.backendInfo?.poseEnabled))}
           </div>
-          <div>Razón clasificador: {gesture.details?.reason || '—'}</div>
+          <div>
+            Estado: {gesture.state} | Mano: {gesture.details?.handId || '—'} | Raw:{' '}
+            {gesture.details?.rawLabel || '—'} | Razón: {gesture.details?.reason || '—'}
+          </div>
         </section>
       )}
     </div>

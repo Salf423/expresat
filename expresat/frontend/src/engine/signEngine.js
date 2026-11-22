@@ -274,8 +274,10 @@ export class SignEngine {
 
     this._videoElement = null;
     this._mediaStream = null;
+    this._vision = null;
     this._handLandmarker = null;
     this._poseLandmarker = null;
+    this._poseEnablePromise = null;
     this._legacyDetector = null;
 
     this._rafId = null;
@@ -659,6 +661,8 @@ export class SignEngine {
       }
       this._poseLandmarker = null;
     }
+    this._poseEnablePromise = null;
+    this._vision = null;
 
     if (this._legacyDetector) {
       try {
@@ -915,6 +919,7 @@ export class SignEngine {
     }
 
     if (currentRunId !== this._runId) return;
+    this._vision = vision;
     protectMainThreadModuleFactory();
 
     const handModelCandidates = [CONFIG.handModelPath, CONFIG.handModelFallbackUrl].filter(Boolean);
@@ -969,6 +974,60 @@ export class SignEngine {
       modelPath: handSetup.modelPath,
       poseEnabled: Boolean(this._poseLandmarker),
     };
+  }
+
+  /**
+   * Lazily enables PoseLandmarker on demand (e.g. when DevRecorder starts a v1.4.0 dataset take)
+   * without restarting the active camera stream.
+   */
+  async ensurePoseEnabled() {
+    this.enablePose = true;
+    if (this._poseLandmarker) return true;
+    if (!this._running || !this._vision) return false;
+    if (this._poseEnablePromise) return this._poseEnablePromise;
+
+    const capturedRunId = this._runId;
+    this._poseEnablePromise = (async () => {
+      try {
+        protectMainThreadModuleFactory();
+        const poseSetup = await createTaskWithFallback(
+          PoseLandmarker,
+          this._vision,
+          [POSE_MODEL_LOCAL, POSE_MODEL_FALLBACK_URL],
+          {
+            runningMode: 'VIDEO',
+            numPoses: 1,
+            minPoseDetectionConfidence: 0.5,
+            minPosePresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+          },
+          this._activeBackendInfo?.delegate || this.preferredDelegate
+        );
+        if (capturedRunId !== this._runId || !this._running) {
+          try {
+            poseSetup.instance.close();
+          } catch {
+            // ignore teardown error
+          }
+          return false;
+        }
+        this._poseLandmarker = poseSetup.instance;
+        if (this._activeBackendInfo) {
+          this._activeBackendInfo = {
+            ...this._activeBackendInfo,
+            poseEnabled: true,
+          };
+        }
+        return true;
+      } catch (poseErr) {
+        console.warn('[SignEngine] No se pudo activar PoseLandmarker bajo demanda:', poseErr);
+        return false;
+      } finally {
+        this._poseEnablePromise = null;
+      }
+    })();
+
+    return this._poseEnablePromise;
   }
 
   async _initLegacyBackend(currentRunId) {

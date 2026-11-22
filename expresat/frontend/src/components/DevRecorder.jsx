@@ -172,6 +172,11 @@ export function DevRecorder({ engineRef, videoRef, signLabel = null }) {
     if (import.meta.env.DEV) {
       engine.setDevPhase?.('grabando');
     }
+    if (typeof engine.ensurePoseEnabled === 'function') {
+      engine.ensurePoseEnabled().catch((err) => {
+        console.warn('[DevRecorder] No se pudo activar PoseLandmarker para grabación:', err);
+      });
+    }
     framesBufferRef.current = [];
     handsDetectedCountRef.current = 0;
     poseDetectedCountRef.current = 0;

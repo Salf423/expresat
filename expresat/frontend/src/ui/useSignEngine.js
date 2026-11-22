@@ -1,5 +1,5 @@
 /**
- * React hook integrating SignEngine, Classifier (GeometricClassifier), and WSClient.
+ * React hook integrating SignEngine, Classifier (GeometricClassifier), and optional WSClient.
  *
  * Documentation & Vault References:
  *   - Data Flow Diagram:   `Obsidian_exp/Flujo de datos.md`
@@ -7,18 +7,19 @@
  *   - Agent Playbook #5:   `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
  *
  * Guarantees (FEATURE_SPEC v1.4.0):
- * - Tracking and geometric recognition run locally in the browser without backend or login.
+ * - Local Demo Mode runs 100% in-browser (no backend, no PoseLandmarker overhead, zero WS race).
+ * - Enables PoseLandmarker whenever neural remote transport, DevRecorder, or explicit pose mode is active.
+ * - Active gesture card auto-expires cleanly when the hand lowers or enters rest.
+ * - Accumulated history appends strictly on cooldown-gated `committed` rising edges.
  * - Idempotent cleanup under React 19 StrictMode (no leaked camera streams or AbortError).
  * - Separate real FPS counters (`cameraFps` and `inferenceFps`).
- * - Explicit WebSocket transport state (`idle | connecting | open | auth_error | failed`).
  * - Sends unsmoothed `frameData.raw` with real monotonic `t_ms` in a time-bounded window
- *   (>= 12 frames, span >= 933.33 ms) over WebSocket (eliminating double EMA and k=1..14 cloning).
- * - Enables PoseLandmarker whenever neural remote transport or explicit pose mode is active.
+ *   (>= 12 frames, span >= 933.33 ms) over WebSocket whenever remote transport is enabled.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { SignEngine } from '../engine/index.js';
-import { GeometricClassifier } from '../recognition/index.js';
+import { GeometricClassifier, getSignCatalogEntry } from '../recognition/index.js';
 import { WSClient, WS_STATES } from '../transport/index.js';
 import { AuthService } from '../services/authService.js';
 import { LandmarkTracker } from '../services/landmarkTracker.js';
@@ -30,13 +31,28 @@ const WS_MIN_SPAN_MS = 1000 * (14 / 15); // 933.333... ms (zero tail extrapolati
 const WS_MIN_FRAMES = 12;
 const WS_MAX_BUFFER_FRAMES = 60;
 const TELEMETRY_UI_INTERVAL_MS = 250; // <= 4 Hz UI refresh when telemetry drawer is open
+const MAX_HISTORY_ITEMS = 40;
+
+let _historyEntrySeq = 0;
 
 export function resolveEnablePose({
   enablePose = false,
   enableRemoteTransport = false,
+  devRecorderActive = false,
   configEnablePose = false,
 } = {}) {
-  return Boolean(enablePose || enableRemoteTransport || configEnablePose);
+  return Boolean(enablePose || enableRemoteTransport || devRecorderActive || configEnablePose);
+}
+
+/**
+ * Determines whether local geometric predictions should update the active gesture state.
+ * Prevents local-vs-remote overwrite races whenever WebSocket neural transport is OPEN.
+ */
+export function shouldApplyLocalPrediction({
+  enableRemoteTransport = false,
+  wsState = WS_STATES.IDLE,
+} = {}) {
+  return !(enableRemoteTransport && wsState === WS_STATES.OPEN);
 }
 
 /**
@@ -89,17 +105,18 @@ export function updateWsRollingBuffer(
   return { ready, spanMs };
 }
 
-function isSameRenderedGesture(prev, nextLabel, nextConfidence, nextSource, nextDetails) {
-  if (!prev) return false;
+function isSameRenderedGesture(prev, next) {
+  if (!prev || !next) return false;
   if (
-    prev.label !== nextLabel ||
-    prev.source !== nextSource ||
-    Math.round((prev.confidence || 0) * 100) !== Math.round((nextConfidence || 0) * 100)
+    prev.label !== next.label ||
+    prev.source !== next.source ||
+    prev.state !== next.state ||
+    Math.round((prev.confidence || 0) * 20) !== Math.round((next.confidence || 0) * 20)
   ) {
     return false;
   }
   const prevStates = prev.details?.states;
-  const nextStates = nextDetails?.states;
+  const nextStates = next.details?.states;
   if (Boolean(prevStates) !== Boolean(nextStates)) return false;
   if (prevStates && nextStates) {
     if (
@@ -115,14 +132,53 @@ function isSameRenderedGesture(prev, nextLabel, nextConfidence, nextSource, next
   return true;
 }
 
+/**
+ * Pure reducer applying a classifier prediction to the active gesture UI state.
+ * Auto-expires `label` and `confidence` when `prediction.label === null`.
+ */
+export function applyGesturePrediction(prev, prediction, source = 'local') {
+  const hasLabel = Boolean(prediction?.label);
+  const next = {
+    label: hasLabel ? prediction.label : null,
+    confidence: hasLabel ? (prediction.confidence ?? 0) : 0,
+    source,
+    state: prediction?.state || (hasLabel ? 'confirmed' : 'idle'),
+    details: prediction?.details ?? null,
+  };
+  return isSameRenderedGesture(prev, next) ? prev : next;
+}
+
+/**
+ * Pure reducer appending a newly committed sign (rising edge after cooldown) to the sentence history.
+ */
+export function appendCommittedSign(prevHistory, prediction, maxItems = MAX_HISTORY_ITEMS) {
+  if (!prediction?.committed || !prediction?.committedLabel) {
+    return prevHistory;
+  }
+  const label = prediction.committedLabel;
+  const catalogEntry = getSignCatalogEntry(label);
+  const entry = {
+    id: `sign_${++_historyEntrySeq}_${Date.now()}`,
+    label,
+    speakText: catalogEntry?.speakText || label,
+    confidence: prediction.confidence ?? 0,
+    timestamp: Date.now(),
+  };
+  const next = [...prevHistory, entry];
+  return next.length > maxItems ? next.slice(next.length - maxItems) : next;
+}
+
 export function useSignEngine({
   videoRef,
   canvasRef,
   trackingConfig = { enabled: true },
   classifierInstance = null,
-  enableRemoteTransport = true,
+  enableRemoteTransport = false,
   enablePose = false,
+  devRecorderActive = false,
   telemetryDrawerOpen = false,
+  showDiagnosticBadges = false,
+  onSignCommitted = null,
 } = {}) {
   const [fps, setFps] = useState({ cameraFps: 0, inferenceFps: 0 });
   const [engineStatus, setEngineStatus] = useState({
@@ -137,12 +193,15 @@ export function useSignEngine({
     label: null,
     confidence: 0,
     source: 'local', // 'local' | 'remote'
+    state: 'idle', // 'idle' | 'detecting' | 'confirmed' | 'rejected'
     details: null,
   });
 
+  const [history, setHistory] = useState([]);
+
   const [wsSnapshot, setWsSnapshot] = useState({
     state: WS_STATES.IDLE,
-    detail: 'Modo Demo en navegador activo (backend opcional)',
+    detail: 'Modo Demo Local 100% en navegador (sin backend)',
     retryCount: 0,
     serverDemoMode: null,
     latencyMs: 0,
@@ -160,6 +219,9 @@ export function useSignEngine({
   const latestFrameRef = useRef(null);
   const trackingConfigRef = useRef(trackingConfig);
   const telemetryDrawerOpenRef = useRef(Boolean(telemetryDrawerOpen));
+  const showDiagnosticBadgesRef = useRef(Boolean(showDiagnosticBadges));
+  const enableRemoteTransportRef = useRef(Boolean(enableRemoteTransport));
+  const onSignCommittedRef = useRef(onSignCommitted);
   const lastLandmarksCountRef = useRef(0);
   const lastTelemetryUiMsRef = useRef(0);
   const wsBatchBufferRef = useRef([]);
@@ -170,6 +232,18 @@ export function useSignEngine({
   }, [trackingConfig]);
 
   useEffect(() => {
+    showDiagnosticBadgesRef.current = Boolean(showDiagnosticBadges);
+  }, [showDiagnosticBadges]);
+
+  useEffect(() => {
+    enableRemoteTransportRef.current = Boolean(enableRemoteTransport);
+  }, [enableRemoteTransport]);
+
+  useEffect(() => {
+    onSignCommittedRef.current = onSignCommitted;
+  }, [onSignCommitted]);
+
+  useEffect(() => {
     telemetryDrawerOpenRef.current = Boolean(telemetryDrawerOpen);
     if (!telemetryDrawerOpen) {
       setTelemetry(null);
@@ -178,9 +252,19 @@ export function useSignEngine({
     }
   }, [telemetryDrawerOpen]);
 
-  // 1. Initialize optional WebSocket transport (decoupled from vision engine)
+  // 1. Initialize optional WebSocket transport (disabled by default in 100% Local Demo Mode)
   useEffect(() => {
     if (!enableRemoteTransport) {
+      wsClientRef.current = null;
+      setWsSnapshot((prev) =>
+        prev.state === WS_STATES.IDLE
+          ? prev
+          : {
+              ...prev,
+              state: WS_STATES.IDLE,
+              detail: 'Modo Demo Local 100% en navegador (sin backend)',
+            }
+      );
       return undefined;
     }
 
@@ -207,6 +291,7 @@ export function useSignEngine({
           label: msg.payload.label,
           confidence: msg.payload.confidence ?? prev.confidence,
           source: 'remote',
+          state: 'confirmed',
           details: {
             ...prev.details,
             remoteDebug: msg.payload.debug || null,
@@ -278,6 +363,7 @@ export function useSignEngine({
   const resolvedEnablePose = resolveEnablePose({
     enablePose,
     enableRemoteTransport,
+    devRecorderActive,
     configEnablePose: CONFIG.enablePose,
   });
 
@@ -289,9 +375,17 @@ export function useSignEngine({
     const classifier =
       classifierInstance ||
       new GeometricClassifier({
-        bufferSize: 15,
-        smoothingWindow: 5,
-        minVotes: 3,
+        windowMs: 450,
+        minStableMs: 260,
+        enterRatio: 0.55,
+        exitRatio: 0.3,
+        releaseMs: 360,
+        waveWindowMs: 900,
+        waveGapResetMs: 250,
+        waveIdleTailMs: 280,
+        sameSignCooldownMs: 1200,
+        switchCooldownMs: 300,
+        restResetMs: 400,
       });
     classifierRef.current = classifier;
 
@@ -332,7 +426,6 @@ export function useSignEngine({
 
     const unsubDevSnapshot = import.meta.env.DEV
       ? engine.onDevSnapshot((snap) => {
-          // Skip 1 Hz dev-snapshot setState during recording to avoid polluting React Profiler / tickWaitMs
           if (isMounted && snap && snap.phase !== 'grabando') {
             setDevSnapshot(snap);
           }
@@ -346,7 +439,6 @@ export function useSignEngine({
       latestFrameRef.current = frameData;
 
       if (import.meta.env.DEV) devTel?.mark('expresat:ui_dispatch:start');
-      // Count detected landmarks (21 per hand + 33 if pose is present); avoid no-op setState
       let handPts = 0;
       const handsArr = frameData.hands;
       if (Array.isArray(handsArr)) {
@@ -371,7 +463,6 @@ export function useSignEngine({
         }
       }
 
-      // Update LandmarkTracker if enabled (skip heavy telemetry list when drawer is closed)
       if (trackingConfigRef.current?.enabled && canvasRef?.current) {
         const drawerOpen = telemetryDrawerOpenRef.current;
         const showTrails = Boolean(trackingConfigRef.current?.showTrails);
@@ -424,6 +515,7 @@ export function useSignEngine({
           frameData,
           tracker,
           trackingConfig: trackingConfigRef.current,
+          showDiagnosticBadges: showDiagnosticBadgesRef.current,
         });
         if (import.meta.env.DEV && devTel) {
           const canvasMs = devTel.endAndMeasure(
@@ -437,55 +529,53 @@ export function useSignEngine({
         }
       }
 
-      // Local geometric classification in-browser (skip redundant setState when unchanged)
-      if (import.meta.env.DEV) devTel?.mark('expresat:ui_gesture:start');
-      const localPrediction = classifier.predict(frameData);
-      if (localPrediction.label) {
-        setGesture((prev) =>
-          isSameRenderedGesture(
-            prev,
-            localPrediction.label,
-            localPrediction.confidence,
-            'local',
-            localPrediction.details
-          )
-            ? prev
-            : {
-                label: localPrediction.label,
-                confidence: localPrediction.confidence,
-                source: 'local',
-                details: localPrediction.details,
-              }
-        );
-      } else {
-        setGesture((prev) =>
-          isSameRenderedGesture(
-            prev,
-            prev.label,
-            prev.confidence,
-            prev.source,
-            localPrediction.details
-          )
-            ? prev
-            : {
-                ...prev,
-                details: localPrediction.details,
-              }
-        );
-      }
-      if (import.meta.env.DEV && devTel) {
-        const gestureUiMs = devTel.endAndMeasure(
-          'expresat:stage:ui_dispatch',
-          'expresat:ui_gesture:start',
-          'expresat:ui_gesture:end'
-        );
-        if (gestureUiMs !== null && gestureUiMs !== undefined) {
-          devTel.recordStageDuration('ui_dispatch', gestureUiMs);
+      // Local geometric classification (suppressed while an active remote WS session owns predictions)
+      const wsState = wsClientRef.current?.state ?? WS_STATES.IDLE;
+      if (
+        shouldApplyLocalPrediction({
+          enableRemoteTransport: enableRemoteTransportRef.current,
+          wsState,
+        })
+      ) {
+        if (import.meta.env.DEV) devTel?.mark('expresat:ui_gesture:start');
+        const localPrediction = classifier.predict(frameData);
+        setGesture((prev) => applyGesturePrediction(prev, localPrediction, 'local'));
+
+        if (localPrediction.committed && localPrediction.committedLabel) {
+          const catalogEntry = getSignCatalogEntry(localPrediction.committedLabel);
+          const committedPayload = {
+            label: localPrediction.committedLabel,
+            speakText: catalogEntry?.speakText || localPrediction.committedLabel,
+            confidence: localPrediction.confidence ?? 0,
+          };
+          setHistory((prev) => appendCommittedSign(prev, localPrediction));
+          if (typeof onSignCommittedRef.current === 'function') {
+            try {
+              onSignCommittedRef.current(committedPayload);
+            } catch (cbErr) {
+              console.warn('[useSignEngine] Error en onSignCommitted:', cbErr);
+            }
+          }
+        }
+
+        if (import.meta.env.DEV && devTel) {
+          const gestureUiMs = devTel.endAndMeasure(
+            'expresat:stage:ui_dispatch',
+            'expresat:ui_gesture:start',
+            'expresat:ui_gesture:end'
+          );
+          if (gestureUiMs !== null && gestureUiMs !== undefined) {
+            devTel.recordStageDuration('ui_dispatch', gestureUiMs);
+          }
         }
       }
 
       // Buffer unsmoothed raw frames with real monotonic `t_ms` only when WS is OPEN
-      if (wsClientRef.current && wsClientRef.current.state === WS_STATES.OPEN) {
+      if (
+        enableRemoteTransportRef.current &&
+        wsClientRef.current &&
+        wsClientRef.current.state === WS_STATES.OPEN
+      ) {
         const { ready } = updateWsRollingBuffer(wsBatchBufferRef.current, frameData);
         const now = performance.now();
         if (ready && now - lastWsSendTimeRef.current >= 500) {
@@ -518,14 +608,20 @@ export function useSignEngine({
     }
   }, []);
 
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+  }, []);
+
   const clearGesture = useCallback(() => {
     classifierRef.current?.reset();
     setGesture({
       label: null,
       confidence: 0,
       source: 'local',
+      state: 'idle',
       details: null,
     });
+    setHistory([]);
   }, []);
 
   const refreshDevSnapshot = useCallback(() => {
@@ -539,12 +635,14 @@ export function useSignEngine({
     engineStatus,
     engineError,
     gesture,
+    history,
     wsSnapshot,
     landmarksCount,
     telemetry,
     devSnapshot,
     refreshDevSnapshot,
     reconnectTransport,
+    clearHistory,
     clearGesture,
     engineRef,
   };

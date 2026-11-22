@@ -1,14 +1,14 @@
 /**
  * Fast 2D Canvas rendering for camera video and hand/pose landmarks.
  *
- * Input and coordinate contract:
+ * Input and coordinate contract (FEATURE_SPEC v1.4.0):
  * - `HandLandmarker.detectForVideo(video, timestamp)` receives the raw HTMLVideoElement
  *   directly (native unmirrored sensor frames).
- * - On front-facing (selfie) cameras, the signer's physical right hand appears on the
- *   left of the raw image, so MediaPipe assigns `categoryName: 'Left'`.
+ * - Direct anatomical convention: MediaPipe `'Left'` maps to `leftHand` [52..114] (anchored
+ *   to pose wrist P15) and `'Right'` maps to `rightHand` [115..177] (anchored to P16).
  * - Horizontal mirroring happens exclusively on this rendering canvas via
  *   `ctx.translate(w, 0); ctx.scale(-1, 1)` for a natural mirror preview.
- * - Diagnostic badges are drawn after restoring unmirrored screen coordinates for legibility.
+ * - Optional diagnostic badges are drawn only when `showDiagnosticBadges === true`.
  */
 
 export const HAND_CONNECTIONS = Object.freeze([
@@ -93,6 +93,7 @@ export function renderCanvasFrame({
   frameData,
   tracker = null,
   trackingConfig = null,
+  showDiagnosticBadges = false,
 }) {
   if (!canvas) return;
   const ctx =
@@ -175,7 +176,8 @@ export function renderCanvasFrame({
   ctx.restore();
 
   // Visual diagnostic overlay projected into screen coordinates: x_screen = (1 - x_norm) * w
-  if (frameData) {
+  // Hidden in normal/demo view to keep the live camera preview clean; enabled in Debug Panel (Ctrl+Shift+D).
+  if (showDiagnosticBadges && frameData) {
     // 1. Pose wrist labels P15 and P16
     if (Array.isArray(frameData.pose) && frameData.pose.length > 16) {
       const p15 = frameData.pose[15];
