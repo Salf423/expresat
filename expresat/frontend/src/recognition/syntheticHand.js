@@ -10,6 +10,10 @@
  * By default `WRIST (0)` is at `(0.5, 0.7, 0)` and `MIDDLE_MCP (9)` is at `(0.5, 0.55, 0)`,
  * giving `palmScale = 0.15`.
  *
+ * Follows FEATURE_SPEC v1.4.0 chirality in unmirrored image space:
+ * - `Left + FRONT` (default) and `Right + BACK` place index on `-X` and pinky on `+X` (`normZ = +1`).
+ * - `Right + FRONT` and `Left + BACK` mirror local `X` (`normZ = -1`).
+ *
  * @param {Object} config
  * @param {boolean} [config.thumb=false]
  * @param {boolean} [config.index=false]
@@ -17,6 +21,9 @@
  * @param {boolean} [config.ring=false]
  * @param {boolean} [config.pinky=false]
  * @param {boolean} [config.pinch=false] If true, joins thumb (4) and index (8) tips for "OK / Pinza"
+ * @param {boolean} [config.zeroOval=false] If true, arches all 4 long fingers to meet thumb tip for LSM "Cero"
+ * @param {'Left'|'Right'} [config.handedness='Left'] Anatomical hand under v1.4.0 direct laterality
+ * @param {'FRONT'|'BACK'} [config.palmFacing='FRONT'] Whether palm ('FRONT') or dorsum ('BACK') faces camera
  * @param {number} [config.scale=1.0] Multiplicative scale factor
  * @param {number} [config.rotateDeg=0] XY-plane rotation in degrees
  * @param {number} [config.offsetX=0.5] Wrist X coordinate
@@ -29,6 +36,9 @@ export function buildSyntheticHand({
   ring = false,
   pinky = false,
   pinch = false,
+  zeroOval = false,
+  handedness = 'Left',
+  palmFacing = 'FRONT',
   scale = 1.0,
   rotateDeg = 0,
   offsetX = 0.5,
@@ -36,11 +46,13 @@ export function buildSyntheticHand({
 } = {}) {
   const basePalm = 0.15 * scale;
   const pts = new Array(21);
+  const xFlip = (handedness === 'Right') !== (palmFacing === 'BACK') ? -1 : 1;
+  const zSign = palmFacing === 'BACK' ? -1 : 1;
 
   // 0: WRIST at the local origin (0, 0, 0)
   pts[0] = { x: 0, y: 0, z: 0 };
 
-  // Helper for a long finger in local coordinates (where -Y points upward)
+  // Helper for a long finger in canonical Left+FRONT coordinates (where -Y points upward)
   function buildFinger(mcpX, mcpY, isExtended, spreadX = 0) {
     const mcp = { x: mcpX, y: mcpY, z: 0 };
     if (isExtended) {
@@ -54,98 +66,127 @@ export function buildSyntheticHand({
     // Curled finger toward the palm (PIP rises slightly while DIP and TIP fold back toward the palm)
     return [
       mcp,
-      { x: mcpX, y: mcpY - 0.25 * basePalm, z: -0.02 * basePalm },
-      { x: mcpX, y: mcpY - 0.05 * basePalm, z: -0.04 * basePalm },
-      { x: mcpX, y: mcpY + 0.12 * basePalm, z: -0.03 * basePalm },
+      { x: mcpX, y: mcpY - 0.25 * basePalm, z: -0.02 * basePalm * zSign },
+      { x: mcpX, y: mcpY - 0.05 * basePalm, z: -0.04 * basePalm * zSign },
+      { x: mcpX, y: mcpY + 0.12 * basePalm, z: -0.03 * basePalm * zSign },
     ];
   }
 
-  // Thumb (1..4)
-  if (pinch) {
-    // Thumb and index converge at the pinch point (-0.32 * basePalm, -1.25 * basePalm)
-    pts[1] = { x: -0.25 * basePalm, y: -0.25 * basePalm, z: 0 };
-    pts[2] = { x: -0.38 * basePalm, y: -0.58 * basePalm, z: 0 };
-    pts[3] = { x: -0.42 * basePalm, y: -0.92 * basePalm, z: 0 };
-    pts[4] = { x: -0.32 * basePalm, y: -1.22 * basePalm, z: 0 };
-  } else if (thumb) {
-    // Extended thumb abducted left (-X) along a straight line from CMC
-    pts[1] = { x: -0.28 * basePalm, y: -0.25 * basePalm, z: 0 };
-    pts[2] = { x: -0.55 * basePalm, y: -0.5 * basePalm, z: 0 };
-    pts[3] = { x: -0.82 * basePalm, y: -0.75 * basePalm, z: 0 };
-    pts[4] = { x: -1.1 * basePalm, y: -1.0 * basePalm, z: 0 };
-  } else {
-    // Thumb folded across the palm toward the middle/ring MCPs
-    pts[1] = { x: -0.22 * basePalm, y: -0.22 * basePalm, z: 0 };
-    pts[2] = { x: -0.28 * basePalm, y: -0.45 * basePalm, z: -0.02 * basePalm };
-    pts[3] = { x: -0.12 * basePalm, y: -0.58 * basePalm, z: -0.03 * basePalm };
-    pts[4] = { x: 0.05 * basePalm, y: -0.55 * basePalm, z: -0.03 * basePalm };
-  }
+  if (zeroOval) {
+    // LSM Zero (0 / O): thumb and arched long fingers meet high above MCPs in an open oval
+    pts[1] = { x: -0.26 * basePalm, y: -0.26 * basePalm, z: 0 };
+    pts[2] = { x: -0.46 * basePalm, y: -0.6 * basePalm, z: -0.06 * basePalm * zSign };
+    pts[3] = { x: -0.44 * basePalm, y: -0.98 * basePalm, z: -0.14 * basePalm * zSign };
+    pts[4] = { x: -0.2 * basePalm, y: -1.28 * basePalm, z: -0.2 * basePalm * zSign };
 
-  // Index (5..8)
-  if (pinch) {
     pts[5] = { x: -0.32 * basePalm, y: -0.95 * basePalm, z: 0 };
-    pts[6] = { x: -0.42 * basePalm, y: -1.28 * basePalm, z: 0 };
-    pts[7] = { x: -0.38 * basePalm, y: -1.32 * basePalm, z: 0 };
-    // Index tip close to thumb tip (~0.08 * palmScale apart)
-    pts[8] = { x: -0.31 * basePalm, y: -1.24 * basePalm, z: 0 };
+    pts[6] = { x: -0.38 * basePalm, y: -1.36 * basePalm, z: -0.08 * basePalm * zSign };
+    pts[7] = { x: -0.32 * basePalm, y: -1.52 * basePalm, z: -0.18 * basePalm * zSign };
+    pts[8] = { x: -0.18 * basePalm, y: -1.32 * basePalm, z: -0.22 * basePalm * zSign };
+
+    pts[9] = { x: 0, y: -1.0 * basePalm, z: 0 };
+    pts[10] = { x: -0.04 * basePalm, y: -1.42 * basePalm, z: -0.1 * basePalm * zSign };
+    pts[11] = { x: -0.08 * basePalm, y: -1.56 * basePalm, z: -0.2 * basePalm * zSign };
+    pts[12] = { x: -0.14 * basePalm, y: -1.34 * basePalm, z: -0.22 * basePalm * zSign };
+
+    pts[13] = { x: 0.3 * basePalm, y: -0.92 * basePalm, z: 0 };
+    pts[14] = { x: 0.22 * basePalm, y: -1.32 * basePalm, z: -0.1 * basePalm * zSign };
+    pts[15] = { x: 0.12 * basePalm, y: -1.42 * basePalm, z: -0.2 * basePalm * zSign };
+    pts[16] = { x: 0.02 * basePalm, y: -1.24 * basePalm, z: -0.22 * basePalm * zSign };
+
+    pts[17] = { x: 0.56 * basePalm, y: -0.82 * basePalm, z: 0 };
+    pts[18] = { x: 0.46 * basePalm, y: -1.16 * basePalm, z: -0.1 * basePalm * zSign };
+    pts[19] = { x: 0.36 * basePalm, y: -1.22 * basePalm, z: -0.2 * basePalm * zSign };
+    pts[20] = { x: 0.24 * basePalm, y: -1.08 * basePalm, z: -0.22 * basePalm * zSign };
   } else {
-    const idxPts = buildFinger(-0.32 * basePalm, -0.95 * basePalm, index, -0.12 * basePalm);
-    pts[5] = idxPts[0];
-    pts[6] = idxPts[1];
-    pts[7] = idxPts[2];
-    pts[8] = idxPts[3];
+    // Thumb (1..4)
+    if (pinch) {
+      // Thumb and index converge at the pinch point (-0.32 * basePalm, -1.22 * basePalm)
+      pts[1] = { x: -0.25 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.38 * basePalm, y: -0.58 * basePalm, z: 0 };
+      pts[3] = { x: -0.42 * basePalm, y: -0.92 * basePalm, z: 0 };
+      pts[4] = { x: -0.32 * basePalm, y: -1.22 * basePalm, z: 0 };
+    } else if (thumb) {
+      // Extended thumb abducted left (-X) along a straight line from CMC
+      pts[1] = { x: -0.28 * basePalm, y: -0.25 * basePalm, z: 0 };
+      pts[2] = { x: -0.55 * basePalm, y: -0.5 * basePalm, z: 0 };
+      pts[3] = { x: -0.82 * basePalm, y: -0.75 * basePalm, z: 0 };
+      pts[4] = { x: -1.1 * basePalm, y: -1.0 * basePalm, z: 0 };
+    } else {
+      // Thumb folded across the palm toward the middle/ring MCPs
+      pts[1] = { x: -0.22 * basePalm, y: -0.22 * basePalm, z: 0 };
+      pts[2] = { x: -0.28 * basePalm, y: -0.45 * basePalm, z: -0.02 * basePalm * zSign };
+      pts[3] = { x: -0.12 * basePalm, y: -0.58 * basePalm, z: -0.03 * basePalm * zSign };
+      pts[4] = { x: 0.05 * basePalm, y: -0.55 * basePalm, z: -0.03 * basePalm * zSign };
+    }
+
+    // Index (5..8)
+    if (pinch) {
+      pts[5] = { x: -0.32 * basePalm, y: -0.95 * basePalm, z: 0 };
+      pts[6] = { x: -0.42 * basePalm, y: -1.28 * basePalm, z: 0 };
+      pts[7] = { x: -0.38 * basePalm, y: -1.32 * basePalm, z: 0 };
+      // Index tip close to thumb tip (~0.02 * palmScale apart)
+      pts[8] = { x: -0.31 * basePalm, y: -1.24 * basePalm, z: 0 };
+    } else {
+      const idxPts = buildFinger(-0.32 * basePalm, -0.95 * basePalm, index, -0.12 * basePalm);
+      pts[5] = idxPts[0];
+      pts[6] = idxPts[1];
+      pts[7] = idxPts[2];
+      pts[8] = idxPts[3];
+    }
+
+    // Middle (9..12) — point 9 sits at (0, -basePalm) so palmScale equals basePalm
+    const midPts = buildFinger(0, -1.0 * basePalm, middle, 0.04 * basePalm);
+    pts[9] = midPts[0];
+    pts[10] = midPts[1];
+    pts[11] = midPts[2];
+    pts[12] = midPts[3];
+
+    // Ring (13..16)
+    const ringPts = buildFinger(0.3 * basePalm, -0.92 * basePalm, ring, 0.1 * basePalm);
+    pts[13] = ringPts[0];
+    pts[14] = ringPts[1];
+    pts[15] = ringPts[2];
+    pts[16] = ringPts[3];
+
+    // Pinky (17..20)
+    const pinkyPts = buildFinger(0.56 * basePalm, -0.82 * basePalm, pinky, 0.18 * basePalm);
+    pts[17] = pinkyPts[0];
+    pts[18] = pinkyPts[1];
+    pts[19] = pinkyPts[2];
+    pts[20] = pinkyPts[3];
   }
 
-  // Middle (9..12) — point 9 sits at (0, -basePalm) so palmScale equals basePalm
-  const midPts = buildFinger(0, -1.0 * basePalm, middle, 0.04 * basePalm);
-  pts[9] = midPts[0];
-  pts[10] = midPts[1];
-  pts[11] = midPts[2];
-  pts[12] = midPts[3];
-
-  // Ring (13..16)
-  const ringPts = buildFinger(0.3 * basePalm, -0.92 * basePalm, ring, 0.1 * basePalm);
-  pts[13] = ringPts[0];
-  pts[14] = ringPts[1];
-  pts[15] = ringPts[2];
-  pts[16] = ringPts[3];
-
-  // Pinky (17..20)
-  const pinkyPts = buildFinger(0.56 * basePalm, -0.82 * basePalm, pinky, 0.18 * basePalm);
-  pts[17] = pinkyPts[0];
-  pts[18] = pinkyPts[1];
-  pts[19] = pinkyPts[2];
-  pts[20] = pinkyPts[3];
-
-  // Rotate in the XY plane and translate to (offsetX, offsetY)
+  // Apply handedness + palmar/dorsal chirality mirror in local X, then rotate in XY and translate
   const rad = (rotateDeg * Math.PI) / 180;
   const cosA = Math.cos(rad);
   const sinA = Math.sin(rad);
 
-  return pts.map((p) => ({
-    x: Number((offsetX + p.x * cosA - p.y * sinA).toFixed(6)),
-    y: Number((offsetY + p.x * sinA + p.y * cosA).toFixed(6)),
-    z: Number(p.z.toFixed(6)),
-  }));
+  return pts.map((p) => {
+    const lx = p.x * xFlip;
+    const ly = p.y;
+    return {
+      x: Number((offsetX + lx * cosA - ly * sinA).toFixed(6)),
+      y: Number((offsetY + lx * sinA + ly * cosA).toFixed(6)),
+      z: Number(p.z.toFixed(6)),
+    };
+  });
 }
 
+const buildCinco = (opts = {}) =>
+  buildSyntheticHand({
+    thumb: true,
+    index: true,
+    middle: true,
+    ring: true,
+    pinky: true,
+    ...opts,
+  });
+
 export const SYNTHETIC_PRESETS = Object.freeze({
-  MANO_ABIERTA: (opts = {}) =>
+  CERO: (opts = {}) =>
     buildSyntheticHand({
-      thumb: true,
-      index: true,
-      middle: true,
-      ring: true,
-      pinky: true,
-      ...opts,
-    }),
-  PUNO: (opts = {}) =>
-    buildSyntheticHand({
-      thumb: false,
-      index: false,
-      middle: false,
-      ring: false,
-      pinky: false,
+      zeroOval: true,
       ...opts,
     }),
   UNO: (opts = {}) =>
@@ -166,6 +207,75 @@ export const SYNTHETIC_PRESETS = Object.freeze({
       pinky: false,
       ...opts,
     }),
+  TRES: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: false,
+      ...opts,
+    }),
+  CUATRO: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: true,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  CINCO: buildCinco,
+  MANO_ABIERTA: buildCinco,
+  SEIS: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: false,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  SIETE: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: true,
+      middle: false,
+      ring: false,
+      pinky: false,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  OCHO: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: true,
+      middle: true,
+      ring: false,
+      pinky: false,
+      ...opts,
+    }),
+  NUEVE: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: true,
+      ring: true,
+      pinky: true,
+      palmFacing: 'BACK',
+      ...opts,
+    }),
+  PUNO: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: false,
+      ...opts,
+    }),
   OK: (opts = {}) =>
     buildSyntheticHand({
       pinch: true,
@@ -181,6 +291,7 @@ export const SYNTHETIC_PRESETS = Object.freeze({
       middle: false,
       ring: false,
       pinky: false,
+      palmFacing: 'FRONT',
       ...opts,
     }),
   TE_QUIERO: (opts = {}) =>
@@ -199,6 +310,34 @@ export const SYNTHETIC_PRESETS = Object.freeze({
       middle: false,
       ring: false,
       pinky: false,
+      palmFacing: 'FRONT',
+      ...opts,
+    }),
+  LETRA_I: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: true,
+      ...opts,
+    }),
+  LETRA_Y: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: true,
+      index: false,
+      middle: false,
+      ring: false,
+      pinky: true,
+      ...opts,
+    }),
+  CUERNOS: (opts = {}) =>
+    buildSyntheticHand({
+      thumb: false,
+      index: true,
+      middle: false,
+      ring: false,
+      pinky: true,
       ...opts,
     }),
 });

@@ -208,6 +208,74 @@ export function jointAngleDeg(a, b, c) {
 }
 
 /**
+ * Computes the unit 3D palm normal vector `normalize((INDEX_MCP - WRIST) x (PINKY_MCP - WRIST))`
+ * in pixel-isotropic coordinates.
+ *
+ * In MediaPipe normalized image coordinates (unmirrored raw frame, FEATURE_SPEC v1.4.0):
+ * - For a physical left hand (`handId === 'leftHand'`): palmar view yields `z > 0`, dorsal yields `z < 0`.
+ * - For a physical right hand (`handId === 'rightHand'`): palmar view yields `z < 0`, dorsal yields `z > 0`.
+ *
+ * @param {Array<{x:number, y:number, z?:number}>} landmarks
+ * @param {Object} [options]
+ * @param {number} [options.aspectRatio=1.0]
+ * @returns {{ x: number, y: number, z: number }}
+ */
+export function computePalmNormal(landmarks, options = {}) {
+  if (!Array.isArray(landmarks) || landmarks.length <= HAND_LANDMARKS.PINKY_MCP) {
+    return { x: 0, y: 0, z: 0 };
+  }
+  const aspect = resolveAspectRatio(options);
+  const pts = Math.abs(aspect - 1.0) > 1e-6 ? projectIsotropic(landmarks, aspect) : landmarks;
+  const w = pts[HAND_LANDMARKS.WRIST];
+  const idx = pts[HAND_LANDMARKS.INDEX_MCP];
+  const pky = pts[HAND_LANDMARKS.PINKY_MCP];
+  if (!isValidPoint(w) || !isValidPoint(idx) || !isValidPoint(pky)) {
+    return { x: 0, y: 0, z: 0 };
+  }
+
+  const ux = idx.x - w.x;
+  const uy = idx.y - w.y;
+  const uz = (idx.z ?? 0) - (w.z ?? 0);
+
+  const vx = pky.x - w.x;
+  const vy = pky.y - w.y;
+  const vz = (pky.z ?? 0) - (w.z ?? 0);
+
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+
+  const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+  if (!Number.isFinite(len) || len < 1e-6) {
+    return { x: 0, y: 0, z: 0 };
+  }
+
+  return {
+    x: nx / len,
+    y: ny / len,
+    z: nz / len,
+  };
+}
+
+/**
+ * Converts a 3D palm normal into a chirality-invariant signed palmar orientation score `[-1, +1]`:
+ * - `+1`: palm facing directly toward camera (`FRONT`)
+ * - `0`: hand seen edge-on (`SIDE`)
+ * - `-1`: dorsum (back of hand) facing directly toward camera (`BACK`)
+ *
+ * Respects FEATURE_SPEC v1.4.0 direct laterality (`leftHand` vs `rightHand`).
+ *
+ * @param {{ x: number, y: number, z: number }} palmNormal
+ * @param {string|null} [handId=null]
+ * @returns {number}
+ */
+export function computeSignedFrontZ(palmNormal, handId = null) {
+  if (!palmNormal || !Number.isFinite(palmNormal.z)) return 0;
+  const sign = handId === 'rightHand' || handId === 'Right' ? -1 : 1;
+  return Number(Math.max(-1, Math.min(1, sign * palmNormal.z)).toFixed(4));
+}
+
+/**
  * Normalizes 21 hand landmarks:
  * 1. Projects into pixel-isotropic 3D space (when `aspectRatio` is provided).
  * 2. Translates the origin to WRIST (0).
@@ -413,9 +481,15 @@ export function fingerStates(landmarks, options = {}) {
   const thumbToIndexMcp = distance3D(thumbTip, indexMcp);
   const thumbToWrist = distance3D(thumbTip, wrist);
 
-  // Distance between thumb tip (4) and index tip (8) for OK / Pinch detection
+  // Distance between thumb tip (4) and index/middle tips (8, 12) for OK / Pinch and LSM Zero (0)
   const thumbIndexTipDist = distance3D(thumbTip, norm[HAND_LANDMARKS.INDEX_TIP]);
+  const thumbMiddleTipDist = distance3D(thumbTip, norm[HAND_LANDMARKS.MIDDLE_TIP]);
   const isPinching = thumbIndexTipDist < 0.36;
+
+  // Chirality-invariant 3D palm orientation (FRONT >= +0.20, SIDE, BACK <= -0.35)
+  const palmNormal = computePalmNormal(iso);
+  const signedFrontZ = computeSignedFrontZ(palmNormal, options.handId ?? null);
+  const palmFacing = signedFrontZ >= 0.2 ? 'FRONT' : signedFrontZ <= -0.35 ? 'BACK' : 'SIDE';
 
   // Extended thumb: straight MCP/IP joints and abducted clear of the palm/index
   const thumbExtended =
@@ -525,9 +599,13 @@ export function fingerStates(landmarks, options = {}) {
     extendedCount,
     isPinching,
     thumbIndexTipDist,
+    thumbMiddleTipDist,
     thumbIndexAngleDeg,
     thumbUpScore: Number(thumbUpScore.toFixed(4)),
     indexMiddleSpread,
+    palmNormal,
+    signedFrontZ,
+    palmFacing,
     palmScale: scale,
     aspectRatio: aspect,
     wristRaw: {

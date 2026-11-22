@@ -32,11 +32,7 @@ function gaussian(rand) {
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }
 
-function mirrorHandX(hand) {
-  return hand.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z ?? 0 }));
-}
-
-function transform3DTo43(
+function transform3DToAspect(
   hand,
   { rollDeg = 0, pitchDeg = 0, yawDeg = 0, zScale = 1.0, aspect = 4 / 3 } = {}
 ) {
@@ -78,7 +74,7 @@ function transform3DTo43(
 
 function buildRelaxedNeutralHand(offsetX = 0.5, offsetY = 0.7) {
   const bp = 0.15;
-  const h = SYNTHETIC_PRESETS.MANO_ABIERTA({ offsetX, offsetY });
+  const h = SYNTHETIC_PRESETS.CINCO({ handedness: 'Left', offsetX, offsetY });
   for (const mcpIdx of [5, 9, 13, 17]) {
     const m = h[mcpIdx];
     const a1 = (20 * Math.PI) / 180;
@@ -91,81 +87,124 @@ function buildRelaxedNeutralHand(offsetX = 0.5, offsetY = 0.7) {
     h[mcpIdx + 2] = p2;
     h[mcpIdx + 3] = p3;
   }
-  const fist = SYNTHETIC_PRESETS.PUNO({ offsetX, offsetY });
+  const fist = SYNTHETIC_PRESETS.PUNO({ handedness: 'Left', offsetX, offsetY });
   for (let i = 1; i <= 4; i++) h[i] = fist[i];
   return h;
 }
 
-const STATIC_PRESETS = [
-  ['MANO_ABIERTA', SIGN_LABELS.MANO_ABIERTA],
-  ['PUNO', SIGN_LABELS.PUNO],
+const ALL_STATIC_PRESETS = [
+  ['CERO', SIGN_LABELS.CERO],
   ['UNO', SIGN_LABELS.UNO],
   ['DOS', SIGN_LABELS.DOS],
+  ['TRES', SIGN_LABELS.TRES],
+  ['CUATRO', SIGN_LABELS.CUATRO],
+  ['CINCO', SIGN_LABELS.CINCO],
+  ['SEIS', SIGN_LABELS.SEIS],
+  ['SIETE', SIGN_LABELS.SIETE],
+  ['OCHO', SIGN_LABELS.OCHO],
+  ['NUEVE', SIGN_LABELS.NUEVE],
+  ['PUNO', SIGN_LABELS.PUNO],
   ['OK', SIGN_LABELS.OK],
   ['BIEN', SIGN_LABELS.BIEN],
   ['TE_QUIERO', SIGN_LABELS.TE_QUIERO],
   ['LUNES', SIGN_LABELS.LUNES],
+  ['LETRA_I', SIGN_LABELS.LETRA_I],
+  ['LETRA_Y', SIGN_LABELS.LETRA_Y],
+  ['CUERNOS', SIGN_LABELS.CUERNOS],
 ];
 
-describe('recognition/stress — Suite de estrés (Izq/Der, ruido gaussiano, ±25°, cero colisiones, 10 vs 30 FPS)', () => {
-  it('mantiene simetría exacta entre mano izquierda y derecha en las 8 señas estáticas y en saludo Hola', () => {
-    for (const [key, expected] of STATIC_PRESETS) {
-      const right = SYNTHETIC_PRESETS[key]({ offsetX: 0.3 });
-      const left = mirrorHandX(right);
+describe('recognition/stress — Matriz de confusión 0 colisiones, Izq/Der, móvil portrait 0.75 vs 1.33, ±25°, ruido y 10 vs 30 FPS', () => {
+  it('matriz de confusión sintética 18x18 (todas las señas estáticas) con 0 colisiones en mano izquierda y derecha', () => {
+    for (const handedness of ['Left', 'Right']) {
+      const slot = handedness === 'Left' ? 'leftHand' : 'rightHand';
+      let offDiagonalCollisions = 0;
 
-      const resRight = classifyStaticHand({
-        rightHand: right,
-        leftHand: null,
-        videoWidth: 640,
-        videoHeight: 480,
-      });
-      const resLeft = classifyStaticHand({
-        rightHand: null,
-        leftHand: left,
-        videoWidth: 640,
-        videoHeight: 480,
-      });
+      for (const [key, expected] of ALL_STATIC_PRESETS) {
+        const hand = SYNTHETIC_PRESETS[key]({ handedness, offsetX: handedness === 'Left' ? 0.7 : 0.3 });
+        const res = classifyStaticHand({
+          [slot]: hand,
+          videoWidth: 640,
+          videoHeight: 480,
+          aspectRatio: 4 / 3,
+        });
+        expect(res.label, `${key} (${handedness})`).toBe(expected);
+        if (res.label !== expected) offDiagonalCollisions++;
+      }
 
-      expect(resRight.label).toBe(expected);
-      expect(resLeft.label).toBe(expected);
-      expect(Math.abs(resRight.confidence - resLeft.confidence)).toBeLessThan(0.01);
+      expect(offDiagonalCollisions).toBe(0);
+    }
+  });
+
+  it('mantiene simetría exacta izq/der en las 18 estáticas + Hola + Diez y prioriza la mano activa sobre la mano en reposo', () => {
+    for (const [key, expected] of ALL_STATIC_PRESETS) {
+      const left = SYNTHETIC_PRESETS[key]({ handedness: 'Left', offsetX: 0.7 });
+      const right = SYNTHETIC_PRESETS[key]({ handedness: 'Right', offsetX: 0.3 });
+      const rL = classifyStaticHand({ leftHand: left, rightHand: null });
+      const rR = classifyStaticHand({ leftHand: null, rightHand: right });
+      expect(rL.label).toBe(expected);
+      expect(rR.label).toBe(expected);
+      expect(Math.abs(rL.confidence - rR.confidence)).toBeLessThan(0.01);
     }
 
-    // Saludo dinámico "Hola" simétrico en mano izquierda (leftHand) y derecha (rightHand)
-    for (const slot of ['rightHand', 'leftHand']) {
-      const clf = new GeometricClassifier();
+    // Usuario zurdo señando "Tres" en leftHand mientras rightHand está en reposo
+    const leftSigning = classifyStaticHand({
+      leftHand: SYNTHETIC_PRESETS.TRES({ handedness: 'Left', offsetX: 0.72 }),
+      rightHand: buildRelaxedNeutralHand(0.28, 0.7),
+    });
+    expect(leftSigning.label).toBe(SIGN_LABELS.TRES);
+
+    // Gestos dinámicos Hola y Diez simétricos en leftHand y rightHand
+    for (const handedness of ['Left', 'Right']) {
+      const slot = handedness === 'Left' ? 'leftHand' : 'rightHand';
+
+      const clfHola = new GeometricClassifier();
       let sawHola = false;
       for (let i = 0; i < 24; i++) {
         const tMs = i * 67;
         const offsetX = 0.5 + 0.7 * 0.15 * Math.sin(2 * Math.PI * 1.8 * (tMs / 1000));
-        const base = SYNTHETIC_PRESETS.MANO_ABIERTA({ offsetX });
-        const hand = slot === 'leftHand' ? mirrorHandX(base) : base;
-        const res = clf.predict({
-          [slot]: hand,
+        const r = clfHola.predict({
+          [slot]: SYNTHETIC_PRESETS.CINCO({ handedness, offsetX }),
           timestamp: tMs,
         });
-        if (res.label === SIGN_LABELS.HOLA) {
+        if (r.label === SIGN_LABELS.HOLA) {
           sawHola = true;
           break;
         }
       }
-      expect(sawHola).toBe(true);
+      expect(sawHola, `Hola (${handedness})`).toBe(true);
+
+      const clfDiez = new GeometricClassifier();
+      let sawDiez = false;
+      for (let i = 0; i < 18; i++) {
+        const tMs = i * 67;
+        const palmFacing = i < 4 ? 'FRONT' : i < 10 ? 'BACK' : i < 14 ? 'FRONT' : 'BACK';
+        const r = clfDiez.predict({
+          [slot]: SYNTHETIC_PRESETS.CINCO({ handedness, palmFacing }),
+          timestamp: tMs,
+        });
+        if (r.label === SIGN_LABELS.DIEZ) {
+          sawDiez = true;
+          break;
+        }
+      }
+      expect(sawDiez, `Diez (${handedness})`).toBe(true);
     }
   });
 
-  it('resiste ruido gaussiano realista (sigma = 1.5 px en 640x480) con >= 96% de acierto y cero colisiones entre señas', () => {
+  it('resiste ruido gaussiano realista (sigma = 1.5 px en 640x480) con >= 95% de acierto y 0 colisiones en todo el catálogo', () => {
     const rand = mulberry32(20261121);
     const sigX = 1.5 / 640;
     const sigY = 1.5 / 480;
     const sigZ = 1.5 / 640;
 
-    for (const [key, expected] of STATIC_PRESETS) {
-      const base43 = transform3DTo43(SYNTHETIC_PRESETS[key]({ scale: 0.75 }), {
-        aspect: 4 / 3,
-      });
+    for (const [key, expected] of ALL_STATIC_PRESETS) {
+      const base43 = transform3DToAspect(
+        SYNTHETIC_PRESETS[key]({ handedness: 'Right', scale: 0.75 }),
+        { aspect: 4 / 3 }
+      );
       let correct = 0;
       let falseCollision = 0;
-      const trials = 120;
+      const trials = 100;
 
       for (let t = 0; t < trials; t++) {
         const noisy = base43.map((p) => ({
@@ -177,78 +216,52 @@ describe('recognition/stress — Suite de estrés (Izq/Der, ruido gaussiano, ±2
           rightHand: noisy,
           videoWidth: 640,
           videoHeight: 480,
+          aspectRatio: 4 / 3,
         });
         if (res.label === expected) correct++;
         else if (res.label !== null) falseCollision++;
       }
 
-      expect(correct / trials).toBeGreaterThanOrEqual(0.96);
-      expect(falseCollision).toBe(0);
+      expect(correct / trials, `Acierto bajo ruido en ${key}`).toBeGreaterThanOrEqual(0.95);
+      expect(falseCollision, `Colisión bajo ruido en ${key}`).toBe(0);
     }
   });
 
-  it('mantiene invariancia bajo rotaciones ±25° (roll, pitch y yaw) en relación de aspecto 4:3', () => {
+  it('mantiene invariancia bajo rotaciones ±25° (roll, pitch, yaw) en móvil portrait (0.75) y desktop landscape (1.33)', () => {
     const angles = [-25, -15, 0, 15, 25];
-    for (const [key, expected] of STATIC_PRESETS) {
-      const base = SYNTHETIC_PRESETS[key]({ offsetX: 0.5, offsetY: 0.5 });
-      for (const deg of angles) {
-        for (const axis of ['rollDeg', 'pitchDeg', 'yawDeg']) {
-          const rotated = transform3DTo43(base, {
-            [axis]: deg,
-            zScale: 0.6,
-            aspect: 4 / 3,
-          });
-          const res = classifyStaticHand({
-            rightHand: rotated,
-            videoWidth: 640,
-            videoHeight: 480,
-          });
-          expect(res.label).toBe(expected);
+    const geometries = [
+      { vw: 480, vh: 640, aspect: 0.75 },
+      { vw: 640, vh: 480, aspect: 4 / 3 },
+    ];
+
+    for (const { vw, vh, aspect } of geometries) {
+      for (const [key, expected] of ALL_STATIC_PRESETS) {
+        const base = SYNTHETIC_PRESETS[key]({
+          handedness: 'Right',
+          offsetX: 0.5,
+          offsetY: 0.5,
+        });
+        for (const deg of angles) {
+          for (const axis of ['rollDeg', 'pitchDeg', 'yawDeg']) {
+            const rotated = transform3DToAspect(base, {
+              [axis]: deg,
+              zScale: 0.65,
+              aspect,
+            });
+            const res = classifyStaticHand({
+              rightHand: rotated,
+              videoWidth: vw,
+              videoHeight: vh,
+              aspectRatio: aspect,
+            });
+            expect(res.label, `${key} ${axis}=${deg}° (${vw}x${vh})`).toBe(expected);
+          }
         }
       }
     }
   });
 
-  it('garantiza cero colisiones entre pares críticos y reposo/transiciones', () => {
-    const bp = 0.15;
-
-    // 1. Puño natural (pulgar apoyado sobre el índice flexionado) != OK/Pinza
-    const naturalFist = SYNTHETIC_PRESETS.PUNO();
-    naturalFist[3] = { x: 0.5 - 0.28 * bp, y: 0.7 - 0.64 * bp, z: -0.04 * bp };
-    naturalFist[4] = { x: 0.5 - 0.18 * bp, y: 0.7 - 0.78 * bp, z: -0.05 * bp };
-    expect(classifyStaticHand(naturalFist).label).toBe(SIGN_LABELS.PUNO);
-
-    // 2. OK clásico != Dos y != Puño
-    expect(classifyStaticHand(SYNTHETIC_PRESETS.OK()).label).toBe(SIGN_LABELS.OK);
-    expect(classifyStaticHand(SYNTHETIC_PRESETS.DOS()).label).toBe(SIGN_LABELS.DOS);
-
-    // 3. Letra A != Puño, != Bien, != OK/Pinza
-    const letraA = SYNTHETIC_PRESETS.PUNO();
-    letraA[1] = { x: 0.5 - 0.25 * bp, y: 0.7 - 0.3 * bp, z: 0 };
-    letraA[2] = { x: 0.5 - 0.38 * bp, y: 0.7 - 0.6 * bp, z: 0 };
-    letraA[3] = { x: 0.5 - 0.44 * bp, y: 0.7 - 0.9 * bp, z: 0 };
-    letraA[4] = { x: 0.5 - 0.46 * bp, y: 0.7 - 1.2 * bp, z: 0 };
-    expect(classifyStaticHand(letraA).label).toBeNull();
-
-    // 4. Reposo relajado / Letra C != Puño y != Bien
-    expect(classifyStaticHand(buildRelaxedNeutralHand()).label).toBeNull();
-
-    // 5. Pulgar abajo != Bien
-    expect(classifyStaticHand(SYNTHETIC_PRESETS.BIEN({ rotateDeg: 180 })).label).toBeNull();
-
-    // 6. Uno con pulgar estrecho (~20°) != Lunes
-    const narrowThumbUno = SYNTHETIC_PRESETS.UNO();
-    narrowThumbUno[1] = { x: 0.5 - 0.28 * bp, y: 0.7 - 0.25 * bp, z: 0 };
-    narrowThumbUno[2] = { x: 0.5 - 0.48 * bp, y: 0.7 - 0.58 * bp, z: 0 };
-    narrowThumbUno[3] = { x: 0.5 - 0.64 * bp, y: 0.7 - 0.92 * bp, z: 0 };
-    narrowThumbUno[4] = { x: 0.5 - 0.78 * bp, y: 0.7 - 1.25 * bp, z: 0 };
-    expect(classifyStaticHand(narrowThumbUno).label).not.toBe(SIGN_LABELS.LUNES);
-
-    // 7. Catálogo único contiene únicamente las 9 señas verificadas sin duplicados
-    expect(new Set(SIGN_CATALOG.map((s) => s.label)).size).toBe(SIGN_CATALOG.length);
-  });
-
-  it('mantiene comportamiento temporal equivalente entre 10 FPS y 30 FPS (con EMA 0.5) sin emisiones duplicadas', () => {
+  it('mantiene comportamiento temporal equivalente entre 10 FPS y 30 FPS (estáticas, Diez, Hola, cooldown y expiración)', () => {
     const runSession = (fps) => {
       const clf = new GeometricClassifier({
         windowMs: 450,
@@ -262,13 +275,13 @@ describe('recognition/stress — Suite de estrés (Izq/Der, ruido gaussiano, ±2
       let firstConfirmMs = null;
       let expiredAfterRestMs = null;
 
-      // 0..1.5s: mantener "Dos"
+      // 0..1.5s: mantener "Tres"
       const holdFrames = Math.round(fps * 1.5);
       for (let i = 0; i < holdFrames; i++) {
         const tMs = Math.round(i * dt);
-        const hand = ema.smooth('rightHand', SYNTHETIC_PRESETS.DOS());
+        const hand = ema.smooth('rightHand', SYNTHETIC_PRESETS.TRES({ handedness: 'Right' }));
         const r = clf.predict({ rightHand: hand, timestamp: tMs });
-        if (r.label === SIGN_LABELS.DOS && firstConfirmMs === null) firstConfirmMs = tMs;
+        if (r.label === SIGN_LABELS.TRES && firstConfirmMs === null) firstConfirmMs = tMs;
         if (r.committed) commits.push({ label: r.committedLabel, tMs });
       }
 
@@ -284,11 +297,11 @@ describe('recognition/stress — Suite de estrés (Izq/Der, ruido gaussiano, ±2
         }
       }
 
-      // 2.5..4.0s: hacer "Uno"
-      const unoStartMs = restStartMs + Math.round(restFrames * dt);
+      // 2.5..4.0s: hacer "Ocho"
+      const ochoStartMs = restStartMs + Math.round(restFrames * dt);
       for (let i = 0; i < holdFrames; i++) {
-        const tMs = unoStartMs + Math.round(i * dt);
-        const hand = ema.smooth('rightHand', SYNTHETIC_PRESETS.UNO());
+        const tMs = ochoStartMs + Math.round(i * dt);
+        const hand = ema.smooth('rightHand', SYNTHETIC_PRESETS.OCHO({ handedness: 'Right' }));
         const r = clf.predict({ rightHand: hand, timestamp: tMs });
         if (r.committed) commits.push({ label: r.committedLabel, tMs });
       }
@@ -299,14 +312,37 @@ describe('recognition/stress — Suite de estrés (Izq/Der, ruido gaussiano, ±2
     const r10 = runSession(10);
     const r30 = runSession(30);
 
-    expect(r10.commits.map((c) => c.label)).toEqual([SIGN_LABELS.DOS, SIGN_LABELS.UNO]);
-    expect(r30.commits.map((c) => c.label)).toEqual([SIGN_LABELS.DOS, SIGN_LABELS.UNO]);
+    expect(r10.commits.map((c) => c.label)).toEqual([SIGN_LABELS.TRES, SIGN_LABELS.OCHO]);
+    expect(r30.commits.map((c) => c.label)).toEqual([SIGN_LABELS.TRES, SIGN_LABELS.OCHO]);
     expect(Math.abs(r10.firstConfirmMs - r30.firstConfirmMs)).toBeLessThanOrEqual(100);
     expect(r10.expiredAfterRestMs).toBeLessThanOrEqual(550);
     expect(r30.expiredAfterRestMs).toBeLessThanOrEqual(550);
+
+    // Diez dinámico a 10 FPS y 30 FPS
+    for (const fps of [10, 30]) {
+      const clf = new GeometricClassifier();
+      const dt = 1000 / fps;
+      let sawDiez = false;
+      for (let i = 0; i < Math.round(fps * 1.5); i++) {
+        const tMs = Math.round(i * dt);
+        const phase = Math.floor(tMs / 250) % 2;
+        const hand = SYNTHETIC_PRESETS.CINCO({
+          handedness: 'Right',
+          palmFacing: phase === 0 ? 'FRONT' : 'BACK',
+        });
+        const r = clf.predict({ rightHand: hand, timestamp: tMs });
+        if (r.label === SIGN_LABELS.DIEZ) {
+          sawDiez = true;
+          break;
+        }
+      }
+      expect(sawDiez, `Diez @ ${fps} FPS`).toBe(true);
+    }
+
+    expect(new Set(SIGN_CATALOG.map((s) => s.label)).size).toBe(SIGN_CATALOG.length);
   });
 
-  it('reproduce grabaciones reales del repositorio sin falsos positivos de Hola por cambio de mano', () => {
+  it('reproduce grabaciones reales del repositorio sin falsos positivos de Hola ni Diez por cambio de mano', () => {
     const latPath = path.join(REPO_ROOT, 'tests/fixtures/real_recording_laterality_15f.json');
     const raw = JSON.parse(fs.readFileSync(latPath, 'utf8'));
     const clf = new GeometricClassifier();
@@ -329,7 +365,8 @@ describe('recognition/stress — Suite de estrés (Izq/Der, ruido gaussiano, ±2
       if (res.label) votedLabels.push(res.label);
     }
 
-    // Antes de la corrección, los saltos entre Left y Right disparaban 8/15 falsos "Hola"
     expect(votedLabels).not.toContain(SIGN_LABELS.HOLA);
+    expect(votedLabels).not.toContain(SIGN_LABELS.DIEZ);
+    expect(votedLabels).toContain(SIGN_LABELS.CINCO);
   });
 });

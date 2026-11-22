@@ -13,21 +13,35 @@ import {
   fingerStates,
   palmScale,
   resolveAspectRatio,
+  computePalmNormal,
+  computeSignedFrontZ,
 } from './geometry.js';
 
 /**
  * Canonical sign labels recognized by the geometric classifier.
+ * Aligned 1:1 with `SIGN_CATALOG` (numbers 0-10 LSM + base gestures + extra disjoint signs).
  */
 export const SIGN_LABELS = Object.freeze({
-  MANO_ABIERTA: 'Mano Abierta',
-  PUNO: 'Puño',
+  CERO: 'Cero',
   UNO: 'Uno',
   DOS: 'Dos',
+  TRES: 'Tres',
+  CUATRO: 'Cuatro',
+  CINCO: 'Cinco',
+  SEIS: 'Seis',
+  SIETE: 'Siete',
+  OCHO: 'Ocho',
+  NUEVE: 'Nueve',
+  DIEZ: 'Diez',
+  PUNO: 'Puño',
   OK: 'OK / Pinza',
   BIEN: 'Bien',
   TE_QUIERO: 'Te Quiero',
   LUNES: 'Lunes',
   HOLA: 'Hola',
+  LETRA_I: 'Letra I',
+  LETRA_Y: 'Letra Y',
+  CUERNOS: 'Cuernos',
 });
 
 /**
@@ -36,32 +50,88 @@ export const SIGN_LABELS = Object.freeze({
  */
 export const SIGN_CATALOG = Object.freeze([
   Object.freeze({
-    id: 'mano_abierta',
-    label: SIGN_LABELS.MANO_ABIERTA,
+    id: 'cero',
+    label: SIGN_LABELS.CERO,
     type: 'static',
-    hint: '5 dedos extendidos',
-    speakText: 'Mano abierta',
-  }),
-  Object.freeze({
-    id: 'puno',
-    label: SIGN_LABELS.PUNO,
-    type: 'static',
-    hint: 'Puño cerrado',
-    speakText: 'Puño',
+    hint: 'Dedos en óvalo tocando el pulgar (0 LSM)',
+    speakText: 'Cero',
   }),
   Object.freeze({
     id: 'uno',
     label: SIGN_LABELS.UNO,
     type: 'static',
-    hint: 'Solo índice',
+    hint: 'Solo índice extendido',
     speakText: 'Uno',
   }),
   Object.freeze({
     id: 'dos',
     label: SIGN_LABELS.DOS,
     type: 'static',
-    hint: 'Índice y medio',
+    hint: 'Índice y medio extendidos',
     speakText: 'Dos',
+  }),
+  Object.freeze({
+    id: 'tres',
+    label: SIGN_LABELS.TRES,
+    type: 'static',
+    hint: 'Índice, medio y anular extendidos',
+    speakText: 'Tres',
+  }),
+  Object.freeze({
+    id: 'cuatro',
+    label: SIGN_LABELS.CUATRO,
+    type: 'static',
+    hint: '4 dedos extendidos (palma al frente)',
+    speakText: 'Cuatro',
+  }),
+  Object.freeze({
+    id: 'cinco',
+    label: SIGN_LABELS.CINCO,
+    type: 'static',
+    hint: '5 dedos extendidos (mano abierta)',
+    speakText: 'Cinco',
+  }),
+  Object.freeze({
+    id: 'seis',
+    label: SIGN_LABELS.SEIS,
+    type: 'static',
+    hint: 'Pulgar arriba con dorso a la cámara (6 LSM)',
+    speakText: 'Seis',
+  }),
+  Object.freeze({
+    id: 'siete',
+    label: SIGN_LABELS.SIETE,
+    type: 'static',
+    hint: 'Pulgar e índice en L con dorso a la cámara (7 LSM)',
+    speakText: 'Siete',
+  }),
+  Object.freeze({
+    id: 'ocho',
+    label: SIGN_LABELS.OCHO,
+    type: 'static',
+    hint: 'Pulgar, índice y medio extendidos (8 LSM)',
+    speakText: 'Ocho',
+  }),
+  Object.freeze({
+    id: 'nueve',
+    label: SIGN_LABELS.NUEVE,
+    type: 'static',
+    hint: '4 dedos extendidos con dorso a la cámara (9 LSM)',
+    speakText: 'Nueve',
+  }),
+  Object.freeze({
+    id: 'diez',
+    label: SIGN_LABELS.DIEZ,
+    type: 'dynamic',
+    hint: 'Mano abierta (5) girando muñeca palma ↔ dorso (10 LSM)',
+    speakText: 'Diez',
+  }),
+  Object.freeze({
+    id: 'puno',
+    label: SIGN_LABELS.PUNO,
+    type: 'static',
+    hint: 'Puño cerrado (palma o dorso)',
+    speakText: 'Puño',
   }),
   Object.freeze({
     id: 'ok',
@@ -74,21 +144,21 @@ export const SIGN_CATALOG = Object.freeze([
     id: 'bien',
     label: SIGN_LABELS.BIEN,
     type: 'static',
-    hint: 'Pulgar arriba',
+    hint: 'Pulgar arriba (palma al frente o perfil)',
     speakText: 'Bien',
   }),
   Object.freeze({
     id: 'te_quiero',
     label: SIGN_LABELS.TE_QUIERO,
     type: 'static',
-    hint: 'Pulgar, índice y meñique',
+    hint: 'Pulgar, índice y meñique extendidos',
     speakText: 'Te quiero',
   }),
   Object.freeze({
     id: 'lunes',
     label: SIGN_LABELS.LUNES,
     type: 'static',
-    hint: 'Pulgar e índice en L',
+    hint: 'Pulgar e índice en L (palma al frente)',
     speakText: 'Lunes',
   }),
   Object.freeze({
@@ -97,6 +167,27 @@ export const SIGN_CATALOG = Object.freeze([
     type: 'dynamic',
     hint: 'Saludo lateral con mano abierta',
     speakText: 'Hola',
+  }),
+  Object.freeze({
+    id: 'letra_i',
+    label: SIGN_LABELS.LETRA_I,
+    type: 'static',
+    hint: 'Solo meñique extendido',
+    speakText: 'Letra I',
+  }),
+  Object.freeze({
+    id: 'letra_y',
+    label: SIGN_LABELS.LETRA_Y,
+    type: 'static',
+    hint: 'Pulgar y meñique extendidos',
+    speakText: 'Letra Y',
+  }),
+  Object.freeze({
+    id: 'cuernos',
+    label: SIGN_LABELS.CUERNOS,
+    type: 'static',
+    hint: 'Índice y meñique extendidos',
+    speakText: 'Cuernos',
   }),
 ]);
 
@@ -199,7 +290,7 @@ export function extractHandFromFrame(frame) {
  */
 function classifySingleHandLandmarks(
   landmarks,
-  { aspectRatio = 1.0, minConfidence = DEFAULT_MIN_CONFIDENCE } = {}
+  { aspectRatio = 1.0, minConfidence = DEFAULT_MIN_CONFIDENCE, handId = null } = {}
 ) {
   if (!landmarks || !isValidHandLandmarks(landmarks, { aspectRatio })) {
     return {
@@ -210,7 +301,7 @@ function classifySingleHandLandmarks(
     };
   }
 
-  const states = fingerStates(landmarks, { aspectRatio, _skipValidation: true });
+  const states = fingerStates(landmarks, { aspectRatio, handId, _skipValidation: true });
   if (!states) {
     return {
       label: null,
@@ -228,9 +319,11 @@ function classifySingleHandLandmarks(
     pinky,
     isPinching,
     thumbIndexTipDist,
+    thumbMiddleTipDist,
     thumbIndexAngleDeg,
     thumbUpScore,
     indexMiddleSpread,
+    signedFrontZ,
     details,
   } = states;
 
@@ -239,6 +332,10 @@ function classifySingleHandLandmarks(
   const mD = details.middle;
   const rD = details.ring;
   const pD = details.pinky;
+
+  // Strict 0.20 orientation deadband separates palmar/side signs from dorsal LSM signs (6, 7, 9)
+  const isFrontOrSide = signedFrontZ >= -0.15;
+  const isBack = signedFrontZ <= -0.35;
 
   const finalize = (label, confidence, reason) => {
     if (confidence < minConfidence) {
@@ -254,7 +351,7 @@ function classifySingleHandLandmarks(
 
   // 1. OK / Pinza: thumb and index tips joined (< 0.36 * palmScale), index NOT straight,
   // and remaining three fingers (middle, ring, pinky) clearly extended.
-  // Disjoint from natural closed fists where middle/ring/pinky are curled.
+  // Disjoint from natural closed fists and Cero where middle/ring/pinky are not extended.
   if (isPinching && !index && middle && ring && pinky) {
     const tightness = clamp01(1 - thumbIndexTipDist / 0.38);
     const confidence = scoreGeometricMargins(
@@ -268,7 +365,39 @@ function classifySingleHandLandmarks(
     );
   }
 
-  // 2. Open hand (Mano Abierta): all 5 fingers clearly extended
+  // 2. Zero (Cero / LSM 0-O): fingertips of index and middle arch high above MCPs to meet
+  // the thumb tip in an open oval while none of the 4 long fingers are straight extended.
+  // Disjoint from Puño (folded fingertips have tipToMcpRatio < 1.15 or pipAngle < 75° or no thumb contact).
+  if (
+    !index &&
+    !middle &&
+    !ring &&
+    !pinky &&
+    thumbIndexTipDist < 0.36 &&
+    thumbMiddleTipDist < 0.42 &&
+    iD.tipToMcpRatio >= 1.18 &&
+    mD.tipToMcpRatio >= 1.18 &&
+    iD.pipAngle >= 75 &&
+    mD.pipAngle >= 75
+  ) {
+    const idxContact = clamp01(1 - thumbIndexTipDist / 0.38);
+    const midContact = clamp01(1 - thumbMiddleTipDist / 0.44);
+    const archMargin = Math.min(
+      clamp01((iD.tipToMcpRatio - 1.16) / 0.16),
+      clamp01((mD.tipToMcpRatio - 1.16) / 0.16)
+    );
+    const confidence = scoreGeometricMargins(
+      [idxContact, midContact, archMargin, Math.max(rD.curlMargin, 0.55), Math.max(pD.curlMargin, 0.55)],
+      0.5 + 0.5 * Math.min(idxContact, midContact)
+    );
+    return finalize(
+      SIGN_LABELS.CERO,
+      confidence,
+      'Dedos arqueados en óvalo tocando el pulgar (Cero LSM)'
+    );
+  }
+
+  // 3. Five / Open hand (Cinco): all 5 fingers clearly extended (static base for Hola and Diez)
   if (thumb && index && middle && ring && pinky) {
     const confidence = scoreGeometricMargins([
       tD.extensionMargin,
@@ -277,10 +406,11 @@ function classifySingleHandLandmarks(
       rD.extensionMargin,
       pD.extensionMargin,
     ]);
-    return finalize(SIGN_LABELS.MANO_ABIERTA, confidence, 'Cinco dedos extendidos');
+    return finalize(SIGN_LABELS.CINCO, confidence, 'Cinco dedos extendidos (mano abierta)');
   }
 
-  // 3. Fist (Puño): all 5 fingers explicitly curled (rejects relaxed / Letra C / Letra A postures)
+  // 4. Fist (Puño): all 5 fingers explicitly curled (invariant to palmar/dorsal orientation;
+  // rejects relaxed / Letra A postures)
   if (tD.curled && iD.curled && mD.curled && rD.curled && pD.curled) {
     const confidence = scoreGeometricMargins([
       tD.curlMargin,
@@ -292,7 +422,7 @@ function classifySingleHandLandmarks(
     return finalize(SIGN_LABELS.PUNO, confidence, 'Cinco dedos flexionados en puño');
   }
 
-  // 4. One (Uno): index extended only, thumb and remaining fingers explicitly curled
+  // 5. One (Uno): index extended only, thumb and remaining fingers explicitly curled
   if (tD.curled && index && mD.curled && rD.curled && pD.curled) {
     const confidence = scoreGeometricMargins([
       tD.curlMargin,
@@ -304,7 +434,7 @@ function classifySingleHandLandmarks(
     return finalize(SIGN_LABELS.UNO, confidence, 'Solo dedo índice extendido');
   }
 
-  // 5. Two (Dos): index and middle extended, thumb/ring/pinky explicitly curled
+  // 6. Two (Dos): index and middle extended, thumb/ring/pinky explicitly curled
   if (tD.curled && index && middle && rD.curled && pD.curled) {
     const spreadScore = clamp01((indexMiddleSpread - 0.1) / 0.25);
     const confidence = scoreGeometricMargins(
@@ -314,7 +444,72 @@ function classifySingleHandLandmarks(
     return finalize(SIGN_LABELS.DOS, confidence, 'Dedos índice y medio extendidos');
   }
 
-  // 6. ILY (Te Quiero): thumb, index, and pinky extended; middle and ring explicitly curled
+  // 7. Three (Tres LSM): index, middle, and ring extended; thumb and pinky explicitly curled
+  if (tD.curled && index && middle && ring && pD.curled) {
+    const confidence = scoreGeometricMargins([
+      tD.curlMargin,
+      iD.extensionMargin,
+      mD.extensionMargin,
+      rD.extensionMargin,
+      pD.curlMargin,
+    ]);
+    return finalize(SIGN_LABELS.TRES, confidence, 'Dedos índice, medio y anular extendidos');
+  }
+
+  // 8. Four (Cuatro) vs Nine (Nueve LSM): 4 long fingers extended, thumb curled;
+  // separated cleanly by palm orientation (FRONT/SIDE -> Cuatro, BACK -> Nueve)
+  if (tD.curled && index && middle && ring && pinky) {
+    if (!isFrontOrSide && !isBack) {
+      return {
+        label: null,
+        confidence: 0,
+        states,
+        reason: 'AMBIGUOUS_PALM_ORIENTATION',
+      };
+    }
+    const orientFactor = isBack
+      ? clamp01((-signedFrontZ - 0.35) / 0.45)
+      : clamp01((signedFrontZ + 0.15) / 0.65);
+    const confidence = scoreGeometricMargins(
+      [
+        tD.curlMargin,
+        iD.extensionMargin,
+        mD.extensionMargin,
+        rD.extensionMargin,
+        pD.extensionMargin,
+      ],
+      0.55 + 0.45 * orientFactor
+    );
+    return isBack
+      ? finalize(
+          SIGN_LABELS.NUEVE,
+          confidence,
+          'Cuatro dedos extendidos con dorso a la cámara (Nueve LSM)'
+        )
+      : finalize(
+          SIGN_LABELS.CUATRO,
+          confidence,
+          'Cuatro dedos extendidos con palma al frente'
+        );
+  }
+
+  // 9. Eight (Ocho LSM): thumb, index, and middle extended; ring and pinky explicitly curled
+  if (thumb && index && middle && rD.curled && pD.curled) {
+    const confidence = scoreGeometricMargins([
+      tD.extensionMargin,
+      iD.extensionMargin,
+      mD.extensionMargin,
+      rD.curlMargin,
+      pD.curlMargin,
+    ]);
+    return finalize(
+      SIGN_LABELS.OCHO,
+      confidence,
+      'Pulgar, índice y medio extendidos (Ocho LSM)'
+    );
+  }
+
+  // 10. ILY (Te Quiero): thumb, index, and pinky extended; middle and ring explicitly curled
   if (thumb && index && mD.curled && rD.curled && pinky) {
     const confidence = scoreGeometricMargins([
       tD.extensionMargin,
@@ -330,9 +525,18 @@ function classifySingleHandLandmarks(
     );
   }
 
-  // 7. Lunes (letter L): thumb and index extended forming an explicit L angle [35°, 140°]
+  // 11. Lunes (letter L, FRONT/SIDE) vs Seven (Siete LSM, BACK): thumb and index extended in L
   if (thumb && index && mD.curled && rD.curled && pD.curled) {
-    if (thumbIndexAngleDeg < 35 || thumbIndexAngleDeg > 140) {
+    if (!isFrontOrSide && !isBack) {
+      return {
+        label: null,
+        confidence: 0,
+        states,
+        reason: 'AMBIGUOUS_PALM_ORIENTATION',
+      };
+    }
+    const minAngle = isBack ? 28 : 35;
+    if (thumbIndexAngleDeg < minAngle || thumbIndexAngleDeg > 140) {
       return {
         label: null,
         confidence: 0,
@@ -342,14 +546,23 @@ function classifySingleHandLandmarks(
     }
     const distFromIdeal = Math.abs(thumbIndexAngleDeg - 85);
     const angleFactor = clamp01(1 - Math.max(0, distFromIdeal - 20) / 45);
+    const orientFactor = isBack
+      ? clamp01((-signedFrontZ - 0.35) / 0.45)
+      : clamp01((signedFrontZ + 0.15) / 0.65);
     const confidence = scoreGeometricMargins(
       [tD.extensionMargin, iD.extensionMargin, mD.curlMargin, rD.curlMargin, pD.curlMargin],
-      0.5 + 0.5 * angleFactor
+      0.5 + 0.5 * Math.min(angleFactor, orientFactor)
     );
-    return finalize(SIGN_LABELS.LUNES, confidence, 'Pulgar e índice extendidos en L');
+    return isBack
+      ? finalize(
+          SIGN_LABELS.SIETE,
+          confidence,
+          'Pulgar e índice en L con dorso a la cámara (Siete LSM)'
+        )
+      : finalize(SIGN_LABELS.LUNES, confidence, 'Pulgar e índice extendidos en L');
   }
 
-  // 8. Good (Bien): extended thumb pointing upward/tilted (rejects thumbs-down), 4 long fingers curled
+  // 12. Good (Bien, FRONT/SIDE) vs Six (Seis LSM, BACK): thumb extended upward, 4 long fingers curled
   if (thumb && iD.curled && mD.curled && rD.curled && pD.curled) {
     if (thumbUpScore < 0.05) {
       return {
@@ -359,12 +572,69 @@ function classifySingleHandLandmarks(
         reason: 'THUMB_NOT_UPWARD',
       };
     }
+    if (!isFrontOrSide && !isBack) {
+      return {
+        label: null,
+        confidence: 0,
+        states,
+        reason: 'AMBIGUOUS_PALM_ORIENTATION',
+      };
+    }
     const upFactor = clamp01((thumbUpScore - 0.05) / 0.55);
+    const orientFactor = isBack
+      ? clamp01((-signedFrontZ - 0.35) / 0.45)
+      : clamp01((signedFrontZ + 0.15) / 0.65);
     const confidence = scoreGeometricMargins(
       [tD.extensionMargin, iD.curlMargin, mD.curlMargin, rD.curlMargin, pD.curlMargin],
-      0.5 + 0.5 * upFactor
+      0.5 + 0.5 * Math.min(upFactor, orientFactor)
     );
-    return finalize(SIGN_LABELS.BIEN, confidence, 'Pulgar extendido hacia arriba');
+    return isBack
+      ? finalize(
+          SIGN_LABELS.SEIS,
+          confidence,
+          'Pulgar extendido hacia arriba con dorso a la cámara (Seis LSM)'
+        )
+      : finalize(SIGN_LABELS.BIEN, confidence, 'Pulgar extendido hacia arriba');
+  }
+
+  // 13. Letter I (Letra I): pinky extended only; thumb, index, middle, and ring explicitly curled
+  if (tD.curled && iD.curled && mD.curled && rD.curled && pinky) {
+    const confidence = scoreGeometricMargins([
+      tD.curlMargin,
+      iD.curlMargin,
+      mD.curlMargin,
+      rD.curlMargin,
+      pD.extensionMargin,
+    ]);
+    return finalize(SIGN_LABELS.LETRA_I, confidence, 'Solo dedo meñique extendido (Letra I)');
+  }
+
+  // 14. Letter Y (Letra Y): thumb and pinky extended; index, middle, and ring explicitly curled
+  if (thumb && iD.curled && mD.curled && rD.curled && pinky) {
+    const confidence = scoreGeometricMargins([
+      tD.extensionMargin,
+      iD.curlMargin,
+      mD.curlMargin,
+      rD.curlMargin,
+      pD.extensionMargin,
+    ]);
+    return finalize(
+      SIGN_LABELS.LETRA_Y,
+      confidence,
+      'Pulgar y meñique extendidos (Letra Y)'
+    );
+  }
+
+  // 15. Horns (Cuernos): index and pinky extended; thumb, middle, and ring explicitly curled
+  if (tD.curled && index && mD.curled && rD.curled && pinky) {
+    const confidence = scoreGeometricMargins([
+      tD.curlMargin,
+      iD.extensionMargin,
+      mD.curlMargin,
+      rD.curlMargin,
+      pD.extensionMargin,
+    ]);
+    return finalize(SIGN_LABELS.CUERNOS, confidence, 'Dedos índice y meñique extendidos');
   }
 
   const anyAmbiguous =
@@ -415,6 +685,7 @@ export function classifyStaticHand(frameOrLandmarks, options = {}) {
     const res = classifySingleHandLandmarks(candidates[0].landmarks, {
       aspectRatio,
       minConfidence,
+      handId: candidates[0].handId,
     });
     return {
       ...res,
@@ -425,7 +696,11 @@ export function classifyStaticHand(frameOrLandmarks, options = {}) {
 
   const evaluated = candidates.map((cand) => ({
     ...cand,
-    res: classifySingleHandLandmarks(cand.landmarks, { aspectRatio, minConfidence }),
+    res: classifySingleHandLandmarks(cand.landmarks, {
+      aspectRatio,
+      minConfidence,
+      handId: cand.handId,
+    }),
   }));
 
   const recognized = evaluated.filter((item) => item.res.label !== null);
@@ -632,6 +907,140 @@ export function detectWaveMotion(handFrames, options = {}) {
     isWaving: isRecent && reversals >= minReversals,
     directionChanges: reversals,
     totalAmplitude: Number(totalAmplitude.toFixed(4)),
+  };
+}
+
+/**
+ * Detects axial wrist rotation (palmar FRONT <-> dorsal BACK) across a real-time `t_ms` window
+ * for dynamic LSM "Diez" (10).
+ *
+ * Strictly FPS-independent across 10, 15, and 30 FPS:
+ * - Requires the same open hand (`Cinco`) to visit both `signedFrontZ >= frontThreshold` (+0.35)
+ *   and `signedFrontZ <= backThreshold` (-0.35) with total span >= `minSpan` (0.90) within `rotationWindowMs`.
+ * - Enforces recency (`maxIdleTailMs`) so holding the palm still clears "Diez" rapidly back to "Cinco".
+ *
+ * @param {Array<Array<{x:number,y:number,z?:number}>|{signedFrontZ?:number, landmarks?:Array, handId?:string, aspectRatio?:number, tMs?:number}>} handFrames
+ * @param {Object} [options]
+ * @param {number} [options.rotationWindowMs=850]
+ * @param {number} [options.frontThreshold=0.35]
+ * @param {number} [options.backThreshold=-0.35]
+ * @param {number} [options.minSpan=0.9]
+ * @param {number} [options.minFlips=1]
+ * @param {number} [options.maxIdleTailMs=360]
+ * @param {number} [options.aspectRatio=1.0]
+ * @returns {{ isRotating: boolean, flipCount: number, zSpan: number }}
+ */
+export function detectPalmRotation(handFrames, options = {}) {
+  if (!Array.isArray(handFrames) || handFrames.length < 3) {
+    return { isRotating: false, flipCount: 0, zSpan: 0 };
+  }
+
+  const rotationWindowMs = options.rotationWindowMs ?? 850;
+  const frontThreshold = options.frontThreshold ?? 0.35;
+  const backThreshold = options.backThreshold ?? -0.35;
+  const minSpan = options.minSpan ?? 0.9;
+  const minFlips = options.minFlips ?? 1;
+  const maxIdleTailMs = options.maxIdleTailMs ?? 360;
+  const aspectRatio = options.aspectRatio ?? 1.0;
+
+  const samples = [];
+  let hasTimestamps = false;
+
+  for (let i = 0; i < handFrames.length; i++) {
+    const entry = handFrames[i];
+    if (!entry) continue;
+    if (Array.isArray(entry)) {
+      if (isValidHandLandmarks(entry, { aspectRatio })) {
+        const normal = computePalmNormal(entry, { aspectRatio });
+        samples.push({
+          z: computeSignedFrontZ(normal, options.handId ?? null),
+          tMs: null,
+        });
+      }
+    } else if (typeof entry === 'object') {
+      const tMs =
+        typeof entry.tMs === 'number' && Number.isFinite(entry.tMs)
+          ? entry.tMs
+          : extractFrameTimestampMs(entry);
+      if (tMs !== null) hasTimestamps = true;
+
+      if (typeof entry.signedFrontZ === 'number' && Number.isFinite(entry.signedFrontZ)) {
+        samples.push({ z: entry.signedFrontZ, tMs });
+      } else if (Array.isArray(entry.landmarks)) {
+        const entryAspect = entry.aspectRatio ?? aspectRatio;
+        if (isValidHandLandmarks(entry.landmarks, { aspectRatio: entryAspect })) {
+          const normal = computePalmNormal(entry.landmarks, { aspectRatio: entryAspect });
+          samples.push({
+            z: computeSignedFrontZ(normal, entry.handId ?? options.handId ?? null),
+            tMs,
+          });
+        }
+      }
+    }
+  }
+
+  if (samples.length < 3) {
+    return { isRotating: false, flipCount: 0, zSpan: 0 };
+  }
+
+  let activeSamples = samples;
+  if (hasTimestamps) {
+    const latestT = samples[samples.length - 1].tMs;
+    if (latestT !== null) {
+      activeSamples = samples.filter((s) => s.tMs === null || latestT - s.tMs <= rotationWindowMs);
+    }
+  }
+
+  if (activeSamples.length < 3) {
+    return { isRotating: false, flipCount: 0, zSpan: 0 };
+  }
+
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let state = 0; // +1 = FRONT, -1 = BACK
+  let flipCount = 0;
+  let lastFlipT = null;
+
+  for (let i = 0; i < activeSamples.length; i++) {
+    const { z, tMs } = activeSamples[i];
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+
+    if (z >= frontThreshold) {
+      if (state === -1) {
+        flipCount++;
+        lastFlipT = tMs;
+      }
+      state = 1;
+    } else if (z <= backThreshold) {
+      if (state === 1) {
+        flipCount++;
+        lastFlipT = tMs;
+      }
+      state = -1;
+    }
+  }
+
+  const zSpan = Number(Math.max(0, maxZ - minZ).toFixed(4));
+  let isRecent = true;
+  if (hasTimestamps) {
+    const latestT = activeSamples[activeSamples.length - 1].tMs;
+    if (latestT !== null && lastFlipT !== null && latestT - lastFlipT > maxIdleTailMs) {
+      isRecent = false;
+    }
+  }
+
+  const isRotating =
+    isRecent &&
+    flipCount >= minFlips &&
+    zSpan >= minSpan &&
+    maxZ >= frontThreshold &&
+    minZ <= backThreshold;
+
+  return {
+    isRotating,
+    flipCount,
+    zSpan,
   };
 }
 
@@ -948,6 +1357,8 @@ export class GeometricClassifier extends Classifier {
     this.waveWindowMs = options.waveWindowMs ?? 900;
     this.waveGapResetMs = options.waveGapResetMs ?? 250;
     this.waveIdleTailMs = options.waveIdleTailMs ?? 280;
+    this.rotationWindowMs = options.rotationWindowMs ?? 850;
+    this.rotationIdleTailMs = options.rotationIdleTailMs ?? 360;
     this.minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
 
     this.sameSignCooldownMs = options.sameSignCooldownMs ?? 1200;
@@ -1071,20 +1482,23 @@ export class GeometricClassifier extends Classifier {
       this._lastValidHandMs = tMs;
     }
 
-    // Record wave trajectory only while hand is open (prevents non-open hand motion triggering Hola)
-    if (staticRes.label === SIGN_LABELS.MANO_ABIERTA) {
+    // Record open-hand trajectory (for dynamic Hola lateral wave and Diez wrist flip)
+    if (staticRes.label === SIGN_LABELS.CINCO) {
       this.frameBuffer.push({
         landmarks: hand,
         wristX: hand[HAND_LANDMARKS.WRIST].x,
         scale: staticRes.states.palmScale,
+        signedFrontZ: staticRes.states.signedFrontZ,
+        handId: staticRes.handId,
         aspectRatio,
         tMs,
       });
+      const maxMotionWindowMs = Math.max(this.waveWindowMs, this.rotationWindowMs);
       if (tMs !== null) {
         while (
           this.frameBuffer.length > 1 &&
           this.frameBuffer[0].tMs !== null &&
-          tMs - this.frameBuffer[0].tMs > this.waveWindowMs
+          tMs - this.frameBuffer[0].tMs > maxMotionWindowMs
         ) {
           this.frameBuffer.shift();
         }
@@ -1093,7 +1507,7 @@ export class GeometricClassifier extends Classifier {
         this.frameBuffer.shift();
       }
     } else if (staticRes.states.extendedCount <= 3) {
-      // Hand is no longer open; discard prior wave trajectory
+      // Hand is no longer open; discard prior dynamic trajectory
       this.frameBuffer = [];
     }
 
@@ -1107,7 +1521,21 @@ export class GeometricClassifier extends Classifier {
       aspectRatio,
     });
 
-    if (rawLabel === SIGN_LABELS.MANO_ABIERTA && wave.isWaving) {
+    const palmRotation = detectPalmRotation(this.frameBuffer, {
+      rotationWindowMs: this.rotationWindowMs,
+      maxIdleTailMs: this.rotationIdleTailMs,
+      aspectRatio,
+      handId: staticRes.handId,
+    });
+
+    if (rawLabel === SIGN_LABELS.CINCO && palmRotation.isRotating && !wave.isWaving) {
+      const spanScore = clamp01((palmRotation.zSpan - 0.9) / 0.9);
+      rawLabel = SIGN_LABELS.DIEZ;
+      rawConfidence = Number(
+        Math.min(0.99, Math.max(rawConfidence, 0.85 + 0.13 * spanScore)).toFixed(4)
+      );
+      reason = `Mano abierta (5) con giro de muñeca palma ↔ dorso (${palmRotation.flipCount} giro(s), Diez LSM)`;
+    } else if (rawLabel === SIGN_LABELS.CINCO && wave.isWaving && !palmRotation.isRotating) {
       const ampScore = clamp01((wave.totalAmplitude - 0.35) / 1.0);
       rawLabel = SIGN_LABELS.HOLA;
       rawConfidence = Number(
@@ -1143,6 +1571,7 @@ export class GeometricClassifier extends Classifier {
         reason,
         states: staticRes.states,
         wave,
+        palmRotation,
       },
     };
   }
@@ -1228,6 +1657,8 @@ export class GeometricClassifier extends Classifier {
             landmarks: res.landmarks,
             wristX: res.landmarks[HAND_LANDMARKS.WRIST].x,
             scale: res.states.palmScale,
+            signedFrontZ: res.states.signedFrontZ,
+            handId: res.handId,
             aspectRatio,
             tMs,
           });
@@ -1253,6 +1684,11 @@ export class GeometricClassifier extends Classifier {
     const wave = detectWaveMotion(waveSamples, {
       waveWindowMs: this.waveWindowMs,
       maxIdleTailMs: this.waveIdleTailMs,
+    });
+    const palmRotation = detectPalmRotation(waveSamples, {
+      rotationWindowMs: this.rotationWindowMs,
+      maxIdleTailMs: this.rotationIdleTailMs,
+      handId: batchHandId,
     });
     const consensus = batchVoter.history.reduce(
       (acc, cur) => {
@@ -1286,6 +1722,7 @@ export class GeometricClassifier extends Classifier {
           reason: 'NO_CONSENSUS_OR_NOISY_BATCH',
           states: lastValidStatic.states,
           wave,
+          palmRotation,
         },
       };
     }
@@ -1293,7 +1730,11 @@ export class GeometricClassifier extends Classifier {
     let finalLabel = bestLabel;
     let finalConf = Number((consensus.conf[bestLabel] / bestCount).toFixed(4));
 
-    if (finalLabel === SIGN_LABELS.MANO_ABIERTA && wave.isWaving) {
+    if (finalLabel === SIGN_LABELS.CINCO && palmRotation.isRotating && !wave.isWaving) {
+      const spanScore = clamp01((palmRotation.zSpan - 0.9) / 0.9);
+      finalLabel = SIGN_LABELS.DIEZ;
+      finalConf = Number(Math.min(0.99, Math.max(finalConf, 0.85 + 0.13 * spanScore)).toFixed(4));
+    } else if (finalLabel === SIGN_LABELS.CINCO && wave.isWaving && !palmRotation.isRotating) {
       const ampScore = clamp01((wave.totalAmplitude - 0.35) / 1.0);
       finalLabel = SIGN_LABELS.HOLA;
       finalConf = Number(Math.min(0.99, Math.max(finalConf, 0.84 + 0.14 * ampScore)).toFixed(4));
@@ -1311,6 +1752,7 @@ export class GeometricClassifier extends Classifier {
         votes: bestCount,
         totalFrames: frames.length,
         wave,
+        palmRotation,
       },
     };
   }

@@ -71,7 +71,7 @@ test.describe('ExpresaT Demo E2E — Navegador real con cámara falsa y MediaPip
     const pageErrors = [];
     page.on('pageerror', (err) => pageErrors.push(err.message));
 
-    const syntheticOpen = SYNTHETIC_PRESETS.MANO_ABIERTA();
+    const syntheticOpen = SYNTHETIC_PRESETS.CINCO();
     await page.addInitScript((handPoints) => {
       window.__EXPRESAT_SYNTHETIC_FRAME__ = () => ({
         hands: [handPoints],
@@ -99,7 +99,7 @@ test.describe('ExpresaT Demo E2E — Navegador real con cámara falsa y MediaPip
       // Offline mode: verify explicit status remains visible without crashing
       await expect(wsStatus).toBeVisible();
     }
-    await expect(page.getByTestId('detected-gesture')).toHaveText('Mano Abierta', {
+    await expect(page.getByTestId('detected-gesture')).toHaveText('Cinco', {
       timeout: 5000,
     });
     expect(pageErrors).toEqual([]);

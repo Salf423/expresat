@@ -9,6 +9,8 @@ export {
   palmScale,
   angleBetweenVectorsDeg,
   jointAngleDeg,
+  computePalmNormal,
+  computeSignedFrontZ,
   normalizeHand,
   fingerStates,
 } from './geometry.js';
@@ -22,6 +24,7 @@ export {
   extractHandFromFrame,
   classifyStaticHand,
   detectWaveMotion,
+  detectPalmRotation,
   SmoothingVoter,
   Classifier,
   GeometricClassifier,

@@ -136,49 +136,78 @@ describe('recognition/temporal — Estabilidad en t_ms, histéresis, onda dinám
       if (r.label) labelsAfterReturn.push(r.label);
     }
     expect(labelsAfterReturn).not.toContain(SIGN_LABELS.HOLA);
-    expect(labelsAfterReturn).toContain(SIGN_LABELS.MANO_ABIERTA);
+    expect(labelsAfterReturn).toContain(SIGN_LABELS.CINCO);
 
-    // B) Zombie Hola a 10 FPS: al detener el saludo, debe volver a Mano Abierta en <= 700 ms (no 1300 ms)
+    // B) Zombie Hola a 10 FPS: al detener el saludo, debe volver a Cinco en <= 700 ms (no 1300 ms)
     const clfB = new GeometricClassifier();
     let tb = 0;
     for (let i = 0; i < 16; i++) {
       tb = i * 100;
       const offsetX = 0.5 + 0.7 * 0.15 * Math.sin(2 * Math.PI * 1.8 * (tb / 1000));
-      clfB.predict({ rightHand: SYNTHETIC_PRESETS.MANO_ABIERTA({ offsetX }), timestamp: tb });
+      clfB.predict({ rightHand: SYNTHETIC_PRESETS.CINCO({ handedness: 'Right', offsetX }), timestamp: tb });
     }
     let clearedMs = null;
     for (let i = 1; i <= 12; i++) {
       tb += 100;
       const r = clfB.predict({
-        rightHand: SYNTHETIC_PRESETS.MANO_ABIERTA({ offsetX: 0.5 }),
+        rightHand: SYNTHETIC_PRESETS.CINCO({ handedness: 'Right', offsetX: 0.5 }),
         timestamp: tb,
       });
-      if (r.label === SIGN_LABELS.MANO_ABIERTA && clearedMs === null) {
+      if (r.label === SIGN_LABELS.CINCO && clearedMs === null) {
         clearedMs = i * 100;
       }
     }
     expect(clearedMs).not.toBeNull();
     expect(clearedMs).toBeLessThanOrEqual(700);
 
-    // C) Dos manos quietas alternando en cuadro -> cero falsos positivos de Hola
+    // C) Dos manos quietas alternando en cuadro -> cero falsos positivos de Hola ni Diez
     const clfC = new GeometricClassifier();
     const mirrorX = (h) => h.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z ?? 0 }));
     for (let i = 0; i < 20; i++) {
       const frame =
         i % 3 === 0
           ? {
-              leftHand: mirrorX(SYNTHETIC_PRESETS.MANO_ABIERTA({ offsetX: 0.25 })),
-              rightHand: SYNTHETIC_PRESETS.MANO_ABIERTA({ offsetX: 0.25 }),
+              leftHand: mirrorX(SYNTHETIC_PRESETS.CINCO({ offsetX: 0.25 })),
+              rightHand: SYNTHETIC_PRESETS.CINCO({ handedness: 'Right', offsetX: 0.25 }),
               timestamp: i * 67,
             }
           : {
-              leftHand: mirrorX(SYNTHETIC_PRESETS.MANO_ABIERTA({ offsetX: 0.25 })),
+              leftHand: mirrorX(SYNTHETIC_PRESETS.CINCO({ offsetX: 0.25 })),
               rightHand: null,
               timestamp: i * 67,
             };
       const r = clfC.predict(frame);
       expect(r.label).not.toBe(SIGN_LABELS.HOLA);
+      expect(r.label).not.toBe(SIGN_LABELS.DIEZ);
     }
+
+    // D) Zombie Diez a 10 FPS: al detener el giro de muñeca, vuelve a Cinco limpiamente en <= 900 ms
+    const clfD = new GeometricClassifier();
+    let td = 0;
+    let sawDiezD = false;
+    for (let i = 0; i < 12; i++) {
+      td = i * 100;
+      const facing = Math.floor(td / 250) % 2 === 0 ? 'FRONT' : 'BACK';
+      const r = clfD.predict({
+        rightHand: SYNTHETIC_PRESETS.CINCO({ handedness: 'Right', palmFacing: facing }),
+        timestamp: td,
+      });
+      if (r.label === SIGN_LABELS.DIEZ) sawDiezD = true;
+    }
+    expect(sawDiezD).toBe(true);
+    let diezClearedMs = null;
+    for (let i = 1; i <= 12; i++) {
+      td += 100;
+      const r = clfD.predict({
+        rightHand: SYNTHETIC_PRESETS.CINCO({ handedness: 'Right', palmFacing: 'FRONT' }),
+        timestamp: td,
+      });
+      if (r.label === SIGN_LABELS.CINCO && diezClearedMs === null) {
+        diezClearedMs = i * 100;
+      }
+    }
+    expect(diezClearedMs).not.toBeNull();
+    expect(diezClearedMs).toBeLessThanOrEqual(900);
   });
 
   it('aplica cooldown inteligente anti-repetición al mantener una seña arriba y permite repetir tras pausa en reposo', () => {
