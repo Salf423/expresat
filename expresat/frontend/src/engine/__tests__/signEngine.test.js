@@ -235,4 +235,32 @@ describe('engine/SignEngine — Ciclo de vida, cleanup idempotente y FPS reales'
     expect(engine.poseCadence).toBe(1);
     expect(engine.enablePose).toBe(true);
   });
+
+  it('acepta resoluciones móviles verticales (480x640, 720x1280) cuando strictAspectRatio es false sin emitir ERR_INVALID_ASPECT_RATIO', () => {
+    const engine = new SignEngine({ strictAspectRatio: false, smoothLandmarks: false });
+    const errors = [];
+    engine.onError((e) => errors.push(e));
+
+    expect(engine._checkVideoAspectRatio(480, 640)).toBe(true);
+    expect(engine._checkVideoAspectRatio(720, 1280)).toBe(true);
+    expect(engine._checkVideoAspectRatio(1280, 720)).toBe(true);
+    expect(errors).toHaveLength(0);
+
+    // Verifica que framePayload incluye aspectRatio real (0.75 en 480x640)
+    engine._videoElement = { videoWidth: 480, videoHeight: 640 };
+    let emitted = null;
+    engine.onFrame((payload) => {
+      emitted = payload;
+    });
+    engine._dispatchNormalizedResults({
+      pose: null,
+      hands: [],
+      handedness: [],
+      timestamp: 1000,
+      latencyMs: 3,
+    });
+    expect(emitted.videoWidth).toBe(480);
+    expect(emitted.videoHeight).toBe(640);
+    expect(emitted.aspectRatio).toBeCloseTo(0.75, 4);
+  });
 });

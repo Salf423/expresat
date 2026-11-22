@@ -45,6 +45,36 @@ export function resolveEnablePose({
 }
 
 /**
+ * Enforces strict 4:3 (±0.05) FEATURE_SPEC v1.4.0 aspect ratio ONLY when remote neural
+ * inference or DevRecorder dataset capture is active. Local geometric demo mode accepts
+ * any camera geometry (mobile portrait 3:4 / 9:16, square, or desktop 4:3 / 16:9).
+ */
+export function resolveStrictAspectRatio({
+  enableRemoteTransport = false,
+  devRecorderActive = false,
+  strictAspectRatio,
+} = {}) {
+  if (typeof strictAspectRatio === 'boolean') return strictAspectRatio;
+  return Boolean(enableRemoteTransport || devRecorderActive);
+}
+
+/**
+ * Synchronizes canvas pixel dimensions with the active video stream's native orientation
+ * (e.g. 480x640 on mobile portrait, 640x480 on desktop) so frames and landmarks never stretch.
+ */
+export function syncCanvasToVideo(canvas, video) {
+  if (!canvas || !video) return false;
+  const vw = video.videoWidth || 0;
+  const vh = video.videoHeight || 0;
+  if (vw > 0 && vh > 0 && (canvas.width !== vw || canvas.height !== vh)) {
+    canvas.width = vw;
+    canvas.height = vh;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Determines whether local geometric predictions should update the active gesture state.
  * Prevents local-vs-remote overwrite races whenever WebSocket neural transport is OPEN.
  */
@@ -367,6 +397,11 @@ export function useSignEngine({
     configEnablePose: CONFIG.enablePose,
   });
 
+  const resolvedStrictAspectRatio = resolveStrictAspectRatio({
+    enableRemoteTransport,
+    devRecorderActive,
+  });
+
   useEffect(() => {
     const videoEl = videoRef?.current;
     if (!videoEl) return undefined;
@@ -395,6 +430,7 @@ export function useSignEngine({
     const engine = new SignEngine({
       targetFps: CONFIG.targetFps,
       enablePose: resolvedEnablePose,
+      strictAspectRatio: resolvedStrictAspectRatio,
       modelComplexity: CONFIG.modelComplexity,
       backend: CONFIG.mediapipeBackend,
     });
@@ -461,6 +497,10 @@ export function useSignEngine({
         if (countSetMs !== null && countSetMs !== undefined) {
           devTel.recordStageDuration('ui_dispatch', countSetMs);
         }
+      }
+
+      if (canvasRef?.current && videoRef?.current) {
+        syncCanvasToVideo(canvasRef.current, videoRef.current);
       }
 
       if (trackingConfigRef.current?.enabled && canvasRef?.current) {
@@ -599,7 +639,7 @@ export function useSignEngine({
       tracker.reset();
       engineRef.current = null;
     };
-  }, [videoRef, canvasRef, classifierInstance, resolvedEnablePose]);
+  }, [videoRef, canvasRef, classifierInstance, resolvedEnablePose, resolvedStrictAspectRatio]);
 
   const reconnectTransport = useCallback(() => {
     if (wsClientRef.current) {

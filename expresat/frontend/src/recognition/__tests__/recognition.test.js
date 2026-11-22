@@ -245,6 +245,39 @@ describe('recognition/ — Clasificación geométrica pura con landmarks sintét
       });
       expect(res.label).toBe(SIGN_LABELS.MANO_ABIERTA);
     }
+
+    // También en móvil vertical portrait (480x640, ratio 0.75 y 720x1280, ratio 0.5625)
+    const projectPortrait = (hand, deg, aspect) => {
+      const rad = (deg * Math.PI) / 180;
+      const c = Math.cos(rad);
+      const s = Math.sin(rad);
+      const w = hand[0];
+      return hand.map((p) => {
+        const dx = p.x - w.x;
+        const dy = p.y - w.y;
+        return {
+          x: 0.5 + (dx * c - dy * s),
+          y: 0.5 + (dx * s + dy * c) * aspect,
+          z: p.z,
+        };
+      });
+    };
+
+    for (const [vw, vh] of [
+      [480, 640],
+      [720, 1280],
+    ]) {
+      const ratio = vw / vh;
+      for (const deg of [-25, 0, 25, 90]) {
+        const res = classifyStaticHand({
+          leftHand: projectPortrait(base, deg, ratio),
+          videoWidth: vw,
+          videoHeight: vh,
+          aspectRatio: ratio,
+        });
+        expect(res.label).toBe(SIGN_LABELS.MANO_ABIERTA);
+      }
+    }
   });
 
   it('usa ángulos articulares MCP/PIP/DIP y rechaza mano doblada 90° en MCP y reposo relajado / Letra C', () => {

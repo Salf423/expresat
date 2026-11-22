@@ -135,4 +135,34 @@ describe('ui/useSignEngine — Lote WebSocket crudo + t_ms monotónico y enableP
     expect(valid, `extractWindow error=${error}`).toBe(true);
     expect(tensor.length).toBe(15 * 178);
   });
+
+  it('resolveStrictAspectRatio desactiva el bloqueo 4:3 en Modo Demo Local y syncCanvasToVideo adapta canvas a portrait 480x640', () => {
+    expect(typeof useSignEngineMod.resolveStrictAspectRatio).toBe('function');
+    expect(typeof useSignEngineMod.syncCanvasToVideo).toBe('function');
+
+    expect(
+      useSignEngineMod.resolveStrictAspectRatio({
+        enableRemoteTransport: false,
+        devRecorderActive: false,
+      })
+    ).toBe(false);
+    expect(
+      useSignEngineMod.resolveStrictAspectRatio({
+        enableRemoteTransport: true,
+        devRecorderActive: false,
+      })
+    ).toBe(true);
+    expect(
+      useSignEngineMod.resolveStrictAspectRatio({
+        enableRemoteTransport: false,
+        devRecorderActive: true,
+      })
+    ).toBe(true);
+
+    const fakeCanvas = { width: 640, height: 480 };
+    const fakePortraitVideo = { videoWidth: 480, videoHeight: 640 };
+    useSignEngineMod.syncCanvasToVideo(fakeCanvas, fakePortraitVideo);
+    expect(fakeCanvas.width).toBe(480);
+    expect(fakeCanvas.height).toBe(640);
+  });
 });

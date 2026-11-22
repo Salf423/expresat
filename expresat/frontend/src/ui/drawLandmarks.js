@@ -103,9 +103,19 @@ export function renderCanvasFrame({
       canvas.getContext('2d'));
   if (!ctx) return;
 
+  const hasVideo = Boolean(video && video.readyState >= 2);
+  if (
+    hasVideo &&
+    video.videoWidth > 0 &&
+    video.videoHeight > 0 &&
+    (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)
+  ) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+  }
+
   const w = canvas.width;
   const h = canvas.height;
-  const hasVideo = Boolean(video && video.readyState >= 2);
 
   ctx.save();
   if (!hasVideo) {

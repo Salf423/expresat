@@ -243,6 +243,7 @@ export class SignEngine {
     this.preferredDelegate = options.delegate ?? queryDelegate ?? 'GPU';
     this.poseCadence = Math.max(1, Math.min(5, options.poseCadence ?? 1));
     this.smoothLandmarks = options.smoothLandmarks ?? true;
+    this.strictAspectRatio = options.strictAspectRatio ?? true;
 
     let queryCamExp = null;
     if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.search) {
@@ -873,6 +874,9 @@ export class SignEngine {
   _checkVideoAspectRatio(videoWidth, videoHeight) {
     const { valid, ratio } = validateVideoAspectRatio(videoWidth, videoHeight);
     this._lastAspectRatioValid = valid;
+    if (!this.strictAspectRatio) {
+      return true;
+    }
     if (!valid && !this._aspectRatioErrorEmitted) {
       this._aspectRatioErrorEmitted = true;
       this._emitError(
@@ -1390,6 +1394,10 @@ export class SignEngine {
       return out;
     };
 
+    const vw = this._videoElement?.videoWidth || 0;
+    const vh = this._videoElement?.videoHeight || 0;
+    const aspectRatio = vw > 0 && vh > 0 ? vw / vh : 1.0;
+
     let cachedRaw = null;
     const framePayload = {
       hands: filtered.hands || [],
@@ -1399,8 +1407,9 @@ export class SignEngine {
       pose: cleanCoords(filtered.pose, true),
       timestamp,
       latencyMs,
-      videoWidth: this._videoElement?.videoWidth || 0,
-      videoHeight: this._videoElement?.videoHeight || 0,
+      videoWidth: vw,
+      videoHeight: vh,
+      aspectRatio,
       aspectRatioValid: this._lastAspectRatioValid,
       delegate: this._activeBackendInfo?.delegate || this.preferredDelegate,
     };
