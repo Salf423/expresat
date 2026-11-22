@@ -234,6 +234,37 @@ describe('engine/SignEngine — Ciclo de vida, cleanup idempotente y FPS reales'
     const engine = new SignEngine({ enablePose: true });
     expect(engine.poseCadence).toBe(1);
     expect(engine.enablePose).toBe(true);
+    expect(typeof signEngineMod.resolveHandConfidenceThresholds).toBe('function');
+
+    // v1.4.0 estricto (por defecto, con Pose, WS o DevRecorder)
+    expect(signEngineMod.resolveHandConfidenceThresholds()).toEqual({
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+    expect(
+      signEngineMod.resolveHandConfidenceThresholds({
+        demoLocalTolerant: true,
+        devRecorderActive: true,
+      })
+    ).toEqual({
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+
+    // Modo Demo Local tolerante para dorso/puño dorsal y contraluz (0.35–0.40 presence/tracking)
+    const demoThr = signEngineMod.resolveHandConfidenceThresholds({
+      demoLocalTolerant: true,
+      enablePose: false,
+      enableRemoteTransport: false,
+      devRecorderActive: false,
+    });
+    expect(demoThr.minHandPresenceConfidence).toBeGreaterThanOrEqual(0.35);
+    expect(demoThr.minHandPresenceConfidence).toBeLessThanOrEqual(0.4);
+    expect(demoThr.minTrackingConfidence).toBeGreaterThanOrEqual(0.35);
+    expect(demoThr.minTrackingConfidence).toBeLessThanOrEqual(0.4);
+    expect(new SignEngine({ demoLocalTolerant: true, enablePose: false }).handConfidenceThresholds).toEqual(demoThr);
   });
 
   it('acepta resoluciones móviles verticales (480x640, 720x1280) cuando strictAspectRatio es false sin emitir ERR_INVALID_ASPECT_RATIO', () => {

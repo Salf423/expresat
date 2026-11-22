@@ -293,12 +293,15 @@ function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx, { isPinky
     tipToPipRatio > tipPipExtMin &&
     tipToMcpRatio > tipMcpExtMin;
 
+  const dorsalFolded = mcpAngle <= 125 && tipToMcpRatio <= 1.28;
+
   const curled =
     !extended &&
     (pipAngle <= 118 ||
       tipToPipRatio < 1.02 ||
       tipToMcpRatio < 1.15 ||
-      (pipAngle <= 128 && dipAngle <= 120));
+      (pipAngle <= 128 && dipAngle <= 120) ||
+      dorsalFolded);
 
   const extensionMargin = extended
     ? Math.min(
@@ -310,11 +313,19 @@ function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx, { isPinky
       )
     : 0;
 
+  const dorsalFoldMargin = dorsalFolded
+    ? Math.max(
+        0.35,
+        Math.min(rampMargin(130 - mcpAngle, 0, 35), rampMargin(1.3 - tipToMcpRatio, 0, 0.2))
+      )
+    : 0;
+
   const curlMargin = curled
     ? Math.max(
-        rampMargin(118 - pipAngle, 0, 60),
-        rampMargin(1.02 - tipToPipRatio, 0, 0.26),
-        rampMargin(1.15 - tipToMcpRatio, 0, 0.25)
+        rampMargin(132 - pipAngle, 0, 52),
+        rampMargin(1.08 - tipToPipRatio, 0, 0.24),
+        rampMargin(1.24 - tipToMcpRatio, 0, 0.28),
+        dorsalFoldMargin
       )
     : 0;
 
@@ -424,9 +435,12 @@ export function fingerStates(landmarks, options = {}) {
     thumbMcpAngle >= 145 &&
     thumbIpAngle >= 145;
 
+  // Occluded thumb in a dorsal fist tucked behind/beside the index knuckle (short wrist reach, close to index MCP)
+  const isDorsalTuckedThumb = thumbToWrist <= 1.0 && thumbToIndexMcp <= 0.44;
+
   // Curled thumb: tucked inward toward palm/middle/pinky or visibly bent.
-  // Allows natural fists where thumb tip rests near curled index tip, while
-  // keeping straight lateral "Letra A" thumb in the ambiguous zone.
+  // Allows both palmar natural fists and dorsal occluded fists while keeping
+  // straight tall "Letra A" thumb (toWrist > 1.02) in the ambiguous zone.
   const thumbCurled =
     !thumbExtended &&
     !isStraightAdductedThumb &&
@@ -434,7 +448,8 @@ export function fingerStates(landmarks, options = {}) {
       thumbToMiddleMcp < 0.56 ||
       thumbToWrist < 0.7 ||
       thumbMcpAngle < 118 ||
-      thumbIpAngle < 118);
+      thumbIpAngle < 118 ||
+      isDorsalTuckedThumb);
 
   const thumbExtensionMargin = thumbExtended
     ? Math.min(
@@ -447,13 +462,21 @@ export function fingerStates(landmarks, options = {}) {
       )
     : 0;
 
+  const dorsalThumbMargin = isDorsalTuckedThumb
+    ? Math.max(
+        0.35,
+        Math.min(rampMargin(0.45 - thumbToIndexMcp, 0, 0.22), rampMargin(1.02 - thumbToWrist, 0, 0.18))
+      )
+    : 0;
+
   const thumbCurlMargin = thumbCurled
     ? Math.max(
         rampMargin(0.82 - thumbToPinkyMcp, 0, 0.25),
         rampMargin(0.56 - thumbToMiddleMcp, 0, 0.2),
         rampMargin(0.7 - thumbToWrist, 0, 0.2),
         rampMargin(118 - thumbMcpAngle, 0, 30),
-        rampMargin(118 - thumbIpAngle, 0, 30)
+        rampMargin(118 - thumbIpAngle, 0, 30),
+        dorsalThumbMargin
       )
     : 0;
 

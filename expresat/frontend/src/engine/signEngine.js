@@ -54,6 +54,35 @@ export const ENGINE_ERROR_CODES = Object.freeze({
 export const EXPECTED_ASPECT_RATIO = 4 / 3;
 export const ASPECT_RATIO_TOLERANCE = 0.05;
 
+export const STRICT_V140_HAND_THRESHOLDS = Object.freeze({
+  minHandDetectionConfidence: 0.5,
+  minHandPresenceConfidence: 0.5,
+  minTrackingConfidence: 0.5,
+});
+
+export const DEMO_LOCAL_HAND_THRESHOLDS = Object.freeze({
+  minHandDetectionConfidence: 0.45,
+  minHandPresenceConfidence: 0.35,
+  minTrackingConfidence: 0.35,
+});
+
+/**
+ * Resolves HandLandmarker confidence thresholds:
+ * - Strict 0.50/0.50/0.50 whenever FEATURE_SPEC v1.4.0 capture/neural mode is active.
+ * - Tolerant 0.45/0.35/0.35 in Local Demo Mode so dorsal fists and backlight never drop tracking.
+ */
+export function resolveHandConfidenceThresholds({
+  demoLocalTolerant = false,
+  enablePose = false,
+  enableRemoteTransport = false,
+  devRecorderActive = false,
+} = {}) {
+  if (demoLocalTolerant && !enablePose && !enableRemoteTransport && !devRecorderActive) {
+    return { ...DEMO_LOCAL_HAND_THRESHOLDS };
+  }
+  return { ...STRICT_V140_HAND_THRESHOLDS };
+}
+
 /**
  * Validate camera video dimensions against the canonical 4:3 (±0.05) FEATURE_SPEC v1.4.0 ratio.
  * Returns `{ valid: true, ratio: null }` if metadata dimensions are not yet available.
@@ -244,6 +273,14 @@ export class SignEngine {
     this.poseCadence = Math.max(1, Math.min(5, options.poseCadence ?? 1));
     this.smoothLandmarks = options.smoothLandmarks ?? true;
     this.strictAspectRatio = options.strictAspectRatio ?? true;
+    this.handConfidenceThresholds =
+      options.handConfidenceThresholds ||
+      resolveHandConfidenceThresholds({
+        demoLocalTolerant: Boolean(options.demoLocalTolerant),
+        enablePose: this.enablePose,
+        enableRemoteTransport: Boolean(options.enableRemoteTransport),
+        devRecorderActive: Boolean(options.devRecorderActive),
+      });
 
     let queryCamExp = null;
     if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.search) {
@@ -936,9 +973,9 @@ export class SignEngine {
         {
           runningMode: 'VIDEO',
           numHands: 2,
-          minHandDetectionConfidence: 0.5,
-          minHandPresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
+          minHandDetectionConfidence: this.handConfidenceThresholds.minHandDetectionConfidence,
+          minHandPresenceConfidence: this.handConfidenceThresholds.minHandPresenceConfidence,
+          minTrackingConfidence: this.handConfidenceThresholds.minTrackingConfidence,
         },
         this.preferredDelegate
       );

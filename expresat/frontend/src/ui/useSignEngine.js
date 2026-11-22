@@ -402,6 +402,8 @@ export function useSignEngine({
     devRecorderActive,
   });
 
+  const demoLocalTolerant = !enableRemoteTransport && !devRecorderActive && !resolvedEnablePose;
+
   useEffect(() => {
     const videoEl = videoRef?.current;
     if (!videoEl) return undefined;
@@ -431,6 +433,7 @@ export function useSignEngine({
       targetFps: CONFIG.targetFps,
       enablePose: resolvedEnablePose,
       strictAspectRatio: resolvedStrictAspectRatio,
+      demoLocalTolerant,
       modelComplexity: CONFIG.modelComplexity,
       backend: CONFIG.mediapipeBackend,
     });
@@ -639,7 +642,14 @@ export function useSignEngine({
       tracker.reset();
       engineRef.current = null;
     };
-  }, [videoRef, canvasRef, classifierInstance, resolvedEnablePose, resolvedStrictAspectRatio]);
+  }, [
+    videoRef,
+    canvasRef,
+    classifierInstance,
+    resolvedEnablePose,
+    resolvedStrictAspectRatio,
+    demoLocalTolerant,
+  ]);
 
   const reconnectTransport = useCallback(() => {
     if (wsClientRef.current) {

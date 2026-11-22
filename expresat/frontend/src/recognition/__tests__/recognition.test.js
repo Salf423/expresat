@@ -347,6 +347,69 @@ describe('recognition/ — Clasificación geométrica pura con landmarks sintét
     expect(classifyStaticHand(letraA).label).toBeNull();
   });
 
+  it('reconoce Puño dorsal (dorso a cámara con oclusión y compresión Z) en ambas manos sin romper reposo/Bien/Letra A', () => {
+    const bp = 0.15;
+    // A) Inversión pura palmar -> dorsal (z invertido + espejo X)
+    const palmarFist = SYNTHETIC_PRESETS.PUNO();
+    const dorsalFlipped = palmarFist.map((p) => ({ x: 1 - p.x, y: p.y, z: -(p.z ?? 0) }));
+    expect(classifyStaticHand({ rightHand: dorsalFlipped }).label).toBe(SIGN_LABELS.PUNO);
+    expect(classifyStaticHand({ leftHand: dorsalFlipped }).label).toBe(SIGN_LABELS.PUNO);
+
+    // B) Puño dorsal ocluido realista: falanges dobladas detrás de los nudillos con compresión Z monocular
+    // (pipAngle ~122°, tipToMcpRatio ~1.16) y pulgar oculto detrás del nudillo índice (toPinky ~0.86, toWrist ~0.86)
+    const dorsalOccluded = SYNTHETIC_PRESETS.PUNO();
+    const mcpSpecs = [
+      [5, -0.32, -0.95],
+      [9, 0.0, -1.0],
+      [13, 0.3, -0.92],
+      [17, 0.56, -0.82],
+    ];
+    for (const [mcpIdx, mx, my] of mcpSpecs) {
+      dorsalOccluded[mcpIdx] = { x: 0.5 + mx * bp, y: 0.7 + my * bp, z: 0 };
+      dorsalOccluded[mcpIdx + 1] = {
+        x: 0.5 + mx * bp,
+        y: 0.7 + (my - 0.24) * bp,
+        z: 0.14 * bp,
+      };
+      dorsalOccluded[mcpIdx + 2] = {
+        x: 0.5 + mx * bp,
+        y: 0.7 + (my - 0.16) * bp,
+        z: 0.32 * bp,
+      };
+      dorsalOccluded[mcpIdx + 3] = {
+        x: 0.5 + mx * bp,
+        y: 0.7 + (my - 0.02) * bp,
+        z: 0.38 * bp,
+      };
+    }
+    // Pulgar ocluido detrás del índice (toPinky ≈ 0.87, toMid ≈ 0.59, toIdx ≈ 0.36, toWrist ≈ 0.86)
+    dorsalOccluded[1] = { x: 0.5 - 0.24 * bp, y: 0.7 - 0.25 * bp, z: 0.05 * bp };
+    dorsalOccluded[2] = { x: 0.5 - 0.34 * bp, y: 0.7 - 0.5 * bp, z: 0.12 * bp };
+    dorsalOccluded[3] = { x: 0.5 - 0.33 * bp, y: 0.7 - 0.68 * bp, z: 0.2 * bp };
+    dorsalOccluded[4] = { x: 0.5 - 0.27 * bp, y: 0.7 - 0.8 * bp, z: 0.24 * bp };
+
+    const dorsalRes = classifyStaticHand({ rightHand: dorsalOccluded });
+    expect(dorsalRes.label).toBe(SIGN_LABELS.PUNO);
+    expect(dorsalRes.confidence).toBeGreaterThanOrEqual(0.68);
+
+    // C) Puño dorsal con pulgar semi-oculto pegado al costado del nudillo índice y Z desplazada
+    // (toPinky > 0.82, toMid > 0.56, toIdx <= 0.42, toWrist <= 0.98) y dedos con pipAngle ~124°, tipToMcp ~1.18
+    const dorsalHard = SYNTHETIC_PRESETS.PUNO();
+    for (const [mcpIdx, mx, my] of mcpSpecs) {
+      dorsalHard[mcpIdx] = { x: 0.5 + mx * bp, y: 0.7 + my * bp, z: 0 };
+      dorsalHard[mcpIdx + 1] = { x: 0.5 + mx * bp, y: 0.7 + (my - 0.30) * bp, z: 0.18 * bp };
+      dorsalHard[mcpIdx + 2] = { x: 0.5 + mx * bp, y: 0.7 + (my - 0.25) * bp, z: 0.44 * bp };
+      dorsalHard[mcpIdx + 3] = { x: 0.5 + mx * bp, y: 0.7 + (my - 0.16) * bp, z: 0.62 * bp };
+    }
+    dorsalHard[1] = { x: 0.5 - 0.22 * bp, y: 0.7 - 0.22 * bp, z: 0.08 * bp };
+    dorsalHard[2] = { x: 0.5 - 0.33 * bp, y: 0.7 - 0.45 * bp, z: 0.18 * bp };
+    dorsalHard[3] = { x: 0.5 - 0.39 * bp, y: 0.7 - 0.66 * bp, z: 0.28 * bp };
+    dorsalHard[4] = { x: 0.5 - 0.42 * bp, y: 0.7 - 0.82 * bp, z: 0.35 * bp };
+    const dorsalHardRes = classifyStaticHand({ rightHand: dorsalHard });
+    expect(dorsalHardRes.label).toBe(SIGN_LABELS.PUNO);
+    expect(dorsalHardRes.confidence).toBeGreaterThanOrEqual(0.68);
+  });
+
   it('mantiene simetría exacta entre mano izquierda y derecha bajo v1.4.0 y prioriza la mano que ejecuta una seña', () => {
     const mirrorX = (hand) => hand.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z ?? 0 }));
     for (const key of ['MANO_ABIERTA', 'PUNO', 'UNO', 'DOS', 'OK', 'BIEN', 'TE_QUIERO', 'LUNES']) {
