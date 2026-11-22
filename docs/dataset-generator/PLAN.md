@@ -1,10 +1,15 @@
-# Plan de Rediseño — Dataset Generator v2 (PLAN.md)
+# Plan de Rediseño — Dataset Generator v2 (`PLAN.md`)
 
 - **Documento:** Plan arquitectónico y hoja de ruta para la reestructuración de `expresat-dataset-generator/`.
-- **Versión:** `2.3.0` (Consolidado con FEATURE_SPEC v1.3.0, grabador dev 18s y arnés Gate 1B)
+- **Versión:** `2.3.0` (Consolidado con `FEATURE_SPEC v1.3.0`, grabador dev y arnés Gate 1B)
 - **Fecha:** 2026-11-10
+- **Estado:** **Diseño Base (Parcialmente Implementado; gobernado operativamente por [PLAN_MEJORA.md](./PLAN_MEJORA.md))**
 - **Rama:** `dataset-v2`
-- **Arquitecto y Orquestador:** Antigravity
+
+> [!NOTE]
+> **Estado actual de implementación frente a este diseño:**
+> - **Ya implementado en el repositorio:** Contrato 178D `v1.3.0` (`feature_extractor.py`, `featureExtractor.js`), suite matemática $L_\infty \le 10^{-6}$ (`tests/test_feature_spec.py`), grabador dev `.raw.json` `v1.3.1` (`DevRecorder.jsx` / `devRecorderUtils.js`), auditoría de grabaciones (`scripts/inspect_recording.py`), telemetría `DEV` (`DevInstrumentationPanel.jsx`) y rechazo explícito de `expresat-native/` (`ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0`).
+> - **Aún pendiente / planificado en [PLAN_MEJORA.md](./PLAN_MEJORA.md):** Servidor local seguro `127.0.0.1:8001/save`, formato binario compacto `v2.0.0` (`.raw.meta.json` + `.raw.f32.bin`), ruta dedicada `/capture` y pipeline CLI offline de sharding `.npy`.
 
 ---
 

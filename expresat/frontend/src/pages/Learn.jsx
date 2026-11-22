@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Video, Users, Calendar, Palette, X, Camera, Info, ArrowRight, ArrowLeft, CheckCircle2, Sparkles } from 'lucide-react';
+import { BookOpen, Video, Users, Calendar, Palette, X, Camera, Info, ArrowLeft, CheckCircle2, Sparkles } from 'lucide-react';
 
 const learningModules = [
   {
@@ -96,9 +96,6 @@ const Learn = () => {
     <div className="container animate-fade-in" style={{ padding: '3rem 1.5rem 6rem 1.5rem', flex: 1, position: 'relative' }}>
       {/* Header */}
       <div className="section-heading" style={{ marginBottom: '3.5rem' }}>
-        <span className="chip" style={{ marginBottom: '1rem' }}>
-          <Sparkles size={14} /> Módulos Interactivos
-        </span>
         <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.25rem)', fontWeight: 800 }}>
           Aprende Lengua de Señas Mexicana
         </h1>
@@ -134,7 +131,6 @@ const Learn = () => {
               </span>
               <span className="btn-outline" style={{ padding: '0.35rem 0.85rem', fontSize: '0.8rem' }}>
                 <span>Explorar</span>
-                <ArrowRight size={14} />
               </span>
             </div>
           </div>
@@ -205,7 +201,7 @@ const Learn = () => {
                     {sign.name}
                   </span>
                   <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
-                    Ver guía <ArrowRight size={12} />
+                    Ver guía
                   </span>
                 </div>
               ))}
@@ -306,7 +302,7 @@ const Learn = () => {
                 <div 
                   style={{
                     flex: 1,
-                    background: '#07090f',
+                    background: 'var(--video-bg)',
                     border: '1px solid var(--panel-border)',
                     borderRadius: 'var(--radius-lg)',
                     display: 'flex',
@@ -321,7 +317,7 @@ const Learn = () => {
                   }}
                 >
                   <Camera size={40} color="var(--accent-primary)" style={{ opacity: 0.8, marginBottom: '0.75rem' }} />
-                  <span style={{ color: '#fff', fontSize: '1rem', fontWeight: 600 }}>
+                  <span style={{ color: 'var(--on-video)', fontSize: '1rem', fontWeight: 600 }}>
                     Práctica Guiada con IA
                   </span>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: '260px', marginTop: '0.4rem' }}>
@@ -335,7 +331,6 @@ const Learn = () => {
                       style={{ width: '100%', fontSize: '0.9rem', padding: '0.7rem' }}
                     >
                       <span>Abrir en Traductor</span>
-                      <ArrowRight size={16} />
                     </a>
                   </div>
                 </div>

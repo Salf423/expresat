@@ -1,22 +1,24 @@
 export {
   HAND_LANDMARKS,
+  resolveAspectRatio,
+  projectIsotropic,
   isValidPoint,
   isValidHandLandmarks,
   distance3D,
   distance2D,
-  distanceRobust,
   palmScale,
   angleBetweenVectorsDeg,
   jointAngleDeg,
   normalizeHand,
-  extractHandOrientation,
-  canonicalizeHand,
   fingerStates,
 } from './geometry.js';
 
 export {
   SIGN_LABELS,
-  extractHandWithMeta,
+  SIGN_CATALOG,
+  DEFAULT_MIN_CONFIDENCE,
+  getSignCatalogEntry,
+  extractHandsFromFrame,
   extractHandFromFrame,
   classifyStaticHand,
   detectWaveMotion,
@@ -27,36 +29,4 @@ export {
   classify,
 } from './classifier.js';
 
-export {
-  getSignCatalog,
-  BASE_SIGNS,
-  NUMBER_SIGNS,
-  STATIC_LETTER_SIGNS,
-  DYNAMIC_LETTER_SIGNS,
-  SIGN_CATEGORIES,
-  SIGN_TYPES,
-  CONFUSABLE_GROUPS,
-  isValidSignEntry,
-  scoreSign,
-  scoreRange,
-  matchCatalog,
-  TRAJECTORY_TEMPLATES,
-  normalizeTimedEntries,
-  extractWindowMs,
-  resampleTrajectory,
-  matchTrajectoryTemplate,
-  buildTrajectoryContext,
-} from './signs/index.js';
-
-export {
-  buildSyntheticHand,
-  SYNTHETIC_PRESETS,
-  SYNTHETIC_NUMBERS,
-  SYNTHETIC_LETTERS,
-} from './syntheticHand.js';
-
-export {
-  addLandmarkJitter,
-  evaluateConfusionMatrix,
-  buildFullSyntheticBenchmark,
-} from './confusionMatrix.js';
+export { buildSyntheticHand, SYNTHETIC_PRESETS } from './syntheticHand.js';

@@ -1,8 +1,11 @@
-# Reporte Final de Depuración y Mejora MediaPipe — ExpresaT
+# Reporte Final de Depuración y Mejora MediaPipe (`fix-mediapipe`) — ExpresaT
 
-**Rama:** `fix-mediapipe`  
-**Fecha:** 2026-11-08  
-**Estado:** ✅ 100% Validado (Build verde, Lint verde, 19/19 Tests en verde)
+- **Rama:** `fix-mediapipe`
+- **Fecha:** 2026-11-08
+- **Estado:** **Histórico / Reemplazado** — Hito validado en `fix-mediapipe` (Build verde, Lint verde, 19/19 Tests), posteriormente reemplazado por la eliminación de Workers en `rearquitectura-demo`
+
+> [!NOTE]
+> Este reporte documenta la rama `fix-mediapipe` antes de la migración definitiva de MediaPipe al hilo principal (`SignEngine`). El archivo `mediapipe-worker.js` citado abajo fue eliminado en `rearquitectura-demo`. Consulta [ARQUITECTURA.md](../ARQUITECTURA.md) y [REPORTE.md](../REPORTE.md) para la arquitectura vigente.
 
 ---
 
@@ -21,15 +24,15 @@
 
 ## 2. Historial de Commits Aprobados (`fix-mediapipe`)
 
-Todos los commits fueron probados atómicamente y validados contra linter y tests:
+Todos los commits fueron probados atómicamente y validados contra linter y tests en su momento:
 
-1. [`8d66a9c`](file:///home/adrian/Proyectos/expresat/expresat/frontend/src/pages/Translator.jsx): `fix(frontend): define isDemo state to resolve ReferenceError [MP-1]`
-2. [`6caf276`](file:///home/adrian/Proyectos/expresat/expresat/backend/main.py): `fix(backend): allow demo mode WS connections and log reject reasons with origin [MP-2]`
-3. [`fd6ea42`](file:///home/adrian/Proyectos/expresat/expresat/frontend/src/services/apiService.js): `fix(ws): align token auth protocol across handshake and message phases [MP-2b]`
-4. [`d40c591`](file:///home/adrian/Proyectos/expresat/expresat/frontend/src/workers/mediapipe-worker.js): `fix(mediapipe): add WASM CDN fallback, GPU-to-CPU graceful degradation, and rVFC fallback [MP-3]`
-5. [`98b75bf`](file:///home/adrian/Proyectos/expresat/expresat/frontend/src/pages/Translator.jsx): `fix(frontend): remove demo_fallback_token and relax FPS watchdog [MP-4]`
-6. [`8615265`](file:///home/adrian/Proyectos/expresat/expresat/backend/main.py): `fix(backend): decouple token verification from demo mode access control [MP-5]`
-7. [`28defd5`](file:///home/adrian/Proyectos/expresat/docs/mediapipe-fix/): `docs: add MediaPipe audit reports and execution plan [MP-0]`
+1. `8d66a9c` ([`Translator.jsx`](../../expresat/frontend/src/pages/Translator.jsx)): `fix(frontend): define isDemo state to resolve ReferenceError [MP-1]`
+2. `6caf276` ([`main.py`](../../expresat/backend/main.py)): `fix(backend): allow demo mode WS connections and log reject reasons with origin [MP-2]`
+3. `fd6ea42` (`expresat/frontend/src/services/apiService.js`, *eliminado posteriormente; reemplazado por [`wsClient.js`](../../expresat/frontend/src/transport/wsClient.js)*): `fix(ws): align token auth protocol across handshake and message phases [MP-2b]`
+4. `d40c591` (`expresat/frontend/src/workers/mediapipe-worker.js`, *archivo eliminado posteriormente en `rearquitectura-demo`*): `fix(mediapipe): add WASM CDN fallback, GPU-to-CPU graceful degradation, and rVFC fallback [MP-3]`
+5. `98b75bf` ([`Translator.jsx`](../../expresat/frontend/src/pages/Translator.jsx)): `fix(frontend): remove demo_fallback_token and relax FPS watchdog [MP-4]`
+6. `8615265` ([`main.py`](../../expresat/backend/main.py)): `fix(backend): decouple token verification from demo mode access control [MP-5]`
+7. `28defd5` ([`docs/mediapipe-fix/`](./PLAN.md)): `docs: add MediaPipe audit reports and execution plan [MP-0]`
 
 *Commits revertidos:* Ninguno. Durante la inspección del stash se detectaron literales C++ (`1e-4f`, `0.60f`, `seq.empty`) que habrían roto el build de JavaScript con `SyntaxError`, por lo que fueron descartados preventivamente antes de ingresar a la rama.
 

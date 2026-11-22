@@ -1,13 +1,11 @@
 /**
- * src/engine/devTelemetry.js — Instrumentación diagnóstica exclusiva de desarrollo (import.meta.env.DEV)
+ * Development-only diagnostic instrumentation (guarded by `import.meta.env.DEV`).
  *
- * Registra métricas sin alterar el flujo de captura, inferencia o renderizado:
- * - Frames únicos de cámara (vía rVFC pasivo / presentedFrames) vs frames vistos por el loop vs inferidos
- * - Contador de inferencias duplicadas (mismo video.currentTime) y frames saltados
- * - Tiempo de espera de frame (inter-frame cámara, espera de tick, edad del frame, ciclo)
- * - performance.mark / performance.measure por etapa: hand, pose, dibujo, UI (dispatch y commit)
- * - Negociación getUserMedia (getSettings, getCapabilities, videoWidth/Height, experimento exact15)
- * - Comparativa separada Reposo (grabador inactivo) vs Grabando (grabador activo) con p50/p95/p99/máx
+ * Records metrics without altering capture, inference, or rendering:
+ * - Unique camera frames (rVFC / presentedFrames) vs loop ticks vs inferred frames
+ * - Duplicate inference count (same video.currentTime) and skipped camera frames
+ * - Per-stage `performance.mark` / `performance.measure` timings (hand, pose, draw, UI)
+ * - getUserMedia negotiation details and separate Idle (`reposo`) vs Recording (`grabando`) stats
  */
 
 export const IS_DEV = Boolean(import.meta.env?.DEV);
@@ -17,7 +15,7 @@ const MAX_PERF_ENTRIES_BEFORE_TRIM = 400;
 export function getDevGitCommitShort(override = null) {
   const raw =
     override ??
-    import.meta.env?.VITE_DEV_GIT_COMMIT ??
+    (import.meta.env?.DEV ? import.meta.env?.VITE_DEV_GIT_COMMIT : null) ??
     '';
   const cleaned = String(raw)
     .trim()
@@ -213,7 +211,7 @@ export function getActiveDevCollector() {
 }
 
 export function onDevProfilerRender(id, _phase, actualDuration, _baseDuration, startTime) {
-  if (!activeCollector?.enabled) return;
+  if (!import.meta.env.DEV || !activeCollector?.enabled) return;
   if (typeof actualDuration === 'number' && Number.isFinite(actualDuration)) {
     activeCollector.recordUiCommit(id, actualDuration);
     if (typeof performance?.measure === 'function' && typeof startTime === 'number') {
@@ -224,7 +222,7 @@ export function onDevProfilerRender(id, _phase, actualDuration, _baseDuration, s
         });
         activeCollector._maybeTrimPerfTimeline();
       } catch {
-        // Fallback si el navegador rechaza start/duration en measure()
+        // Ignore browsers that reject start/duration options in performance.measure()
       }
     }
   }
@@ -628,8 +626,7 @@ export class DevTelemetryCollector {
       skippedCameraFrames: 0,
     };
 
-    // Durante la grabación activa NO ejecutar getSnapshot()/summarizeBucket()/sort() cada 1s:
-    // solo acumular en memoria O(1) para cero interferencia con la captura.
+    // Skip expensive snapshot sorting/aggregation during active recording to avoid capture interference
     if (this.phase === 'grabando') {
       return {
         phase: this.phase,

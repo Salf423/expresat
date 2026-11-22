@@ -1,17 +1,12 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Zap, Shield, Sparkles, Cpu, BookOpen, Layers, CheckCircle2 } from 'lucide-react';
+import { Zap, Shield, Sparkles, Cpu, BookOpen, Layers, CheckCircle2 } from 'lucide-react';
 
 const Home = () => {
   return (
     <div className="animate-fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       {/* Hero Section */}
       <section className="container hero-section">
-        <div className="hero-eyebrow chip" style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}>
-          <Sparkles size={16} />
-          <span>Inteligencia Artificial para la Inclusión</span>
-        </div>
-
         <h1 className="hero-title">
           Rompiendo barreras con <span className="gradient-text">Lengua de Señas Mexicana</span>
         </h1>
@@ -23,7 +18,6 @@ const Home = () => {
         <div className="hero-actions">
           <Link to="/translator" className="btn-gradient" style={{ fontSize: '1.05rem', padding: '0.85rem 2rem' }}>
             <span>Probar Traductor</span>
-            <ArrowRight size={20} />
           </Link>
           <Link to="/learn" className="btn-outline" style={{ fontSize: '1.05rem', padding: '0.85rem 1.75rem' }}>
             <BookOpen size={18} />
@@ -94,7 +88,6 @@ const Home = () => {
       {/* Feature Cards Grid */}
       <section className="container" style={{ paddingBottom: '6rem' }}>
         <div className="section-heading">
-          <span className="chip" style={{ marginBottom: '1rem' }}>Tecnología & Rendimiento</span>
           <h2>Diseñado para la comunicación sin fricciones</h2>
           <p>
             Cada componente de ExpresaT ha sido optimizado para ejecutarse fluidamente en cualquier dispositivo sin depender de servidores con GPU costosos.
@@ -194,7 +187,6 @@ const Home = () => {
           <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Link to="/translator" className="btn-primary" style={{ padding: '0.85rem 2rem', fontSize: '1rem' }}>
               <span>Abrir Traductor</span>
-              <ArrowRight size={18} />
             </Link>
             <Link to="/about" className="btn-outline" style={{ padding: '0.85rem 1.75rem', fontSize: '1rem' }}>
               <span>Conoce al Equipo</span>

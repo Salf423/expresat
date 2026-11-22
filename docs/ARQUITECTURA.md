@@ -1,78 +1,75 @@
-# Arquitectura de ExpresaT — Rediseño Demo Robusto en Navegador
+# Arquitectura de ExpresaT — Pipeline Web Desacoplado en Navegador
 
-**Fecha:** 2026-11-09  
-**Rama:** `rearquitectura-demo`  
-**Autor:** Arquitecto Principal  
+- **Fecha de diseño inicial:** 2026-11-09 (`rearquitectura-demo`)
+- **Estado:** **Vigente (Implementado en código actual)**
+- **Orquestación:** Arquitectura Frontend de 4 capas + configuración centralizada e instrumentación `DEV`
+- **Índice y contratos relacionados:** [Índice de Documentación](./README.md) | [Especificación 178D (`FEATURE_SPEC v1.3.0`)](./dataset-generator/FEATURE_SPEC.md)
+
+> [!NOTE]
+> Este documento se redactó originalmente para planificar la rama `rearquitectura-demo` y fue actualizado al estado vigente del código (`signEngine.js`, `config.js`, `wsClient.js`, `recognition/`, `featureExtractor.js` e instrumentación de desarrollo). La bitácora puntual de commits de aquel hito se conserva en [REPORTE.md](./REPORTE.md).
 
 ---
 
 ## 1. Resumen Ejecutivo
 
-Este documento define la arquitectura desacoplada de **ExpresaT** para lograr una **demo funcional, robusta y 100% operativa en el navegador** (sin requerir backend ni login para el tracking y clasificación geométrica de señas), con un punto de enchufe limpio (`Classifier`) para integrar posteriormente el modelo neuronal ONNX/GRU y un cliente WebSocket opcional (`transport/`) con manejo de errores determinista.
+Esta arquitectura desacopla el pipeline web de **ExpresaT** para lograr una **demo funcional, robusta y 100% operativa en el navegador** (sin requerir backend ni inicio de sesión para el tracking de manos y la clasificación geométrica de señas), con una interfaz limpia (`Classifier`) para integrar un modelo neuronal ONNX/GRU, soporte del extractor canónico 178D (`featureExtractor.js`) y un cliente WebSocket opcional (`transport/`) con manejo de errores determinista.
 
 ---
 
-## 2. Inventario y Auditoría del Repositorio (Paso 0)
+## 2. Inventario Arquitectónico del Repositorio
 
-### 2.1 ¿Qué se conserva como referencia intocable?
-- **`expresat/frontend-legacy/`**: Prototipo HTML/JS original que utiliza `window.Holistic` + `window.Camera` en el hilo principal a 15 FPS (`frontend-legacy/traductor.html` y `frontend-legacy/js/mediapipe_engine.js`). Se mantiene intacto conforme a las reglas.
-- **`expresat/models/` y `expresat-dataset-generator/` y `expresat-native/`**: Se mantienen intactos; respetan la invariante de tensor `(1, 15, 178)`.
+### 2.1 Componentes Conservados como Referencia o Independientes
+- **`expresat/frontend-legacy/`**: Prototipo HTML/JS original basado en `window.Holistic` + `window.Camera` en hilo principal. Conservado como referencia histórica.
+- **`expresat/models/` y `expresat-dataset-generator/`**: Respetan la invariante de tensor `(1, 15, 178)`. En el generador C++, la captura real MediaPipe permanece en modo stub; la extracción canónica unificada (`FEATURE_SPEC v1.3.0`) reside en `expresat/models/feature_extractor.py` y `expresat/frontend/src/engine/featureExtractor.js`.
+- **`expresat-native/`**: Pipeline nativo C++/ONNX marcado formalmente como **`NO_CONFORME_FEATURE_SPEC_1_3_0`** (rechaza ejecución explícitamente hasta alinear `ExtractWindow`). Ver [FEATURE_SPEC.md](./dataset-generator/FEATURE_SPEC.md).
 
-### 2.2 ¿Qué se reutiliza y adapta?
+### 2.2 Componentes Reutilizados y Adaptados
 - **Frontend (`expresat/frontend/`)**:
-  - Se conservan páginas informativas y de navegación (`Home.jsx`, `Learn.jsx`, `About.jsx`, `Auth.jsx`, `Navbar.jsx`, `Footer.jsx`, `ErrorBoundary.jsx`, `ThemeContext.jsx`, `ThemeToggle.jsx`, `EnvironmentSelector.jsx`, `BackgroundParticles.jsx`).
-  - Se adapta `LandmarkEMAFilter` (`src/services/landmarkFilter.js`) y `LandmarkTracker` (`src/services/landmarkTracker.js`) para integrarse limpiamente sin acoplamiento al DOM.
+  - Páginas de navegación y autenticación (`Home.jsx`, `Learn.jsx`, `About.jsx`, `Auth.jsx`, `Navbar.jsx`, `Footer.jsx`, `ErrorBoundary.jsx`, `ThemeContext.jsx`, `ThemeToggle.jsx`, `EnvironmentSelector.jsx`, `BackgroundParticles.jsx`).
+  - `LandmarkEMAFilter` (`src/services/landmarkFilter.js`) y `LandmarkTracker` (`src/services/landmarkTracker.js`) integrados con `SignEngine` y `useSignEngine`.
 - **Backend (`expresat/backend/`)**:
-  - Se conservan y refinan `config.py`, `demo_rules.py`, `main.py`, `test_demo_rules.py` y `test_api_integration.py`, añadiendo validación configurable de `Origin` y token JWT con logs diagnósticos explícitos ante cualquier rechazo (`1008`).
+  - `config.py`, `demo_rules.py`, `main.py`, `test_demo_rules.py` y `test_api_integration.py`, con validación configurable de `Origin` y token JWT más logs diagnósticos ante cualquier rechazo (`1008`).
 
-### 2.3 ¿Qué se descarta o reemplaza?
-- **`expresat/frontend/src/workers/mediapipe-worker.js`** (**ELIMINADO**): Causante directo de `Error: ModuleFactory not set.` al instanciar múltiples tareas en un Worker ESM (`type: 'module'`) donde Emscripten limpia `self.ModuleFactory = void 0` tras la primera carga y donde `importScripts` lanza `TypeError` en módulos ES.
-- **`expresat/frontend/src/hooks/useMediaPipe.js`** (**REEMPLAZADO por `src/engine/` + `src/ui/useSignEngine.js`**): Acoplaba captura de cámara, Worker, canvas y envío por WebSocket en un solo hook difícil de testear.
-- **`expresat/frontend/src/services/mediapipeEngine.js`** (**REEMPLAZADO por `src/engine/signEngine.js`**): Código muerto en `src/services/` que dependía de `document.getElementById` en su versión original y no se importaba en `Translator.jsx`.
-- **`expresat/backend/websockets_handler.py`** (**DEJADO COMO STUB DEPRECADO / NO USADO**): Ya estaba marcado como deprecado (225D antiguo); toda la lógica WS vive en `main.py` (`/ws/translate`).
+### 2.3 Componentes Descartados o Reemplazados
+- **`expresat/frontend/src/workers/mediapipe-worker.js`** (**ELIMINADO**): Causante de `Error: ModuleFactory not set.` al instanciar múltiples tareas en un Worker ESM (`type: 'module'`) donde Emscripten limpia `self.ModuleFactory = void 0` tras la primera carga y donde `importScripts` falla con `TypeError` en módulos ES.
+- **`expresat/frontend/src/hooks/useMediaPipe.js`** (**ELIMINADO / REEMPLAZADO** por `src/engine/` + `src/ui/useSignEngine.js`): Acoplaba cámara, Worker, canvas y envío WebSocket en un único hook.
+- **`expresat/frontend/src/services/mediapipeEngine.js`** (**ELIMINADO / REEMPLAZADO** por `src/engine/signEngine.js`): Implementación previa dependiente del DOM (`document.getElementById`).
+- **`expresat/backend/websockets_handler.py`** (**DEPRECADO — no usado en runtime**): Emite `DeprecationWarning` al importarse; la lógica activa de `/ws/translate` vive en `expresat/backend/main.py`.
 
 ---
 
 ## 3. Prevención de las 8 Fallas Históricas Confirmadas
 
-| # | Falla Histórica | Causa Raíz | Solución Arquitectónica Definitiva |
+| # | Falla Histórica | Causa Raíz | Solución Arquitectónica Vigente |
 |---|---|---|---|
-| **1** | `ModuleFactory not set` al correr MediaPipe en Worker `type: 'module'` | En `@mediapipe/tasks-vision`, `vision_bundle.mjs` usa `importScripts()` (que falla con `TypeError` en Worker ESM) y al caer al fallback `import()` limpia `self.ModuleFactory = void 0` tras crear la primera tarea. | **MediaPipe corre en el hilo principal, sin Workers.** Además se soporta tanto `@mediapipe/tasks-vision` (`HandLandmarker` con WASM local en `/wasm` y `delegate: 'CPU'` por defecto) como la API legacy (`window.Hands` / `window.Holistic` con versiones fijadas). |
-| **2** | `ReferenceError` por identificadores sin definir (`isDemo`, `authWarning`) | Variables usadas en JSX sin declarar en `useState`, y falta de regla `no-undef` estricta en el linter. | ESLint configurado con `no-undef: "error"`, `react-hooks/rules-of-hooks: "error"`, `react-hooks/exhaustive-deps: "warn"` como compuerta obligatoria en `npm run lint`. |
-| **3** | `setState` durante el render | Actualizaciones de estado disparadas síncronamente dentro del cuerpo del componente o callbacks mal referenciados. | Estado gestionado exclusivamente en `useEffect` y callbacks de eventos en `useSignEngine.js`. |
-| **4** | Contador de FPS que medía `requestAnimationFrame` en vez de detecciones reales y dependía de `getElementById` | `renderLoop()` incrementaba `frameCount` en cada `rAF` (~60 Hz) y escribía en `document.getElementById('fps-counter')`. | `engine/` mide **dos contadores independientes**: `cameraFps` (frames leídos de cámara) e `inferenceFps` (detecciones reales completadas por MediaPipe), emitidos vía callback `onFps({ cameraFps, inferenceFps })` sin tocar el DOM. |
-| **5** | Reintentos infinitos del WebSocket ante 403/1008 | El cliente WS programaba `setTimeout(connect)` en `onclose` sin distinguir cierre por política/autenticación (`1008`/`4403`) ni verificar fallo previo en `/health` (401/403). | `transport/wsClient.js` implementa máquina de estados explícita (`idle \| connecting \| open \| auth_error \| failed`). No reintenta jamás ante `1008`, `403`, o ausencia de token cuando el servidor exige auth. |
-| **6** | Tracking atado al estado del backend | Si el WebSocket caía o el backend no respondía, la UI bloqueaba o ignoraba el reconocimiento. | `recognition/` (`GeometricClassifier`) se ejecuta **100% en el navegador** en cada frame procesado por `engine/`. El WebSocket (`transport/`) es un canal opcional secundario. |
-| **7** | Doble montaje de StrictMode dejando streams abiertos y `AbortError` en `play()` | En React 19 `StrictMode`, el primer montaje llama `getUserMedia` asíncronamente; el cleanup ocurre antes de que resuelva y el stream queda huérfano o `video.play()` lanza `AbortError`. | `engine/signEngine.js` usa un token de ciclo de vida incremental (`runId`), detiene tracks inmediatamente si `stop()` fue llamado mientras `getUserMedia` o la carga WASM estaban en vuelo, y maneja `AbortError` de `video.play()` de forma idempotente. |
-| **8** | Variables `VITE_*` leídas desde `.env` en carpeta equivocada o dispersas | Lecturas directas de `import.meta.env` con fallbacks rotos (`api.expresat.cloud`) repartidas en múltiples archivos. | Único módulo `src/config.js` que lee, normaliza y valida `import.meta.env.VITE_*` al arrancar, exponiendo diagnósticos claros sin filtrar secretos. |
+| **1** | `ModuleFactory not set` al correr MediaPipe en Worker `type: 'module'` | En `@mediapipe/tasks-vision`, `vision_bundle.mjs` usa `importScripts()` (que falla en Worker ESM) y al caer a `import()` limpia `self.ModuleFactory = void 0` tras crear la primera tarea. | **MediaPipe corre en el hilo principal, sin Workers.** `signEngine.js` protege `window.ModuleFactory` y soporta tanto `@mediapipe/tasks-vision` (WASM local en `/wasm`, delegado preferido `'GPU'` con respaldo automático a `'CPU'` o `?delegate=CPU\|GPU`) como la API legacy (`window.Hands` / `window.Holistic`). |
+| **2** | `ReferenceError` por identificadores sin definir (`isDemo`, `authWarning`) | Variables usadas en JSX sin declarar en `useState` y ausencia de regla `no-undef` en ESLint. | ESLint (`eslint.config.js`) configurado con `no-undef: "error"`, `react-hooks/rules-of-hooks: "error"`, `react-hooks/exhaustive-deps: "warn"` en `npm run lint`. |
+| **3** | `setState` durante el render | Actualizaciones de estado disparadas síncronamente en render. | Estado gestionado exclusivamente en `useEffect` y callbacks de eventos en `useSignEngine.js`. |
+| **4** | Contador de FPS basado en `requestAnimationFrame` y acoplado al DOM | `renderLoop()` incrementaba `frameCount` en cada `rAF` (~60 Hz) y mutaba `document.getElementById('fps-counter')`. | `SignEngine` mide **dos contadores independientes**: `cameraFps` e `inferenceFps`, emitidos vía callback `onFps({ cameraFps, inferenceFps })` sin tocar el DOM. |
+| **5** | Reintentos infinitos del WebSocket ante 403/1008 | El cliente programaba `setTimeout(connect)` sin distinguir rechazo por política/auth ni pre-chequeo HTTP. | `transport/wsClient.js` implementa máquina de estados explícita (`idle \| connecting \| open \| auth_error \| failed`) y prohíbe reintentos ante códigos `1008`, `4001`, `4003`, `4401`, `4403`, HTTP `401`/`403` o ausencia de token cuando `demo_mode === false`. |
+| **6** | Tracking atado al estado del backend | Un fallo de WebSocket o backend bloqueaba o detenía el reconocimiento en UI. | `recognition/` (`GeometricClassifier`) se ejecuta **100% en el navegador** por frame; `transport/` es opcional y desacoplado. |
+| **7** | Doble montaje de StrictMode dejando streams abiertos y `AbortError` en `play()` | En React 19 `StrictMode`, el cleanup ocurre antes de resolver `getUserMedia` o `play()`. | `signEngine.js` usa un token incremental (`_runId`), libera tracks inmediatamente si `stop()` ocurrió en vuelo y maneja `AbortError` de `video.play()` de forma idempotente. |
+| **8** | Variables `VITE_*` dispersas con fallbacks inválidos | Lecturas directas de `import.meta.env` en múltiples archivos. | Módulo único `src/config.js` que lee, normaliza y valida `import.meta.env.VITE_*` sin filtrar secretos. |
 
 ---
 
 ## 4. Decisión Técnica con Evidencia: MediaPipe en el Hilo Principal
 
-### 4.1 Comparativa Experimental en el Entorno
+### 4.1 Opciones Implementadas en `SignEngine`
 
-Se evaluaron ambas opciones permitidas por la arquitectura en el hilo principal:
+1. **Modo Principal — `@mediapipe/tasks-vision` (`HandLandmarker` + `PoseLandmarker` opcional en Main Thread):**
+   - **Versión y assets locales:** `@mediapipe/tasks-vision@^1.0.1` en `package.json`, con binarios WASM en `expresat/frontend/public/wasm/` y modelos `.task` en `expresat/frontend/public/models/`, servidos localmente en desarrollo mediante `servePublicWasmAndModelsPlugin()` en `vite.config.js`.
+   - **Protección de `ModuleFactory`:** En el hilo principal `FilesetResolver` inyecta `<script src="/wasm/vision_wasm_internal.js">`; `protectMainThreadModuleFactory()` en `signEngine.js` intercepta escrituras sobre `window.ModuleFactory` para impedir que Emscripten lo anule tras inicializar el primer landmarker.
+   - **Selección de delegado:** Diseñado inicialmente con `'CPU'` por defecto en `rearquitectura-demo`; en el código vigente (`signEngine.js`), `preferredDelegate` toma `'GPU'` por defecto (con fallback automático a `'CPU'`, configurable vía constructor `options.delegate` o query parameter `?delegate=CPU|GPU`).
+   - **Modelos `.task`:** Carga local desde `/models/hand_landmarker.task` (y `/models/pose_landmarker_lite.task` cuando `enablePose` está activo), con respaldo automático a URLs oficiales de Google Storage si falla la ruta local.
 
-1. **Opción A — `@mediapipe/tasks-vision` (`HandLandmarker` + `PoseLandmarker` opcional en Main Thread):**
-   - **Versión instalada en `package.json` y `/public/wasm/`:** `@mediapipe/tasks-vision@1.0.1` (binarios `vision_wasm_internal.js`, `vision_wasm_internal.wasm`, `vision_wasm_nosimd_internal.js`, `vision_wasm_nosimd_internal.wasm` ya presentes en `public/wasm/` y servidos localmente con `servePublicWasmPlugin` en Vite).
-   - **Comportamiento en Main Thread:** En el hilo principal `typeof importScripts !== 'function'`, por lo que `FilesetResolver` inyecta `<script src="/wasm/vision_wasm_internal.js">` en `document.body`, definiendo `window.ModuleFactory` limpiamente. Al preservar `window.ModuleFactory` e inicializar secuencialmente con `delegate: 'CPU'` por defecto (con fallback a `'GPU'` o viceversa según configuración), evita por completo el bug de WebGL/Worker en Firefox Linux sobre iGPU Ryzen 3 7320U.
-   - **Modelo `.task`:** Requiere cargar `hand_landmarker.task` (desde ruta local `/models/hand_landmarker.task` o CDN oficial de Google Storage `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`).
+2. **Respaldo Automático — API Legacy (`@mediapipe/hands@0.4.1675469240` / `@mediapipe/holistic@0.5.1675471629`):**
+   - Cargada dinámicamente desde jsDelivr por etiqueta `<script>` en el hilo principal si `backend: 'legacy'` o si falla la inicialización completa de `@mediapipe/tasks-vision`.
 
-2. **Opción B — API Legacy (`@mediapipe/hands` `@0.4.1675469240` / `@mediapipe/holistic` `@0.5.1675471629` por `<script>` en Main Thread):**
-   - **Versiones oficiales verificadas en npm/jsDelivr:**
-     - `@mediapipe/hands@0.4.1675469240`
-     - `@mediapipe/holistic@0.5.1675471629`
-     - `@mediapipe/camera_utils@0.3.1675466862`
-     - `@mediapipe/drawing_utils@0.3.1675466124`
-   - **Comportamiento en Main Thread:** Probado en el prototipo histórico (`frontend-legacy/`), carga desde jsDelivr con versiones fijadas, expone `window.Hands` / `window.Holistic`, y con `modelComplexity: 0` consume muy poca CPU en el Ryzen 3 7320U.
-
-### 4.2 Decisión Adoptada
-
-Para máxima resiliencia en tanto entornos online como pruebas automatizadas locales (Playwright con cámara sintética), `src/engine/signEngine.js` implementa un **adaptador unificado en el hilo principal** que soporta:
-1. **`tasks-vision` (`HandLandmarker`, por defecto cuando WASM y `.task` están disponibles)** con WASM servido desde `/wasm` (misma versión `1.0.1` que `package.json`) y `delegate: 'CPU'` por defecto en Linux/Firefox (evitando bloqueos de contexto WebGL en iGPU modesta) con fallback automático.
-2. **Fallback automático a API Legacy (`window.Hands` `@0.4.1675469240` / `window.Holistic` `@0.5.1675471629`)** si el archivo `.task` no está accesible, y un **modo detector de movimiento/piel en Canvas (`CanvasHandFallback`)** únicamente cuando el entorno de pruebas corre 100% aislado sin acceso a internet (como el sandbox de CI local sin `.task` descargado) o si se inyecta `window.__EXPRESAT_MOCK_LANDMARKS__` en pruebas E2E, garantizando que siempre se reporte con transparencia qué backend de visión está activo y si WASM cargó o falló.
-3. **Por defecto solo manos (`enablePose: false`)** para maximizar los FPS (15–30 FPS en Ryzen 3 7320U), con `enablePose: true` activable por configuración (`VITE_ENABLE_POSE=true` o toggle en UI).
+### 4.2 Decisiones de Ejecución
+1. **Hilo principal con respaldo escalonado:** Si `@mediapipe/tasks-vision` falla al cargar WASM o `.task`, `SignEngine` intenta `_initLegacyBackend()`; si ambos fallan, propaga el error tipado primario (`WASM_LOAD_FAILED` o `MODEL_LOAD_FAILED`) vía `onError` para que la UI informe con transparencia sin congelar la app.
+2. **Pruebas deterministas sin hardware:** Las pruebas unitarias y E2E (`recognition.test.js`, `e2e/translator.spec.js`) usan el generador geométrico puro `src/recognition/syntheticHand.js` (`buildSyntheticHand`, `SYNTHETIC_PRESETS`) en lugar de hardware físico.
+3. **Pose desactivada en producción por defecto:** `CONFIG.enablePose` es `false` para priorizar fluidez en hardware modesto (`10–30 FPS`); `Translator.jsx` activa `enablePose: Boolean(import.meta.env.DEV)` automáticamente en entorno de desarrollo para herramientas de inspección y captura `178D`.
 
 ---
 
@@ -112,17 +109,17 @@ flowchart LR
 ```
 
 ### 5.1 Capa 1: Configuración (`src/config.js`)
-- Lee todas las variables `import.meta.env.VITE_*` en un único lugar:
-  - `VITE_API_URL` (default local: `http://127.0.0.1:8000`, prod: `https://expresat.onrender.com`)
-  - `VITE_WS_URL_LOCAL` (default: `ws://127.0.0.1:8000/ws/translate`)
-  - `VITE_WS_URL_PROD` (default: `wss://expresat.onrender.com/ws/translate`)
+- Lee y normaliza todas las variables `import.meta.env.VITE_*` en un único módulo (`buildConfig` / `CONFIG`):
+  - `VITE_API_URL_LOCAL` (default: `http://127.0.0.1:8000`) y `VITE_API_URL` (default prod: `https://expresat.onrender.com`)
+  - `VITE_WS_URL_LOCAL` (default: `ws://127.0.0.1:8000/ws/translate`) y `VITE_WS_URL_PROD` (default: `wss://expresat.onrender.com/ws/translate`)
   - `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` (opcionales en modo demo)
   - `VITE_DEMO_MODE` (default: `true`)
-  - `VITE_TARGET_FPS` (default: `24`, rango 15–30)
-  - `VITE_MODEL_COMPLEXITY` (default: `0`)
-  - `VITE_ENABLE_POSE` (default: `false`)
+  - `VITE_TARGET_FPS` (default: `20`, rango validado `10–30`)
+  - `VITE_MODEL_COMPLEXITY` (default: `0`, rango `0–1`)
+  - `VITE_ENABLE_POSE` (default: `false`; `Translator.jsx` activa Pose en `import.meta.env.DEV`)
   - `VITE_MEDIAPIPE_BACKEND` (`tasks` | `legacy`, default: `tasks`)
-- Expone ` validateConfig()` que devuelve `{ valid, warnings, missingOptional, summary }` sin exponer secretos.
+  - `VITE_WASM_PATH` (default: `/wasm`) y `VITE_HAND_MODEL_PATH` (default: `/models/hand_landmarker.task`)
+- Expone `validateConfig()` que devuelve `{ valid, warnings, missingOptional, summary }` sin filtrar secretos, y `getActiveEndpoints(selectedEnv)`.
 
 ### 5.2 Capa 2: Reconocimiento Geométrico Puro (`src/recognition/`)
 - **Cero dependencias de navegador, cámara, DOM o React.**
@@ -130,96 +127,78 @@ flowchart LR
   - `src/recognition/geometry.js`:
     - `distance3D(p1, p2)`, `angleBetweenVectorsDeg(v1, v2)`, `jointAngleDeg(a, b, c)`
     - `palmScale(landmarks)`: distancia euclidiana 3D entre `WRIST (0)` y `MIDDLE_MCP (9)`. Rechaza manos degeneradas/ruido (`palmScale < 0.02` o coordenadas `NaN`/fuera de rango).
-    - `normalizeHand(landmarks)`: traslada al origen en `WRIST (0)`, escala por `1 / palmScale`, y rota en el plano XY para alinear el eje `WRIST (0) -> MIDDLE_MCP (9)` con el eje vertical `(0, -1)`, logrando **invariancia total a traslación, escala y rotación en el plano**.
-    - `fingerStates(landmarks)`: calcula el estado extendido/doblado y curvatura angular de los 5 dedos (`thumb`, `index`, `middle`, `ring`, `pinky`), más métricas de pinza (`thumbIndexTipDist` normalizada) y separación `indexMiddleSpread` e inclinación espacial.
+    - `normalizeHand(landmarks)`: traslada al origen en `WRIST (0)`, escala por `1 / palmScale`, y rota en el plano XY para alinear el eje `WRIST (0) -> MIDDLE_MCP (9)` con el eje vertical `(0, -1)`, logrando invariancia a traslación, escala y rotación en el plano.
+    - `fingerStates(landmarks)`: calcula el estado extendido/doblado y curvatura angular de los 5 dedos (`thumb`, `index`, `middle`, `ring`, `pinky`), más métricas de pinza (`thumbIndexTipDist` normalizada), `indexMiddleSpread` e inclinación espacial.
   - `src/recognition/classifier.js`:
     - Define el contrato base `Classifier { predict(frames) -> { label, confidence, details } }`.
     - Implementa `GeometricClassifier`:
-      - Gestos estáticos soportados (tanto sobre secuencia de frames como sobre un frame):
+      - Gestos estáticos soportados:
         - `MANO_ABIERTA` (5 dedos extendidos, estática)
-        - `PUNO` / `Si` (5 dedos cerrados en puño)
-        - `UNO` / `No` (solo índice extendido)
-        - `DOS` / `Amor y Paz` (índice y medio extendidos en V)
-        - `OK` / `Pinza` (punta de pulgar e índice unidas en círculo/pinza `< 0.35 * palmScale`, con medio/anular/meñique extendidos o en pinza limpia)
+        - `PUNO` (5 dedos cerrados en puño)
+        - `UNO` (solo índice extendido)
+        - `DOS` (índice y medio extendidos en V)
+        - `OK / Pinza` (`isPinching` con distancia normalizada `< 0.36 * palmScale` y `(!index || middle)`)
         - `BIEN` (pulgar extendido, otros 4 cerrados)
         - `TE_QUIERO` (pulgar, índice y meñique extendidos)
-        - `LUNES` (pulgar e índice en L ~90°)
-      - Gestos dinámicos soportados (usando ventana temporal de hasta 15 frames):
+        - `LUNES` (pulgar e índice en L)
+      - Gestos dinámicos soportados (ventana temporal de hasta 15 frames):
         - `HOLA` (mano abierta + oscilación lateral de muñeca con cambios de dirección $\ge 2$ y amplitud relativa a `palmScale`)
       - **Suavizado temporal por votación de $N$ frames (`SmoothingVoter`, default $N = 5$):** evita parpadeos exigiendo mayoría en la ventana reciente antes de cambiar la etiqueta emitida.
-      - Rechazo de ruido: si los landmarks son inválidos, incompletos (`< 21` puntos), con `NaN`, o varianza errática extrema, devuelve `{ label: null, confidence: 0, reason: 'INVALID_OR_NOISY_LANDMARKS' }`.
-    - Incluye esqueleto `ModelClassifier` listo para conectar el modelo neuronal en el futuro sin cambiar `useSignEngine`.
+      - Rechazo de ruido: si los landmarks son inválidos, incompletos (`< 21` puntos) o degenerados, devuelve `{ label: null, confidence: 0, reason }`.
+    - Incluye adaptador `ModelClassifier` para conectar el modelo neuronal en el futuro sin cambiar `useSignEngine`.
+  - `src/recognition/syntheticHand.js`:
+    - Generador determinista de manos sintéticas de 21 puntos (`buildSyntheticHand`, `SYNTHETIC_PRESETS`) usado por Vitest y Playwright.
 
-### 5.3 Capa 3: Motor de Captura y Visión (`src/engine/`)
+### 5.3 Capa 3: Motor de Captura, Extracción 178D y Telemetría (`src/engine/`)
 - Archivos:
   - `src/engine/signEngine.js`:
     - Clase `SignEngine` independiente de React.
-    - Métodos públicos:
-      - `start(videoElement)` (idempotente, protegido por `runId` contra doble montaje de StrictMode)
-      - `stop()` (idempotente, detiene rAF/rVFC, cierra tracks de `MediaStream`, libera instancia MediaPipe)
-      - `onFrame(callback)` -> emite `{ hands, handedness, leftHand, rightHand, pose, timestamp, latencyMs }`
-      - `onFps(callback)` -> emite `{ cameraFps, inferenceFps }` calculados sobre ventanas reales de 1000 ms
-      - `onError(callback)` -> emite errores tipados (`CAMERA_DENIED`, `CAMERA_NOT_FOUND`, `WASM_LOAD_FAILED`, `MODEL_LOAD_FAILED`, `ENGINE_RUNTIME_ERROR`) con mensaje legible para la UI.
+    - Métodos públicos principales:
+      - `start(videoElement)` (idempotente, protegido por `_runId` contra doble montaje de StrictMode)
+      - `stop()` (idempotente, detiene loop y observador pasivo `rVFC`, cierra tracks de `MediaStream`, libera detectores MediaPipe)
+      - `onFrame(callback)` -> emite `{ hands, handedness, leftHand, rightHand, pose, timestamp, latencyMs, raw }`
+      - `onFps(callback)` -> emite `{ cameraFps, inferenceFps }` en ventanas de 1000 ms
+      - `onError(callback)` -> emite códigos tipados en `ENGINE_ERROR_CODES` (`CAMERA_UNSUPPORTED`, `CAMERA_DENIED`, `CAMERA_NOT_FOUND`, `CAMERA_IN_USE`, `CAMERA_OVERCONSTRAINED`, `WASM_LOAD_FAILED`, `MODEL_LOAD_FAILED`, `ENGINE_RUNTIME_ERROR`).
+  - `src/engine/featureExtractor.js`:
+    - Implementación canónica en JS del contrato `FEATURE_SPEC v1.3.0` (`extractFrameFeatures`, `extractWindow`, `mirrorRawFrame`, `mirrorFeatures178`, `assignHandsToAnatomicalSlots`, paridad $L_\infty \le 10^{-6}$ frente a `expresat/models/feature_extractor.py`).
+  - `src/engine/devTelemetry.js`:
+    - Instrumentación exclusiva de desarrollo (`import.meta.env.DEV`) con marcas `performance.mark`/`measure` por etapa (`hand`, `pose`, `draw`, `ui`), observador de frames reales (`rVFC`) y reporte Markdown exportable sin alterar el flujo de producción.
 
 ### 5.4 Capa 4: Transporte WebSocket Opcional (`src/transport/`)
 - Archivos:
   - `src/transport/wsClient.js`:
-    - Estados explícitos: `'idle' | 'connecting' | 'open' | 'auth_error' | 'failed'`.
-    - Backoff exponencial con jitter (`1s, 2s, 4s, 8s...` hasta máx 5 intentos para errores de red transitorios).
+    - Estados explícitos (`WS_STATES`): `'idle' | 'connecting' | 'open' | 'auth_error' | 'failed'`.
+    - Backoff exponencial (`baseDelayMs = 1000`, `maxRetries = 4` por defecto) y ping periódico (`pingIntervalMs = 5000`) para medición de latencia.
     - **Prohibición estricta de reintento** cuando:
-      - El código de cierre WS es `1008` (Policy Violation) o `4401`/`4403`.
-      - El pre-chequeo HTTP `/health` o handshake indica `401` / `403`.
-      - El servidor reporta `demo_mode: false` y el cliente no posee token JWT válido (pasa directamente a `'auth_error'` con mensaje claro: *"Modo demo local activo (sin token para backend remoto)"*).
+      - El código de cierre WS es `1008`, `4001`, `4003`, `4401` o `4403`.
+      - El pre-chequeo HTTP `/health` responde `401` o `403`.
+      - El servidor reporta `demo_mode === false` y el cliente no posee token JWT (transiciona directo a `'auth_error'`).
 
-### 5.5 Capa 5: Interfaz de Usuario React (`src/ui/` y `src/pages/Translator.jsx`)
+### 5.5 Capa 5: Interfaz de Usuario React (`src/ui/`, `src/components/`, `src/pages/`)
 - Archivos:
-  - `src/ui/useSignEngine.js`:
-    - Hook personalizado que orquesta `SignEngine`, `GeometricClassifier` y `WSClient`.
-    - Cleanup 100% seguro bajo `<StrictMode>` de React 19.
-    - Escucha cambios de entorno (`environment-changed`) para reconectar limpiamente el transporte sin interrumpir la cámara ni el tracking local.
-  - `src/ui/CanvasOverlay.jsx` (o utilidades de dibujo en `src/ui/drawLandmarks.js`):
-    - Dibuja el frame de video y el esqueleto de las manos (y pose opcional) de forma ligera en un único pase de `canvas`.
-  - `src/pages/Translator.jsx`:
-    - Muestra claramente:
-      - Video/Canvas con espejo e indicadores de manos detectadas.
-      - Contadores separados: **FPS Cámara** y **FPS Inferencia**.
-      - Gesto detectado localmente (`GeometricClassifier`) + confianza + estado de dedos en vivo.
-      - Panel de estado del sistema: Cámara, Motor WASM, Modo Demo Local y Estado del Backend WebSocket (`idle | connecting | open | auth_error | failed`) con banners de error específicos si algo falla.
+  - `src/ui/useSignEngine.js`: Hook que orquesta `SignEngine`, `GeometricClassifier`, `LandmarkTracker` y `WSClient` con cleanup idempotente bajo `<StrictMode>` y escucha del evento `'environment-changed'`.
+  - `src/ui/drawLandmarks.js`: `renderCanvasFrame()` dibuja el video en espejo (`scale(-1, 1)`), esqueletos y badges diagnósticos legibles sin invertir texto.
+  - `src/pages/Translator.jsx`: Muestra video/canvas en espejo, contadores separados (**FPS Cámara** y **FPS Inferencia**), gesto detectado + estado de dedos, estado explícito de backend/errores y, solo en `DEV`, `DevRecorder` y `DevInstrumentationPanel`.
+  - `src/components/DevRecorder.jsx` y `devRecorderUtils.js` *(solo `DEV`)*: Captura tomas guiadas `.raw.json` `v1.3.1` (`18 s`, compuerta `>= 15.0 FPS` y brechas `interval_metrics`).
+  - `src/components/DevInstrumentationPanel.jsx` *(solo `DEV`)*: Visualiza percentiles por etapa (`p50/p95/p99/max`) en `reposo` vs. `grabando` y exportación de reporte.
 
 ---
 
-## 6. Lista de Archivos a Crear, Modificar y Eliminar
+## 6. Inventario de Implementación Vigente
 
-### Archivos a Crear
-1. `docs/ARQUITECTURA.md` (este documento)
-2. `docs/REPORTE.md` (bitácora de commits, revisiones, pruebas y pendientes)
-3. `expresat/frontend/src/config.js` (configuración centralizada y validador de entorno)
-4. `expresat/frontend/.env.example` (plantilla de variables Vite documentada)
-5. `expresat/frontend/vitest.config.js` (configuración de pruebas unitarias con Vitest)
-6. `expresat/frontend/playwright.config.js` (configuración E2E con cámara falsa)
-7. `expresat/frontend/src/recognition/geometry.js` (funciones geométricas puras, normalización, `fingerStates`)
-8. `expresat/frontend/src/recognition/classifier.js` (`Classifier`, `GeometricClassifier`, `ModelClassifier`, `SmoothingVoter`)
-9. `expresat/frontend/src/recognition/index.js` (re-export limpio de la capa `recognition/`)
-10. `expresat/frontend/src/recognition/__tests__/recognition.test.js` (suite unitaria exhaustiva con landmarks sintéticos)
-11. `expresat/frontend/src/engine/signEngine.js` (motor MediaPipe en hilo principal + cámara + FPS reales)
-12. `expresat/frontend/src/engine/index.js`
-13. `expresat/frontend/src/transport/wsClient.js` (cliente WebSocket opcional con estados explícitos y backoff)
-14. `expresat/frontend/src/transport/__tests__/wsClient.test.js` (pruebas unitarias de máquina de estados WS y no-reintento en 1008/403)
-15. `expresat/frontend/src/ui/useSignEngine.js` (hook React con cleanup idempotente para StrictMode)
-16. `expresat/frontend/src/ui/drawLandmarks.js` (renderizado rápido de conectores y puntos en Canvas 2D)
-17. `expresat/frontend/e2e/translator.spec.js` (prueba automatizada Playwright en navegador con cámara falsa)
+### 6.1 Módulos Activos en el Repositorio
+- **Configuración y entorno:** [`expresat/frontend/src/config.js`](../expresat/frontend/src/config.js), [`expresat/frontend/.env.example`](../expresat/frontend/.env.example), [`expresat/.env.example`](../expresat/.env.example), [`expresat/frontend/eslint.config.js`](../expresat/frontend/eslint.config.js), [`expresat/frontend/vite.config.js`](../expresat/frontend/vite.config.js).
+- **Motor, reconocimiento, transporte y UI:**
+  - `expresat/frontend/src/engine/`: [`signEngine.js`](../expresat/frontend/src/engine/signEngine.js), [`featureExtractor.js`](../expresat/frontend/src/engine/featureExtractor.js), [`devTelemetry.js`](../expresat/frontend/src/engine/devTelemetry.js), [`index.js`](../expresat/frontend/src/engine/index.js).
+  - `expresat/frontend/src/recognition/`: [`geometry.js`](../expresat/frontend/src/recognition/geometry.js), [`classifier.js`](../expresat/frontend/src/recognition/classifier.js), [`syntheticHand.js`](../expresat/frontend/src/recognition/syntheticHand.js), [`index.js`](../expresat/frontend/src/recognition/index.js).
+  - `expresat/frontend/src/transport/`: [`wsClient.js`](../expresat/frontend/src/transport/wsClient.js), [`index.js`](../expresat/frontend/src/transport/index.js).
+  - `expresat/frontend/src/ui/` y componentes dev: [`useSignEngine.js`](../expresat/frontend/src/ui/useSignEngine.js), [`drawLandmarks.js`](../expresat/frontend/src/ui/drawLandmarks.js), [`Translator.jsx`](../expresat/frontend/src/pages/Translator.jsx), [`DevRecorder.jsx`](../expresat/frontend/src/components/DevRecorder.jsx), [`DevInstrumentationPanel.jsx`](../expresat/frontend/src/components/DevInstrumentationPanel.jsx).
+- **Pruebas y benchmarks:**
+  - Vitest (`expresat/frontend/vitest.config.js`): `config.test.js`, `recognition.test.js`, `signEngine.test.js`, `wsClient.test.js`, `featureExtractor.test.js`, `devTelemetry.test.js`, `devRecorder.test.js`.
+  - Playwright E2E y Benchmarks aislados: `expresat/frontend/playwright.config.js` (`e2e/translator.spec.js`, `e2e/dev_instrumentation.spec.js`) y `playwright.benchmark.config.js` (`benchmarks/determinism.spec.js`, `benchmarks/performance_benchmark.spec.js`).
+- **Backend FastAPI:** [`expresat/backend/config.py`](../expresat/backend/config.py), [`expresat/backend/main.py`](../expresat/backend/main.py), [`expresat/backend/test_api_integration.py`](../expresat/backend/test_api_integration.py).
 
-### Archivos a Modificar
-1. `expresat/frontend/package.json` (añadir scripts `test`, `test:e2e`, `lint` con ESLint + Vitest)
-2. `expresat/frontend/eslint.config.js` (asegurar `no-undef: error`, `react-hooks/rules-of-hooks: error`, `react-hooks/exhaustive-deps: warn`)
-3. `expresat/frontend/src/pages/Translator.jsx` (conectar a `useSignEngine`, mostrar FPS de cámara e inferencia, estado de dedos, gesto geométrico y estado explícito de backend/errores)
-4. `expresat/frontend/src/components/EnvironmentSelector.jsx` (usar `src/config.js`)
-5. `expresat/frontend/src/services/authService.js` (consumir `CONFIG` desde `src/config.js` sin lanzar excepción fatal cuando Supabase no está configurado en modo demo)
-6. `expresat/backend/config.py` y `expresat/backend/main.py` (documentar `EXPRESAT_DEMO_MODE`, validación configurable de `Origin` y token, logs claros de rechazo)
-7. `expresat/backend/test_api_integration.py` (tests de handshake 101 en modo demo y rechazo 1008 sin token cuando demo está desactivado)
-8. `expresat/.env.example` y `README.md` (documentación completa para fish shell y despliegue)
-
-### Archivos a Eliminar
-1. `expresat/frontend/src/workers/mediapipe-worker.js` (se elimina el uso de Worker ESM para MediaPipe)
-2. `expresat/frontend/src/hooks/useMediaPipe.js` (reemplazado por `src/engine/signEngine.js` + `src/ui/useSignEngine.js`)
-3. `expresat/frontend/src/services/mediapipeEngine.js` (código muerto reemplazado por `src/engine/signEngine.js`)
+### 6.2 Archivos Eliminados Históricamente (Referencia)
+- `expresat/frontend/src/workers/mediapipe-worker.js` *(eliminado; superado por ejecución en hilo principal)*.
+- `expresat/frontend/src/hooks/useMediaPipe.js` *(eliminado; reemplazado por `SignEngine` + `useSignEngine`)*.
+- `expresat/frontend/src/services/mediapipeEngine.js` *(eliminado; reemplazado por `SignEngine`)*.

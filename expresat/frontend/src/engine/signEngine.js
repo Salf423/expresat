@@ -1,13 +1,23 @@
 /**
- * src/engine/signEngine.js — Motor de Captura de Cámara + MediaPipe en el Hilo Principal
+ * Main-thread camera capture and MediaPipe vision engine (no Workers — FEATURE_SPEC v1.4.0).
  *
- * Responsabilidades:
- * - Captura de cámara (`getUserMedia`) e inicialización de MediaPipe en el Hilo Principal (sin Workers).
- * - Expone `start(videoElement)`, `stop()`, `onFrame(cb)`, `onFps(cb)`, `onError(cb)`.
- * - Sin depender de React ni consultar el DOM mediante `getElementById`.
- * - Cleanup 100% idempotente ante el doble montaje de React 19 StrictMode (`runId` incremental y captura de `AbortError` en `video.play()`).
- * - Contadores separados de FPS reales: `cameraFps` (frames leídos de la cámara) e `inferenceFps` (detecciones reales completadas por MediaPipe).
- * - Por defecto ejecuta solo `HandLandmarker` (`@mediapipe/tasks-vision`, WASM en `/wasm`, `delegate: 'CPU'` con fallback a `'GPU'`), y opcionalmente `PoseLandmarker` o la API Legacy (`window.Hands` / `window.Holistic` con versiones fijadas).
+ * Documentation & Vault References:
+ *   - Frontend Architecture: `docs/ARQUITECTURA.md`
+ *   - Obsidian Code Guide:   `Obsidian_exp/Explicacion del codigo/Frontend/Vite_React.md`
+ *   - Agent Playbook #5:     `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
+ *
+ * Key v1.4.0 Invariants:
+ *   - Deduplicates video frames via `video.currentTime` (`_lastProcessedVideoTime`) so 60 Hz rAF
+ *     never re-runs WASM inference on duplicate camera frames (`poseCadence = 1`).
+ *   - Passes valid `ImageProcessingOptions` `{ rotationDegrees: 0 }` as 3rd argument to
+ *     `detectForVideo(video, ts, { rotationDegrees: 0 })` with unified `0.50` confidence thresholds.
+ *   - Validates 4:3 (±0.05) camera aspect ratio (`ERR_INVALID_ASPECT_RATIO`).
+ *   - Exposes `frameData.raw` lazily (`buildRawSlotsLazy`) so WebSocket inference and DevRecorder
+ *     consume unsmoothed landmarks while UI canvas renders single-pass anatomical-slot EMA.
+ *
+ * Exposes `start(videoElement)`, `stop()`, `onFrame(cb)`, `onFps(cb)`, and `onError(cb)`
+ * with idempotent cleanup across React 19 StrictMode double-mounts (`runId` cancellation
+ * and `video.play()` AbortError handling).
  */
 
 import {
@@ -35,10 +45,32 @@ export const ENGINE_ERROR_CODES = Object.freeze({
   CAMERA_NOT_FOUND: 'CAMERA_NOT_FOUND',
   CAMERA_IN_USE: 'CAMERA_IN_USE',
   CAMERA_OVERCONSTRAINED: 'CAMERA_OVERCONSTRAINED',
+  INVALID_ASPECT_RATIO: 'ERR_INVALID_ASPECT_RATIO',
   WASM_LOAD_FAILED: 'WASM_LOAD_FAILED',
   MODEL_LOAD_FAILED: 'MODEL_LOAD_FAILED',
   ENGINE_RUNTIME_ERROR: 'ENGINE_RUNTIME_ERROR',
 });
+
+export const EXPECTED_ASPECT_RATIO = 4 / 3;
+export const ASPECT_RATIO_TOLERANCE = 0.05;
+
+/**
+ * Validate camera video dimensions against the canonical 4:3 (±0.05) FEATURE_SPEC v1.4.0 ratio.
+ * Returns `{ valid: true, ratio: null }` if metadata dimensions are not yet available.
+ */
+export function validateVideoAspectRatio(
+  videoWidth,
+  videoHeight,
+  expectedRatio = EXPECTED_ASPECT_RATIO,
+  tolerance = ASPECT_RATIO_TOLERANCE
+) {
+  if (!videoWidth || !videoHeight || videoWidth <= 0 || videoHeight <= 0) {
+    return { valid: true, ratio: null };
+  }
+  const ratio = videoWidth / videoHeight;
+  const valid = Math.abs(ratio - expectedRatio) <= tolerance;
+  return { valid, ratio };
+}
 
 const LEGACY_HANDS_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240';
 const LEGACY_HOLISTIC_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629';
@@ -47,7 +79,7 @@ const POSE_MODEL_FALLBACK_URL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 
 /**
- * Carga un script clásico en `document.head` de forma idempotente (usado solo si se selecciona el backend legacy).
+ * Load a classic script tag into `document.head` once (used only by the legacy backend).
  */
 function loadScriptOnce(src) {
   return new Promise((resolve, reject) => {
@@ -86,8 +118,8 @@ function loadScriptOnce(src) {
 }
 
 /**
- * Protege `window.ModuleFactory` en el hilo principal para que `@mediapipe/tasks-vision`
- * no lo borre (`self.ModuleFactory = void 0`) al instanciar más de un detector o reintentar delegate.
+ * Guard `window.ModuleFactory` on the main thread so `@mediapipe/tasks-vision`
+ * cannot clear it (`self.ModuleFactory = void 0`) when instantiating multiple tasks.
  */
 function protectMainThreadModuleFactory() {
   if (typeof window === 'undefined') return;
@@ -114,8 +146,8 @@ function protectMainThreadModuleFactory() {
 }
 
 /**
- * Desactiva el logger interno ODML de @mediapipe/tasks-vision (POST odml.pa.googleapis.com/v1/log)
- * para evitar salidas a red y errores net::ERR_INTERNET_DISCONNECTED en entorno offline.
+ * Disable @mediapipe/tasks-vision's internal ODML logger (POST odml.pa.googleapis.com/v1/log)
+ * to prevent outbound network calls and errors when running offline.
  */
 function disableMediaPipeOdmlTelemetry(instance) {
   try {
@@ -139,13 +171,14 @@ function disableMediaPipeOdmlTelemetry(instance) {
       }
     };
   } catch {
-    // No crítico si una versión futura cambia estructura interna
+    // Non-critical if future versions alter internal fields
   }
 }
 
 /**
- * Instancia una tarea de MediaPipe probando primero `delegate: 'CPU'` (óptimo y libre de bloqueos WebGL
- * en Linux/Firefox con iGPU Ryzen 3 7320U) y haciendo fallback a `'GPU'`, y probando ruta local antes de URL remota.
+ * Instantiate a MediaPipe task trying the preferred delegate first (defaults to 'CPU'
+ * to avoid WebGL driver stalls on Linux/Firefox iGPUs) before falling back, and local
+ * model paths before remote URLs.
  */
 async function createTaskWithFallback(TaskClass, vision, modelPaths, taskOptions, preferredDelegate = 'CPU') {
   const delegates = preferredDelegate === 'GPU' ? ['GPU', 'CPU'] : ['CPU', 'GPU'];
@@ -179,14 +212,14 @@ async function createTaskWithFallback(TaskClass, vision, modelPaths, taskOptions
 export class SignEngine {
   /**
    * @param {Object} [options]
-   * @param {number} [options.targetFps] FPS objetivo de inferencia (default: CONFIG.targetFps, 15-30)
-   * @param {number} [options.width] Ancho de captura de cámara (default: 640)
-   * @param {number} [options.height] Alto de captura de cámara (default: 480)
-   * @param {boolean} [options.enablePose] Activar detección de pose (default: CONFIG.enablePose = false)
-   * @param {number} [options.modelComplexity] Complejidad 0 o 1 (default: CONFIG.modelComplexity = 0)
-   * @param {'tasks'|'legacy'} [options.backend] Backend MediaPipe (default: CONFIG.mediapipeBackend = 'tasks')
-   * @param {'CPU'|'GPU'} [options.delegate] Delegate preferido (default: 'CPU')
-   * @param {boolean} [options.smoothLandmarks] Suavizado EMA (default: true)
+   * @param {number} [options.targetFps] Target inference FPS (default: CONFIG.targetFps, 15-30)
+   * @param {number} [options.width] Camera capture width (default: 640)
+   * @param {number} [options.height] Camera capture height (default: 480)
+   * @param {boolean} [options.enablePose] Enable PoseLandmarker (default: CONFIG.enablePose)
+   * @param {number} [options.modelComplexity] Model complexity 0 or 1 (default: CONFIG.modelComplexity)
+   * @param {'tasks'|'legacy'} [options.backend] MediaPipe backend (default: CONFIG.mediapipeBackend)
+   * @param {'CPU'|'GPU'} [options.delegate] Preferred delegate (default: 'GPU')
+   * @param {boolean} [options.smoothLandmarks] Enable EMA smoothing (default: true)
    */
   constructor(options = {}) {
     this.targetFps = options.targetFps ?? CONFIG.targetFps ?? 20;
@@ -204,30 +237,26 @@ export class SignEngine {
           queryDelegate = q.toUpperCase();
         }
       } catch {
-        // Ignorar errores de URL en entornos no-browser
+        // Ignore URL parsing errors in non-browser contexts
       }
     }
     this.preferredDelegate = options.delegate ?? queryDelegate ?? 'GPU';
-    // Cadencia 1:2 para PoseLandmarker por defecto (+35% FPS manteniendo manos 1:1 y hombros frescos)
-    this.poseCadence = Math.max(1, Math.min(5, options.poseCadence ?? 2));
+    this.poseCadence = Math.max(1, Math.min(5, options.poseCadence ?? 1));
     this.smoothLandmarks = options.smoothLandmarks ?? true;
-    this.enableDevTelemetry = Boolean(
-      options.enableDevTelemetry ?? (Boolean(import.meta.env?.DEV) || Boolean(options.devTelemetry))
-    );
 
     let queryCamExp = null;
-    if (this.enableDevTelemetry && typeof window !== 'undefined' && window.location?.search) {
+    if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.search) {
       try {
         const exp = new URLSearchParams(window.location.search).get('camExp');
         if (exp === 'exact15' || exp === 'default') {
           queryCamExp = exp;
         }
       } catch {
-        // Ignorar errores de URL en entornos no-browser
+        // Ignore URL parsing errors in non-browser contexts
       }
     }
     this.cameraExperiment =
-      (this.enableDevTelemetry ? (options.cameraExperiment ?? queryCamExp) : null) || 'default';
+      (import.meta.env.DEV ? (options.cameraExperiment ?? queryCamExp) : null) || 'default';
 
     this._frameStepIndex = 0;
     this._lastDetectedPose = null;
@@ -245,8 +274,10 @@ export class SignEngine {
 
     this._videoElement = null;
     this._mediaStream = null;
+    this._vision = null;
     this._handLandmarker = null;
     this._poseLandmarker = null;
+    this._poseEnablePromise = null;
     this._legacyDetector = null;
 
     this._rafId = null;
@@ -258,6 +289,8 @@ export class SignEngine {
     this._lastVideoTime = -1;
     this._lastInferredVideoTime = -1;
     this._lastMonotonicTimestampMs = 0;
+    this._aspectRatioErrorEmitted = false;
+    this._lastAspectRatioValid = true;
 
     this._cameraFrameCount = 0;
     this._inferenceFrameCount = 0;
@@ -265,7 +298,7 @@ export class SignEngine {
 
     this._emaFilter = new LandmarkEMAFilter(0.5);
 
-    if (this.enableDevTelemetry) {
+    if (import.meta.env.DEV) {
       this._devTelemetry = options.devTelemetry ?? new DevTelemetryCollector({ enabled: true });
       this._devTelemetry.setRuntimeConfig({
         targetFps: this.targetFps,
@@ -289,9 +322,9 @@ export class SignEngine {
   }
 
   /**
-   * Suscribe un listener para cada detección procesada (`onFrame(frameData)`).
+   * Subscribe to processed frame detections (`onFrame(frameData)`).
    * @param {Function} callback
-   * @returns {Function} Función para desuscribir
+   * @returns {Function} Unsubscribe function
    */
   onFrame(callback) {
     if (typeof callback === 'function') {
@@ -301,9 +334,9 @@ export class SignEngine {
   }
 
   /**
-   * Suscribe un listener para las métricas reales de FPS (`onFps({ cameraFps, inferenceFps })`).
+   * Subscribe to real FPS metrics (`onFps({ cameraFps, inferenceFps })`).
    * @param {Function} callback
-   * @returns {Function} Función para desuscribir
+   * @returns {Function} Unsubscribe function
    */
   onFps(callback) {
     if (typeof callback === 'function') {
@@ -313,9 +346,9 @@ export class SignEngine {
   }
 
   /**
-   * Suscribe un listener para errores visibles de cámara o WASM (`onError({ code, message, cause })`).
+   * Subscribe to camera or WASM errors (`onError({ code, message, cause })`).
    * @param {Function} callback
-   * @returns {Function} Función para desuscribir
+   * @returns {Function} Unsubscribe function
    */
   onError(callback) {
     if (typeof callback === 'function') {
@@ -325,9 +358,9 @@ export class SignEngine {
   }
 
   /**
-   * Suscribe un listener para cambios de estado del motor (`onStatus(statusObj)`).
+   * Subscribe to engine lifecycle status changes (`onStatus(statusObj)`).
    * @param {Function} callback
-   * @returns {Function} Función para desuscribir
+   * @returns {Function} Unsubscribe function
    */
   onStatus(callback) {
     if (typeof callback === 'function') {
@@ -337,7 +370,7 @@ export class SignEngine {
   }
 
   onDevSnapshot(callback) {
-    if (!this.enableDevTelemetry) return () => {};
+    if (!import.meta.env.DEV) return () => {};
     if (typeof callback === 'function') {
       this._devSnapshotListeners.add(callback);
     }
@@ -345,20 +378,20 @@ export class SignEngine {
   }
 
   getDevSnapshot() {
-    if (!this.enableDevTelemetry) return null;
+    if (!import.meta.env.DEV) return null;
     return this._devTelemetry ? this._devTelemetry.getSnapshot() : null;
   }
 
   getDevReport() {
-    if (!this.enableDevTelemetry) return null;
+    if (!import.meta.env.DEV) return null;
     return this._devTelemetry ? this._devTelemetry.buildComparisonReport() : null;
   }
 
   setDevPhase(phase) {
-    if (!this.enableDevTelemetry || !this._devTelemetry) return;
+    if (!import.meta.env.DEV || !this._devTelemetry) return;
     const prevPhase = this._devTelemetry.phase;
     this._devTelemetry.setPhase(phase);
-    // Refrescar UI del panel dev automáticamente al terminar una grabación ('grabando' -> 'reposo')
+    // Refresh dev panel automatically once recording stops ('grabando' -> 'reposo')
     if (prevPhase === 'grabando' && this._devTelemetry.phase === 'reposo') {
       const snap = this._devTelemetry.getSnapshot();
       for (const listener of this._devSnapshotListeners) {
@@ -372,7 +405,7 @@ export class SignEngine {
   }
 
   resetDevTelemetry() {
-    if (!this.enableDevTelemetry) return;
+    if (!import.meta.env.DEV) return;
     this._devTelemetry?.reset();
     if (this._devTelemetry) {
       const snap = this._devTelemetry.getSnapshot();
@@ -387,13 +420,12 @@ export class SignEngine {
   }
 
   /**
-   * Inicia la cámara y el motor MediaPipe en el hilo principal.
-   * Es idempotente y resistente al doble montaje de React StrictMode.
-   *
+   * Start camera capture and MediaPipe inference on the main thread.
+   * Idempotent across React StrictMode double-mounts.
    * @param {HTMLVideoElement} videoElement
    */
   async start(videoElement) {
-    // Incrementar runId invalida cualquier start() anterior en vuelo
+    // Incrementing runId invalidates any older in-flight start()
     const currentRunId = ++this._runId;
     this._cleanupResourcesOnly();
 
@@ -409,7 +441,7 @@ export class SignEngine {
     this._running = true;
     this._emitStatus({ state: 'starting', wasmReady: false, cameraReady: false });
 
-    if (this.enableDevTelemetry && this._devTelemetry) {
+    if (import.meta.env.DEV && this._devTelemetry) {
       setActiveDevCollector(this._devTelemetry);
       if (typeof window !== 'undefined') {
         window.__EXPRESAT_DEV_TELEMETRY__ = {
@@ -422,7 +454,6 @@ export class SignEngine {
       }
     }
 
-    // 1. Iniciar cámara y cargar WASM/MediaPipe
     let stream = null;
     try {
       stream = await this._acquireCameraStream();
@@ -433,7 +464,7 @@ export class SignEngine {
       return false;
     }
 
-    // Si stop() o un nuevo start() ocurrió mientras getUserMedia esperaba permiso:
+    // Abort if stop() or a newer start() ran while awaiting getUserMedia
     if (currentRunId !== this._runId || !this._running) {
       stream.getTracks().forEach((t) => t.stop());
       return false;
@@ -447,7 +478,7 @@ export class SignEngine {
     try {
       await videoElement.play();
     } catch (playErr) {
-      // En React 19 StrictMode, play() puede lanzar AbortError si el componente se desmonta rápido
+      // React 19 StrictMode unmount interrupts play() with AbortError
       if (currentRunId !== this._runId || !this._running || playErr?.name === 'AbortError') {
         if (currentRunId === this._runId) {
           this._cleanupResourcesOnly();
@@ -470,24 +501,28 @@ export class SignEngine {
       return false;
     }
 
-    if (this.enableDevTelemetry && this._devTelemetry) {
-      const syncVideoDims = () => {
-        if (!this._devTelemetry || this._videoElement !== videoElement) return;
-        this._devTelemetry.setCameraNegotiation({
-          videoWidth: videoElement.videoWidth || 0,
-          videoHeight: videoElement.videoHeight || 0,
-        });
-      };
-      syncVideoDims();
-      if (!videoElement.videoWidth && typeof videoElement.addEventListener === 'function') {
-        this._loadedMetadataHandler = syncVideoDims;
-        videoElement.addEventListener('loadedmetadata', syncVideoDims, { once: true });
+    const syncVideoDims = () => {
+      if (this._videoElement !== videoElement) return;
+      const vw = videoElement.videoWidth || 0;
+      const vh = videoElement.videoHeight || 0;
+      if (vw > 0 && vh > 0) {
+        this._checkVideoAspectRatio(vw, vh);
       }
+      if (import.meta.env.DEV && this._devTelemetry) {
+        this._devTelemetry.setCameraNegotiation({
+          videoWidth: vw,
+          videoHeight: vh,
+        });
+      }
+    };
+    syncVideoDims();
+    if (!videoElement.videoWidth && typeof videoElement.addEventListener === 'function') {
+      this._loadedMetadataHandler = syncVideoDims;
+      videoElement.addEventListener('loadedmetadata', syncVideoDims, { once: true });
     }
 
     this._emitStatus({ state: 'loading_wasm', wasmReady: false, cameraReady: true });
 
-    // 2. Inicializar MediaPipe en el hilo principal
     try {
       await this._initializeMediaPipe(currentRunId);
     } catch (mpErr) {
@@ -507,7 +542,7 @@ export class SignEngine {
     }
 
     this._wasmReady = true;
-    if (this.enableDevTelemetry && this._devTelemetry) {
+    if (import.meta.env.DEV && this._devTelemetry) {
       this._devTelemetry.setRuntimeConfig({
         targetFps: this.targetFps,
         frameIntervalMs: Number(this.frameIntervalMs.toFixed(2)),
@@ -535,21 +570,18 @@ export class SignEngine {
       backendInfo: this._activeBackendInfo,
     });
 
-    // Notificar a partículas de fondo para ahorrar CPU
+    // Pause decorative background particles while camera is active
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('camera-active', { detail: true }));
     }
 
-    // 3. Arrancar observador pasivo de cámara (solo dev), ticker FPS (1000 ms) y bucle de captura
     this._startPassiveCameraObserver(currentRunId);
     this._startFpsTicker();
     this._scheduleNextTick(currentRunId);
     return true;
   }
 
-  /**
-   * Detiene de forma idempotente la cámara, el bucle de inferencia y libera MediaPipe.
-   */
+  /** Idempotently stop camera capture, inference loop, and MediaPipe instances. */
   stop() {
     this._runId++;
     this._cleanupResourcesOnly();
@@ -574,7 +606,7 @@ export class SignEngine {
       try {
         this._videoElement.cancelVideoFrameCallback(this._rvfcId);
       } catch {
-        // Ignorar errores de cancelVideoFrameCallback en teardown
+        // Ignore teardown cancelVideoFrameCallback errors
       }
     }
     this._rvfcId = null;
@@ -629,6 +661,8 @@ export class SignEngine {
       }
       this._poseLandmarker = null;
     }
+    this._poseEnablePromise = null;
+    this._vision = null;
 
     if (this._legacyDetector) {
       try {
@@ -648,13 +682,12 @@ export class SignEngine {
     this._inferenceFrameCount = 0;
     this._lastVideoTime = -1;
     this._lastInferredVideoTime = -1;
+    this._aspectRatioErrorEmitted = false;
+    this._lastAspectRatioValid = true;
     this._currentFps = { cameraFps: 0, inferenceFps: 0 };
 
-    if (this.enableDevTelemetry && this._devTelemetry && getActiveDevCollector() === this._devTelemetry) {
+    if (import.meta.env.DEV && this._devTelemetry && getActiveDevCollector() === this._devTelemetry) {
       setActiveDevCollector(null);
-      if (typeof window !== 'undefined' && window.__EXPRESAT_DEV_TELEMETRY__) {
-        delete window.__EXPRESAT_DEV_TELEMETRY__;
-      }
     }
 
     if (typeof window !== 'undefined') {
@@ -663,7 +696,7 @@ export class SignEngine {
   }
 
   _recordTrackNegotiation(stream) {
-    if (!this.enableDevTelemetry || !this._devTelemetry || !stream) return;
+    if (!import.meta.env.DEV || !this._devTelemetry || !stream) return;
     const track = stream.getVideoTracks?.()?.[0] || stream.getTracks?.()?.[0] || null;
     let settings = null;
     let capabilities = null;
@@ -707,7 +740,7 @@ export class SignEngine {
       throw err;
     }
 
-    if (this.enableDevTelemetry && this.cameraExperiment === 'exact15') {
+    if (import.meta.env.DEV && this.cameraExperiment === 'exact15') {
       const exactConstraints = {
         video: {
           width: { exact: this.width },
@@ -752,7 +785,7 @@ export class SignEngine {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
-      if (this.enableDevTelemetry) {
+      if (import.meta.env.DEV) {
         this._devTelemetry?.setCameraNegotiation({
           experimentMode: 'default',
           requestedConstraints: primaryConstraints,
@@ -764,8 +797,7 @@ export class SignEngine {
       }
       return stream;
     } catch (primaryErr) {
-      // Si las restricciones ideales fallan en cámaras virtuales (ej. Playwright fake device),
-      // reintentar con `{ video: true, audio: false }` salvo que haya sido permiso denegado.
+      // Retry without ideal constraints on virtual cameras unless permission was denied
       if (
         primaryErr?.name === 'NotAllowedError' ||
         primaryErr?.name === 'PermissionDeniedError'
@@ -774,7 +806,7 @@ export class SignEngine {
       }
       const fallbackConstraints = { video: true, audio: false };
       const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
-      if (this.enableDevTelemetry) {
+      if (import.meta.env.DEV) {
         this._devTelemetry?.setCameraNegotiation({
           experimentMode: 'default',
           requestedConstraints: primaryConstraints,
@@ -838,6 +870,19 @@ export class SignEngine {
     );
   }
 
+  _checkVideoAspectRatio(videoWidth, videoHeight) {
+    const { valid, ratio } = validateVideoAspectRatio(videoWidth, videoHeight);
+    this._lastAspectRatioValid = valid;
+    if (!valid && !this._aspectRatioErrorEmitted) {
+      this._aspectRatioErrorEmitted = true;
+      this._emitError(
+        ENGINE_ERROR_CODES.INVALID_ASPECT_RATIO,
+        `Resolución de cámara ${videoWidth}x${videoHeight} (ratio ${ratio.toFixed(2)}) fuera de contrato 4:3 (±${ASPECT_RATIO_TOLERANCE}). Usa una resolución 4:3 (p.ej. 640x480).`
+      );
+    }
+    return valid;
+  }
+
   async _initializeMediaPipe(currentRunId) {
     protectMainThreadModuleFactory();
 
@@ -856,7 +901,7 @@ export class SignEngine {
       try {
         await this._initLegacyBackend(currentRunId);
       } catch {
-        // Reportar el error original de WASM/Modelo con mensaje específico
+        // Surface the primary WASM/model error rather than the fallback error
         throw tasksErr;
       }
     }
@@ -874,6 +919,7 @@ export class SignEngine {
     }
 
     if (currentRunId !== this._runId) return;
+    this._vision = vision;
     protectMainThreadModuleFactory();
 
     const handModelCandidates = [CONFIG.handModelPath, CONFIG.handModelFallbackUrl].filter(Boolean);
@@ -886,9 +932,9 @@ export class SignEngine {
         {
           runningMode: 'VIDEO',
           numHands: 2,
-          minHandDetectionConfidence: 0.45,
-          minHandPresenceConfidence: 0.45,
-          minTrackingConfidence: 0.45,
+          minHandDetectionConfidence: 0.5,
+          minHandPresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
         },
         this.preferredDelegate
       );
@@ -928,6 +974,60 @@ export class SignEngine {
       modelPath: handSetup.modelPath,
       poseEnabled: Boolean(this._poseLandmarker),
     };
+  }
+
+  /**
+   * Lazily enables PoseLandmarker on demand (e.g. when DevRecorder starts a v1.4.0 dataset take)
+   * without restarting the active camera stream.
+   */
+  async ensurePoseEnabled() {
+    this.enablePose = true;
+    if (this._poseLandmarker) return true;
+    if (!this._running || !this._vision) return false;
+    if (this._poseEnablePromise) return this._poseEnablePromise;
+
+    const capturedRunId = this._runId;
+    this._poseEnablePromise = (async () => {
+      try {
+        protectMainThreadModuleFactory();
+        const poseSetup = await createTaskWithFallback(
+          PoseLandmarker,
+          this._vision,
+          [POSE_MODEL_LOCAL, POSE_MODEL_FALLBACK_URL],
+          {
+            runningMode: 'VIDEO',
+            numPoses: 1,
+            minPoseDetectionConfidence: 0.5,
+            minPosePresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+          },
+          this._activeBackendInfo?.delegate || this.preferredDelegate
+        );
+        if (capturedRunId !== this._runId || !this._running) {
+          try {
+            poseSetup.instance.close();
+          } catch {
+            // ignore teardown error
+          }
+          return false;
+        }
+        this._poseLandmarker = poseSetup.instance;
+        if (this._activeBackendInfo) {
+          this._activeBackendInfo = {
+            ...this._activeBackendInfo,
+            poseEnabled: true,
+          };
+        }
+        return true;
+      } catch (poseErr) {
+        console.warn('[SignEngine] No se pudo activar PoseLandmarker bajo demanda:', poseErr);
+        return false;
+      } finally {
+        this._poseEnablePromise = null;
+      }
+    })();
+
+    return this._poseEnablePromise;
   }
 
   async _initLegacyBackend(currentRunId) {
@@ -981,7 +1081,7 @@ export class SignEngine {
   }
 
   _startPassiveCameraObserver(currentRunId) {
-    if (!this.enableDevTelemetry || !this._devTelemetry || !this._videoElement) return;
+    if (!import.meta.env.DEV || !this._devTelemetry || !this._videoElement) return;
     const video = this._videoElement;
     if (typeof video.requestVideoFrameCallback !== 'function') {
       this._devTelemetry.setRvfcSupported(false);
@@ -1032,7 +1132,7 @@ export class SignEngine {
         }
       }
 
-      if (this.enableDevTelemetry && this._devTelemetry) {
+      if (import.meta.env.DEV && this._devTelemetry) {
         let playbackQuality = null;
         try {
           playbackQuality =
@@ -1043,7 +1143,7 @@ export class SignEngine {
           playbackQuality = null;
         }
         const devSnap = this._devTelemetry.flushSecondMetrics(playbackQuality);
-        // No notificar re-renders 1 Hz a React mientras está grabando
+        // Skip 1 Hz React UI notifications while actively recording
         if (devSnap && this._devTelemetry.phase !== 'grabando') {
           for (const listener of this._devSnapshotListeners) {
             try {
@@ -1075,28 +1175,35 @@ export class SignEngine {
       video.videoHeight > 0 &&
       (typeof document === 'undefined' || !document.hidden)
     ) {
-      // Contar frame nuevo entregado por la cámara cuando avanza currentTime
-      const videoTimeAdvanced = video.currentTime !== this._lastVideoTime;
+      // Validate 4:3 aspect ratio once real dimensions are available
+      if (this._lastAspectRatioValid && !this._aspectRatioErrorEmitted) {
+        this._checkVideoAspectRatio(video.videoWidth, video.videoHeight);
+      }
+
+      // Count new camera frame when video.currentTime advances
+      const currentVideoTime = video.currentTime;
+      const videoTimeAdvanced = currentVideoTime !== this._lastVideoTime;
       if (videoTimeAdvanced) {
-        this._lastVideoTime = video.currentTime;
+        this._lastVideoTime = currentVideoTime;
         this._cameraFrameCount++;
       }
-      if (this.enableDevTelemetry) {
+      if (import.meta.env.DEV) {
         this._devTelemetry?.recordRafTick(nowMs, videoTimeAdvanced);
       }
 
-      // Evitar re-inferir frames estáticos/duplicados si el reloj de cámara no avanzó;
-      // tolerancia de 3 ms para no perder un tick rAF de 60 Hz frente a frameIntervalMs.
-      const hasNewCameraFrame = video.currentTime !== this._lastInferredVideoTime;
-      const minIntervalMs = Math.max(0, this.frameIntervalMs - 3);
+      // Deduplicate by video.currentTime: never re-infer an already processed camera frame
+      const hasUninferredFrame =
+        this._lastInferredVideoTime === -1 || currentVideoTime !== this._lastInferredVideoTime;
+
+      // Throttle inference to targetFps and prevent overlapping async steps
       if (
         !this._busy &&
-        hasNewCameraFrame &&
-        nowMs - this._lastInferenceStartMs >= minIntervalMs
+        hasUninferredFrame &&
+        nowMs - this._lastInferenceStartMs >= this.frameIntervalMs
       ) {
         this._busy = true;
         this._lastInferenceStartMs = nowMs;
-        this._lastInferredVideoTime = video.currentTime;
+        this._lastInferredVideoTime = currentVideoTime;
         try {
           await this._runInferenceStep(video, nowMs);
         } catch (inferErr) {
@@ -1112,37 +1219,28 @@ export class SignEngine {
 
   async _runInferenceStep(video, nowMs) {
     const startPerf = performance.now();
-    if (this.enableDevTelemetry) {
+    if (import.meta.env.DEV) {
       this._devTelemetry?.beginInferenceStep(video?.currentTime ?? -1, startPerf);
     }
     let stepCompleted = false;
 
     try {
-      // Asegurar timestamp estrictamente creciente para MediaPipe Tasks runningMode: 'VIDEO'
+      // MediaPipe Tasks VIDEO mode requires strictly monotonic timestamps
       const timestampMs = Math.max(Math.floor(nowMs), this._lastMonotonicTimestampMs + 1);
       this._lastMonotonicTimestampMs = timestampMs;
 
-      // Soporte de inyección para pruebas automatizadas (Playwright con cámara sintética)
-      // Una vez que el motor WASM real ya cargó y corrió `detectForVideo`, si MediaPipe no ve
-      // una mano humana en el patrón de barras de color de Chromium (`--use-fake-device-for-media-stream`),
-      // permite que el arnés E2E inyecte landmarks sintéticos verificando todo el pipeline real.
       let rawHands = [];
       let rawHandedness = [];
       let rawPose = null;
 
-      // [CONTRATO DE ENTRADA Y TRANSFORMACIÓN DE DETECTOR - Punto 5]
-      // 1. Elemento de entrada: detectForVideo() recibe DIRECTAMENTE el elemento HTMLVideoElement (`video`).
-      // 2. Sin transformaciones: El video se entrega en su orientación nativa de sensor (NO espejado).
-      // 3. Convención de lateralidad: En cámara frontal (selfie), la mano derecha física del usuario
-      //    aparece en el lado izquierdo del encuadre nativo, por lo que MediaPipe le asigna categoryName: 'Left'.
-      // 4. Modo espejo: El flip horizontal se aplica EXCLUSIVAMENTE en el canvas de renderizado
-      //    (renderCanvasFrame vía `ctx.scale(-1, 1)`) para confort visual del usuario.
+      // Detector contract (FEATURE_SPEC v1.4.0): pass unmirrored HTMLVideoElement directly
+      // with ImageProcessingOptions `{ rotationDegrees: 0 }`; mirror only on display canvas.
       if (this._handLandmarker) {
-        if (this.enableDevTelemetry) this._devTelemetry?.mark('expresat:hand:start');
+        if (import.meta.env.DEV) this._devTelemetry?.mark('expresat:hand:start');
         const handRes = this._handLandmarker.detectForVideo(video, timestampMs, {
-          imageProcessingOptions: { rotationDegrees: 0 },
+          rotationDegrees: 0,
         });
-        if (this.enableDevTelemetry && this._devTelemetry) {
+        if (import.meta.env.DEV && this._devTelemetry) {
           const handMs = this._devTelemetry.endAndMeasure(
             'expresat:stage:hand',
             'expresat:hand:start',
@@ -1158,9 +1256,11 @@ export class SignEngine {
         this._frameStepIndex++;
         if (this._poseLandmarker) {
           if ((this._frameStepIndex - 1) % this.poseCadence === 0) {
-            if (this.enableDevTelemetry) this._devTelemetry?.mark('expresat:pose:start');
-            const poseRes = this._poseLandmarker.detectForVideo(video, timestampMs);
-            if (this.enableDevTelemetry && this._devTelemetry) {
+            if (import.meta.env.DEV) this._devTelemetry?.mark('expresat:pose:start');
+            const poseRes = this._poseLandmarker.detectForVideo(video, timestampMs, {
+              rotationDegrees: 0,
+            });
+            if (import.meta.env.DEV && this._devTelemetry) {
               const poseMs = this._devTelemetry.endAndMeasure(
                 'expresat:stage:pose',
                 'expresat:pose:start',
@@ -1206,7 +1306,7 @@ export class SignEngine {
         latencyMs,
       });
     } finally {
-      if (this.enableDevTelemetry) {
+      if (import.meta.env.DEV) {
         this._devTelemetry?.endInferenceStep(performance.now(), stepCompleted);
       }
     }
@@ -1233,11 +1333,11 @@ export class SignEngine {
     const handedness = [];
     if (results?.leftHandLandmarks) {
       hands.push(results.leftHandLandmarks);
-      handedness.push([{ categoryName: 'Right', score: 0.95 }]);
+      handedness.push([{ categoryName: 'Left', score: 0.95 }]);
     }
     if (results?.rightHandLandmarks) {
       hands.push(results.rightHandLandmarks);
-      handedness.push([{ categoryName: 'Left', score: 0.95 }]);
+      handedness.push([{ categoryName: 'Right', score: 0.95 }]);
     }
     this._dispatchNormalizedResults({
       pose: results?.poseLandmarks || null,
@@ -1253,26 +1353,29 @@ export class SignEngine {
       ? this._emaFilter.smoothResults({ pose, hands, handedness })
       : { pose, hands, handedness };
 
-    // En cámara frontal (selfie), MediaPipe etiqueta la mano derecha del usuario como 'Left'
-    // porque aparece a la izquierda de la imagen no espejada.
-    let leftHand = null;
-    let rightHand = null;
-
-    if (Array.isArray(filtered.hands)) {
-      for (let i = 0; i < filtered.hands.length; i++) {
-        const lm = filtered.hands[i];
-        const category = filtered.handedness?.[i]?.[0]?.categoryName;
-        if (category === 'Left' && !rightHand) {
-          rightHand = lm;
-        } else if (category === 'Right' && !leftHand) {
-          leftHand = lm;
-        } else if (!rightHand) {
-          rightHand = lm;
-        } else if (!leftHand) {
-          leftHand = lm;
+    // Direct v1.4.0 anatomical convention: 'Left' -> leftHand, 'Right' -> rightHand
+    const resolveDirectSlots = (handList, handednessList) => {
+      let lh = null;
+      let rh = null;
+      if (Array.isArray(handList)) {
+        for (let i = 0; i < handList.length; i++) {
+          const lm = handList[i];
+          const category = handednessList?.[i]?.[0]?.categoryName;
+          if (category === 'Left' && !lh) {
+            lh = lm;
+          } else if (category === 'Right' && !rh) {
+            rh = lm;
+          } else if (!lh) {
+            lh = lm;
+          } else if (!rh) {
+            rh = lm;
+          }
         }
       }
-    }
+      return { leftHand: lh, rightHand: rh };
+    };
+
+    const { leftHand, rightHand } = resolveDirectSlots(filtered.hands, filtered.handedness);
 
     const cleanCoords = (arr, includeVisibility = false) => {
       if (!Array.isArray(arr)) return null;
@@ -1288,37 +1391,40 @@ export class SignEngine {
     };
 
     let cachedRaw = null;
-    const rawPoseSrc = pose;
-    const rawHandsSrc = hands;
-    const rawHandednessSrc = handedness;
-
     const framePayload = {
       hands: filtered.hands || [],
       handedness: filtered.handedness || [],
-      leftHand: this.smoothLandmarks ? leftHand : cleanCoords(leftHand, false),
-      rightHand: this.smoothLandmarks ? rightHand : cleanCoords(rightHand, false),
-      pose: this.smoothLandmarks ? filtered.pose : cleanCoords(filtered.pose, true),
-      get raw() {
-        if (!cachedRaw) {
-          let copiedHands = [];
-          if (Array.isArray(rawHandsSrc)) {
-            copiedHands = new Array(rawHandsSrc.length);
-            for (let i = 0; i < rawHandsSrc.length; i++) {
-              copiedHands[i] = cleanCoords(rawHandsSrc[i], false);
-            }
-          }
+      leftHand: cleanCoords(leftHand, false),
+      rightHand: cleanCoords(rightHand, false),
+      pose: cleanCoords(filtered.pose, true),
+      timestamp,
+      latencyMs,
+      videoWidth: this._videoElement?.videoWidth || 0,
+      videoHeight: this._videoElement?.videoHeight || 0,
+      aspectRatioValid: this._lastAspectRatioValid,
+      delegate: this._activeBackendInfo?.delegate || this.preferredDelegate,
+    };
+
+    // Lazy memoized raw getter: zero allocations when no consumer reads `framePayload.raw`
+    Object.defineProperty(framePayload, 'raw', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        if (cachedRaw === null) {
+          const rawHandsClean = Array.isArray(hands) ? hands.map((h) => cleanCoords(h, false)) : [];
+          const rawHandedness = handedness || [];
+          const rawSlots = resolveDirectSlots(rawHandsClean, rawHandedness);
           cachedRaw = {
-            hands: copiedHands,
-            handedness: rawHandednessSrc || [],
-            pose: cleanCoords(rawPoseSrc, true),
+            hands: rawHandsClean,
+            handedness: rawHandedness,
+            leftHand: rawSlots.leftHand,
+            rightHand: rawSlots.rightHand,
+            pose: cleanCoords(pose, true),
           };
         }
         return cachedRaw;
       },
-      timestamp,
-      latencyMs,
-      delegate: this._activeBackendInfo?.delegate || this.preferredDelegate,
-    };
+    });
 
     for (const listener of this._frameListeners) {
       try {

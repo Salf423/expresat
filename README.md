@@ -1,105 +1,73 @@
-# ExpresaT — Traductor de Lengua de Señas Mexicana (LSM) en Tiempo Real
+# ExpresaT — Traductor de Lengua de Señas Mexicana (LSM) en Tiempo Real (`FEATURE_SPEC v1.4.0`)
 
-ExpresaT es una plataforma de accesibilidad que traduce gestos de **Lengua de Señas Mexicana (LSM)** a texto y voz en tiempo real directamente desde el navegador, optimizada para ejecutarse con fluidez (15–30 FPS) en hardware modesto sin GPU dedicada (ej. AMD Ryzen 3 7320U con iGPU Radeon 610M sobre Linux/Firefox).
+**ExpresaT** es una plataforma de accesibilidad que traduce gestos de **Lengua de Señas Mexicana (LSM)** a texto y voz en tiempo real directamente desde el navegador, impulsada por visión geométrica **MediaPipe Tasks Vision** y redes neuronales temporales **`DS-TCN 1D` cuantizadas a INT8** (`89.8 KB`, latencia CPU `p50 = 0.319 ms / p99 = 0.625 ms`) sin requerir GPU dedicada.
 
----
-
-## Arquitectura Desacoplada (4 Capas)
-
-El frontend (`expresat/frontend/src/`) está organizado en 4 capas independientes:
-
-1. **`src/engine/` (`SignEngine`)**: Captura de cámara (`getUserMedia`) + MediaPipe (`@mediapipe/tasks-vision` `HandLandmarker` con WASM local en `/public/wasm` y modelo en `/public/models/hand_landmarker.task`) ejecutándose **en el hilo principal (sin Workers)**. Mide y emite **FPS de Cámara** y **FPS de Inferencia** reales por separado, con cleanup 100% idempotente bajo React 19 `StrictMode`.
-2. **`src/recognition/` (`GeometricClassifier`, `fingerStates`, `normalizeHand`)**: Funciones **100% puras y testeables** sin dependencias de React ni del DOM. Normaliza las manos por escala (`palmScale`) y rotación en el plano XY, evalúa extensión y ángulos articulares de los 5 dedos, detecta señas dinámicas (`Hola`) mediante ventana temporal y suaviza predicciones por votación de $N$ frames (`SmoothingVoter`). Define la interfaz `Classifier { predict(frames) -> { label, confidence } }` lista para enchufar `ModelClassifier` (ONNX/GRU) después.
-3. **`src/transport/` (`WSClient`)**: Cliente WebSocket **opcional** hacia `/ws/translate` con máquina de estados explícita (`idle | connecting | open | auth_error | failed`), backoff exponencial para caídas de red y **cero reintentos** ante rechazo por política/autenticación (`1008`, `401`, `403` o ausencia de token).
-4. **`src/ui/` (`useSignEngine`, `drawLandmarks`) y `src/pages/Translator.jsx`**: Interfaz React 19 que funciona **100% en el navegador en modo demo** incluso sin backend ni inicio de sesión.
-
-Para el detalle completo de decisiones de diseño, consulta [`docs/ARQUITECTURA.md`](./docs/ARQUITECTURA.md) y [`docs/REPORTE.md`](./docs/REPORTE.md).
+> [!TIP] 📚 Documentación Completa y Motor de Contexto en Obsidian
+> - **Índice Técnico del Repositorio:** [`docs/README.md`](./docs/README.md)
+> - **Contrato Matemático 178D (`FEATURE_SPEC v1.4.0`):** [`docs/dataset-generator/FEATURE_SPEC.md`](./docs/dataset-generator/FEATURE_SPEC.md)
+> - **Bóveda Obsidian y Hub para Agentes de IA:** [`Obsidian_exp/00_INDICE_MAESTRO.md`](./Obsidian_exp/00_INDICE_MAESTRO.md) y [`Obsidian_exp/Agentes/01_MAPA_CONTEXTO_RAPIDO.md`](./Obsidian_exp/Agentes/01_MAPA_CONTEXTO_RAPIDO.md)
 
 ---
 
-## Cómo Correr Todo en Local (Terminal `fish` en Linux)
+## Arquitectura del Sistema (`dataset-v2` — `FEATURE_SPEC v1.4.0`)
 
-### Opción A: Modo Demo 100% en el Navegador (Sin Backend)
-
-El modo demo geométrico funciona íntegramente en el navegador sin necesidad de levantar FastAPI ni configurar Supabase:
-
-```fish
-cd /home/adrian/Proyectos/expresat/expresat/frontend
-
-# (Opcional) Crear archivo .env a partir de la plantilla
-cp -n .env.example .env
-
-# Iniciar servidor de desarrollo Vite
-npm run dev
-```
-
-Abre `http://localhost:5173/translator` en Firefox o Chromium, concede permiso de cámara y realiza cualquiera de los gestos soportados (`Mano Abierta`, `Puño`, `Uno`, `Dos`, `OK / Pinza`, `Bien`, `Te Quiero`, `Lunes`, `Hola`).
+1. **Frontend Web en 4 Capas (`expresat/frontend/src/`)**:
+   - **`engine/` (`SignEngine`, `featureExtractor.js`)**: Captura 4:3 (`640×480`), MediaPipe Tasks Vision (`HandLandmarker` + `PoseLandmarker`, `poseCadence = 1`) en el hilo principal con deduplicación por `video.currentTime`, getter `raw` perezoso y extractor 178D `v1.4.0` en paridad exacta con Python ($L_\infty = 0.000 \le 10^{-6}$, `0.510 ms/ventana`).
+   - **`services/` (`LandmarkEMAFilter`, `LandmarkTracker`)**: Filtrado EMA por slot anatómico (`pose`, `leftHand`, `rightHand`) con limpieza automática al desaparecer una mano.
+   - **`recognition/` (`GeometricClassifier`, `SmoothingVoter`)**: Reconocimiento geométrico local 100% en navegador para modo demo/offline.
+   - **`transport/` (`WSClient`) y `ui/` (`useSignEngine`, `DevRecorder.jsx`)**: Buffer WebSocket de frames crudos con `t_ms` monotónico real ($\ge 12$ frames, $\ge 933.3\text{ ms}$) y grabador guiado de calibración `.raw.json` `v1.4.0` sellado con `config_hash` SHA-256.
+2. **Pipeline Offline Stage-2 de Datasets (`expresat-dataset-generator/scripts/`)**:
+   - `validate_recording.py`: Verifica esquema `v1.4.0`, `config_hash`, aspecto 4:3, `FPS >= 15.0`, `max_gap <= 100.0 ms` y presencia activa de manos $\ge 60\%$.
+   - `build_dataset_v140.py`: Segmenta ventanas según `catalog/signs_catalog.json` (set piloto de 9 clases verificadas), particiona sin fuga de sesión con `StratifiedGroupKFold` por `(subject_id, session_id, take_id)`, aplica aumentación isotrópica 4:3 **exclusivamente en `train`** y exporta shards `X_{train,val,test}.npy` + `y_*.npy` + `manifest.json`.
+3. **Entrenamiento, Ablación A/B e Inferencia Calibrada (`expresat/models/` y `expresat/backend/`)**:
+   - `train_and_export.py`: Consume shards `.npy` con `mmap_mode='r'`, ejecuta ablación A/B justa entre **`SignLanguageDSTCN` (`DS-TCN 1D`)** y **`SignLanguageBiGRU` (`BiGRU`)** con capa cinemática enmascarada `[x, Δx]` + `LayerNorm(356)`, calibra post-hoc con **Temperature Scaling** (`ECE < 0.03`) y exporta modelos ONNX INT8 autocontenidos (cero `.onnx.data`) hacia `expresat/models/exported_model/`.
+   - `inference_engine.py` + `backend/main.py`: Inferencia ONNX Runtime CPU monohilo vía `asyncio.to_thread`, validación criptográfica `config_hash`, bloqueo de modelos smoke-test en producción y **política de rechazo de 3 compuertas** (`min_confidence >= 0.65`, `min_margin >= 0.20`, `max_normalized_entropy <= 0.55` $\to$ fallback seguro a `reposo`).
 
 ---
 
-### Opción B: Con Backend FastAPI en Modo Demo (`EXPRESAT_DEMO_MODE=true`)
+## Ejecución Rápida en Local
 
-Si deseas conectar también el canal WebSocket hacia el servidor FastAPI local:
-
-**Terminal 1 — Backend (fish):**
-```fish
-cd /home/adrian/Proyectos/expresat
-
-# Activar entorno virtual de Python en fish
-source expresat/venv/bin/activate.fish
-
-# Iniciar FastAPI en modo demo (acepta WebSocket sin requerir token JWT de Supabase)
-set -x PYTHONPATH expresat expresat/backend
-set -x EXPRESAT_DEMO_MODE true
-set -x FASTAPI_ENV development
-uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-**Terminal 2 — Frontend (fish):**
-```fish
+### 1. Frontend Web (React 19 + Vite)
+```bash
 cd /home/adrian/Proyectos/expresat/expresat/frontend
 npm run dev
 ```
 
-Al abrir `http://localhost:5173/translator` con el selector de entorno en **Local**, el indicador de estado mostrará **"Conectado"** (`ws-state="open"`).
-
----
-
-## Comandos de Verificación, Linter y Pruebas (fish)
-
-```fish
-# 1. Linter, Pruebas Unitarias (Vitest) y Build de Producción del Frontend
-cd /home/adrian/Proyectos/expresat/expresat/frontend
-npm run lint
-npm test
-npm run build
-
-# 2. Pruebas E2E Automatizadas en Navegador con Cámara Falsa (Playwright)
-npm run test:e2e
-
-# 3. Pruebas Unitarias e Integración del Backend (Python)
+### 2. Backend FastAPI (`EXPRESAT_DEMO_MODE=true` o Modo Modelo ONNX)
+```bash
 cd /home/adrian/Proyectos/expresat
-source expresat/venv/bin/activate.fish
-env PYTHONPATH="expresat:expresat/backend" python -m unittest expresat/backend/test_api_integration.py expresat/backend/test_demo_rules.py
+PYTHONPATH=expresat:expresat/backend ./expresat/venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+### 3. Pipeline Completo de Dataset y Entrenamiento (`v1.4.0`)
+```bash
+# 1) Validar toma cruda exportada desde DevRecorder
+./expresat/venv/bin/python tests/schemas/validate_recording.py recordings_local/<toma>.raw.json
+
+# 2) Generar shards .npy + manifest.json con StratifiedGroupKFold (fuga cero)
+./expresat/venv/bin/python expresat-dataset-generator/scripts/build_dataset_v140.py \
+  --raw-dir recordings_local/ --output-dir /tmp/expresat_shards_v140 --catalog catalog/signs_catalog.json
+
+# 3) Entrenar ablación A/B (DS-TCN 1D vs BiGRU) y exportar a expresat/models/exported_model
+./expresat/venv/bin/python expresat/models/train_and_export.py \
+  --manifest /tmp/expresat_shards_v140/manifest.json --ablation --output expresat/models/exported_model
 ```
 
 ---
 
-## Configuración Manual en Producción (Netlify y Render)
+## Suites de Verificación, Linters y Build
 
-### 1. En Render (Backend FastAPI)
-Configura las siguientes variables de entorno en el panel **Environment** de tu servicio en Render:
-- `EXPRESAT_DEMO_MODE` = `true` *(permite conexiones WebSocket públicas sin exigir token de Supabase y activa las reglas geométricas en el servidor)*
-- `CORS_ORIGINS` = `https://expresat.netlify.app,https://ecpresatt.netlify.app,http://localhost:5173`
-- `FASTAPI_ENV` = `production`
+```bash
+# 1. Suite completa de contratos Python v1.4.0, Stage-2, entrenamiento A/B, calibración, inferencia y CI (54 tests)
+./expresat/venv/bin/python -m unittest discover -s tests -p "test_*.py" -v
 
-Después de guardar las variables, ejecuta **Manual Deploy -> Deploy latest commit**.
+# 2. Pruebas unitarias y de integración del backend FastAPI (22 tests)
+PYTHONPATH=expresat:expresat/backend ./expresat/venv/bin/python -m unittest \
+  expresat/backend/test_api_integration.py expresat/backend/test_demo_rules.py -v
 
-### 2. En Netlify (Frontend React + Vite)
-Configura las siguientes variables en **Site configuration -> Environment variables**:
-- `VITE_DEMO_MODE` = `true`
-- `VITE_API_URL` = `https://expresat.onrender.com`
-- `VITE_WS_URL_PROD` = `wss://expresat.onrender.com/ws/translate`
-- *(Opcionales si habilitas login)* `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`
-
-Después de guardar, ejecuta **Trigger deploy -> Clear cache and deploy site**.
+# 3. Pruebas unitarias Frontend (Vitest — 78 tests), Linters (ESLint + oxlint) y Build (Vite)
+npm --prefix expresat/frontend test -- --run
+npm --prefix expresat/frontend run lint
+npx --prefix expresat/frontend oxlint expresat/frontend/src
+npm --prefix expresat/frontend run build
+```

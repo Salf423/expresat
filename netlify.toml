@@ -1,31 +1,20 @@
-# ==============================================================================
-# Netlify Configuration - Root Repository Level
-# ==============================================================================
+# Netlify configuration (repository root)
 
 [build]
-  # Ubicación del módulo frontend desde la raíz del repositorio Git
   base = "expresat/frontend"
-  
-  # Comando de compilación de Vite
   command = "npm run build"
-  
-  # Carpeta generada por Vite (relativa a base: expresat/frontend/dist)
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "20"
 
-# ------------------------------------------------------------------------------
-# Redirección SPA para React Router DOM
-# ------------------------------------------------------------------------------
+# SPA fallback for React Router DOM
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 
-# ------------------------------------------------------------------------------
-# Cabeceras de Seguridad y Permisos
-# ------------------------------------------------------------------------------
+# Security headers and camera permission policy
 [[headers]]
   for = "/*"
   [headers.values]

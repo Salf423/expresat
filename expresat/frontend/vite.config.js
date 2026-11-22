@@ -46,12 +46,16 @@ function servePublicWasmAndModelsPlugin() {
 }
 
 // https://vite.dev/config/
-export default defineConfig(() => ({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), servePublicWasmAndModelsPlugin()],
 
-  define: {
-    'import.meta.env.VITE_DEV_GIT_COMMIT': JSON.stringify(resolveDevGitCommitShort()),
-  },
+  ...(mode !== 'production'
+    ? {
+        define: {
+          'import.meta.env.VITE_DEV_GIT_COMMIT': JSON.stringify(resolveDevGitCommitShort()),
+        },
+      }
+    : {}),
 
   // Ensure WASM files from @mediapipe/tasks-vision are served with the correct
   // Content-Type and are not mangled by the bundler.

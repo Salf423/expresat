@@ -1,3 +1,25 @@
+# Environment files & secrets (keep template only)
+.env*
+!.env.example
+
+# Local recordings, video fixtures & capture PNGs
+recordings_local/
+raw_captures/
+captures/
+capturas/
+*.raw.json
+*.raw.bin
+*.raw.meta.json
+*.raw.jsonl
+*.webm
+captura_detector_*.png
+captura_*.png
+capture_*.png
+snapshot_*.png
+frame_*.png
+webcam_*.png
+public/test_person.png
+
 # Logs
 logs
 *.log

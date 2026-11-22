@@ -1,253 +1,151 @@
 # Especificación Canónica del Vector de 178 Características — ExpresaT
 
-- **Versión de la especificación (`feature_spec_version`):** `1.3.0`
-- **Estado:** Contrato técnico estricto para modelos reentrenados y generador v2.
-- **Ámbito:** Unificación matemática de extracción, filtrado, normalización y asignación anatómica en Python (`backend/`, `models/`) y JavaScript (`frontend/`).
-- **Estado de C++ (`expresat-native/`):** **NO CONFORME CON FEATURE_SPEC v1.3.0**. El pipeline nativo C++ no implementa `ExtractWindow`. Por política de seguridad y fidelidad, `InferenceThread` y `normalize_to_shoulders` **rechazan activamente** cualquier intento de procesamiento retornando códigos de error explícitos (`ERR_CPP_NOT_CONFORMANT_FEATURE_SPEC_1_3_0` y `ERR_SHOULDERS_TOO_SMALL`), en lugar de caer en silent zero-filling o truncamientos silenciosos.
+- **Versión de la especificación (`feature_spec_version`):** `1.4.0` *(esquema `.raw.json` `1.4.0` en [`tests/schemas/recording_raw.schema.json`](../../tests/schemas/recording_raw.schema.json))*
+- **Estado:** Contrato técnico vigente y verificado elemento a elemento ($L_\infty = 0.000 \le 10^{-6}$) entre Python ([`expresat/models/feature_extractor.py`](../../expresat/models/feature_extractor.py)) y JavaScript ([`expresat/frontend/src/engine/featureExtractor.js`](../../expresat/frontend/src/engine/featureExtractor.js)).
+- **Estado de C++ (`expresat-native/`):** **NO CONFORME CON FEATURE_SPEC v1.4.0 — AISLADO FUERA DEL PIPELINE** (`CPP_FEATURE_SPEC_CONFORMANCE = "NO_CONFORME_FEATURE_SPEC_1_3_0"`). El generador C++ legacy fue retirado de `dataset-v2` y `expresat-native/` permanece explícitamente bloqueado hasta portar `ExtractWindow` v1.4.0.
 - **Invariante del modelo:** Tensor tridimensional de entrada `(1, 15, 178)` en `float32`.
 
 ---
 
-## 1. Evidencia Histórica de `letra_a_derecha_2.json` y Aislamiento en Cuarentena
+## 1. Evidencia Histórica de `letra_a_derecha_2.json`, Cuarentena y Guardia de Contrato
 
 ### 1.1 Evidencia del Origen del Archivo Legacy
-La inspección de git y del código fuente confirma que `expresat-dataset-generator/dataset/letra_a_derecha_2.json` fue generado de forma puramente sintética:
-- **Generador:** `expresat-dataset-generator/src/mediapipe_extractor.cpp` (líneas 78–110, compilado con `EXPRESAT_STUB_EXTRACTOR=1`).
-- **Algoritmo productor:** Ondas senoidales sintéticas sobre 33 puntos de pose ($0.5 + 0.15 \cos(t + 0.3i)$) y manos artificiales.
-- **Augmentation distorsionador:** `expresat-dataset-generator/src/data_augmenter.cpp` (líneas 103–131, `applyScale` multiplicó uniformemente todos los canales por $[0.90, 1.10]$, provocando que la visibilidad desbordara hasta $1.0201$).
-- **Commit:** `3bae2f14365509f9daa1db11b49751e1fb7cdac8` ("Demo"), 5 de noviembre de 2026.
-- **Discrepancia geométrica:** Los hombros en ese dataset están en $\approx (\pm 0.0177, 0, 0)$ con distancia inter-humeral $D \approx 0.0459$ (omitió la división por $D$). En un espacio normalizado por hombros, los hombros frontales deben situarse en $(\pm 0.5000, 0, 0)$ con $D = 1.0$.
+La inspección del historial confirmó que `expresat-dataset-generator/dataset/letra_a_derecha_2.json` era un stub sintético:
+- **Generador legacy:** `EXPRESAT_STUB_EXTRACTOR` (ondas senoidales $0.5 + 0.15\cos(t + 0.3i)$).
+- **Augmentation corrupto legacy:** escalaba todos los canales por $[0.90, 1.10]$ desbordando visibilidad hasta $1.0201$ y dejando $D_{\text{norm}} \approx 0.0459$ en lugar de $1.0$.
+- **Mitigación activa en `v1.4.0`:** [`expresat-dataset-generator/scripts/validate_dataset.py`](../../expresat-dataset-generator/scripts/validate_dataset.py) rechaza automáticamente stubs sintéticos ($D_{\text{norm}} \notin [0.80, 1.20]$, `visibility > 1.0`, frames todo-ceros, ventanas congeladas con varianza temporal nula y violaciones de `P15..P22 z' = 0.0`).
 
-### 1.2 Declaración de Contrato Nuevo y Aislamiento
-1. **Puesta en Cuarentena:** El archivo `letra_a_derecha_2.json` queda aislado en `dataset/quarantine/` y **no debe utilizarse para entrenar nuevos modelos**.
-2. **Contrato Nuevo `1.3.0`:** La especificación v1.3.0 rige como contrato obligatorio.
-3. **Verificación de Versión en Inferencia:** `InferenceEngine` (`inference_engine.py`) y el pipeline de entrenamiento (`train_and_export.py`) comprueban compatibilidad de versión por `major.minor` (`1.3` compatible con `1.3.0`). Adicionalmente, guardan y verifican el hash criptográfico SHA256 (`config_hash`), el cual incluye la configuración dimensional y el hash SHA256 íntegro de `tests/fixtures/feature_spec_cases.json`. Si no coincide, abortan con `IncompatibleFeatureSpecError`.
+### 1.2 Verificación de Versión y `config_hash` en Tiempo de Ejecución (`v1.4.0`)
+1. **Desacople total de `tests/fixtures/`:** `compute_config_hash()` (Python) y `computeConfigHash()` (JS) sellan exclusivamente los 27 parámetros canónicos de `FEATURE_SPEC v1.4.0`, `delegate`, `pose_cadence` y los hashes SHA-256 de los artefactos `.task` de MediaPipe (digest bit-a-bit idéntico en Python y JS: `7992397c3e4387e937c46b195fcb1e078109368f249bdc41171815212cae2ce5` para `GPU`, `pose_cadence=1`).
+2. **Guardia obligatoria en `InferenceEngine`:** [`expresat/models/inference_engine.py`](../../expresat/models/inference_engine.py) ejecuta `validate_metadata_feature_spec()` antes de crear la sesión ONNX Runtime y aborta explícitamente con `IncompatibleFeatureSpecError` si `model_metadata.json` omite `feature_spec_version`/`config_hash`, difiere en `major.minor` (`1.4`), difiere en `delegate`/`pose_cadence` esperados o no coincide el SHA-256 canónico. Los métodos legacy `_normalize_to_shoulders`, `_extract_pose_upper` y `_extract_hand` fueron eliminados.
 
 ---
 
-## 2. Resolución, Aspecto Fijo (640×480, 4:3), Rotación y Augmentation
+## 2. Resolución, Relación de Aspecto 4:3, Rotación y Augmentation
 
-1. **Resolución y Relación de Aspecto Fijas:**
-   - La captura web opera estrictamente a **$640 \times 480$** (relación de aspecto $A = 640/480 = 4/3 \approx 1.333333$).
-   - En tiempo de ejecución se comprueba que `videoWidth` y `videoHeight` cumplan $|(W/H) - (4/3)| \le 0.05$. De lo contrario, se rechaza la captura con `ERR_INVALID_ASPECT_RATIO`.
-   - Las dimensiones reales de cámara se registran en los metadatos de la toma cruda.
-2. **Centro de Rotación Rígida 2D para Data Augmentation:**
-   - Toda rotación sintética de augmentation se realiza alrededor del **centro de los hombros** $C = (C_x, C_y)$ del sujeto en el frame original. Esto preserva al firmante en el centro del cuadro y previene derivas espaciales excéntricas.
-   - Fórmula con aspecto corregido para un punto $(x, y)$ rotado por un ángulo $\theta$:
-     $$x_{\text{rel}} = (x - C_x) \times A, \quad y_{\text{rel}} = y - C_y$$
+1. **Resolución y Relación de Aspecto Canónica (4:3 ± 0.05):**
+   - Captura web canónica a **$640 \times 480$** ($A = 4/3 \approx 1.333333$).
+   - **Enforcement activo en `SignEngine` y `DevRecorder`:** `validateVideoAspectRatio(videoWidth, videoHeight)` exige $|(W/H) - (4/3)| \le 0.05$; cualquier desvío (p. ej. `16:9`) emite `ERR_INVALID_ASPECT_RATIO`.
+   - `SignEngine` invoca `detectForVideo(video, timestampMs, { rotationDegrees: 0 })` en ambos detectores (`HandLandmarker` y `PoseLandmarker`), deduplica frames repetidos por `video.currentTime` y mantiene `poseCadence = 1`.
+2. **Rotación Rígida 2D Isotrópica 4:3 para Data Augmentation (solo en split `train` crudo):**
+   - Toda rotación sintética opera sobre landmarks crudos `[0, 1]` alrededor del centro de hombros $C = (C_x, C_y)$ con corrección de aspecto $A = 4/3$:
+     $$x_{\text{rel}} = (x - C_x) \cdot A, \quad y_{\text{rel}} = y - C_y$$
      $$x_{\text{rot}} = x_{\text{rel}} \cos\theta - y_{\text{rel}} \sin\theta, \quad y_{\text{rot}} = x_{\text{rel}} \sin\theta + y_{\text{rel}} \cos\theta$$
      $$x' = C_x + (x_{\text{rot}} / A), \quad y' = C_y + y_{\text{rot}}$$
-3. **Validación de Calidad en Frames Originales:**
-   - **Regla inmutable:** Las compuertas de calidad (visibilidad de hombros $\ge 0.40$, hombros dentro del cuadro $[0, 1]$, brechas temporales $\le 100\text{ ms}$) se evalúan **exclusivamente sobre los frames originales crudos**, nunca sobre los frames aumentados. El augmentation es una transformación derivada y no puede ser usado para enmascarar ni descartar tomas crudas.
-4. **Espejo en Crudo vs en Features:**
-   - En landmarks crudos: inversión horizontal $x \to 1.0 - x$, intercambio de landmarks bilaterales de pose, e inversión de `categoryName` (`'Left'` $\leftrightarrow$ `'Right'`).
-   - En features normalizadas: $x' \to -x'$ e intercambio de los bloques izquierdo y derecho.
-   - Garantía matemática: $\text{Extract}(\text{Mirror}(\text{raw})) == \text{MirrorFeatures}(\text{Extract}(\text{raw}))$ con error $L_\infty \le 10^{-6}$.
+   - El augmentation **nunca** modifica la visibilidad ni se aplica sobre `val`/`test`.
+3. **Validación en Frames Originales:**
+   - Las compuertas de calidad (`vis >= 0.40`, hombros en `[0, 1]`, brecha $\Delta t \le 100.0\text{ ms}$, densidad $\ge 12/15$, puentes $\le 3/14$, extrapolación de cola $= 0$) se evalúan siempre sobre frames originales crudos.
+4. **Espejo en Crudo vs. en Features (`L_inf <= 1e-6`):**
+   - En crudo (`mirror_raw_frame` / `mirrorRawFrame`): $x \to 1.0 - x$, intercambio de pares bilaterales de pose (`11↔12`, `13↔14`, `15↔16`, `17↔18`, `19↔20`, `21↔22`), inversión de etiqueta (`'Left' ↔ 'Right'`) tanto en listas como en objetos `{landmarks, categoryName, score}`, e intercambio explícito de claves `leftHand ↔ rightHand`.
+   - En features (`mirror_features_178` / `mirrorFeatures178`): $x' \to -x'$, intercambio de pares bilaterales de Upper Pose e intercambio de bloques `[52..114] ↔ [115..177]`.
+   - Conmutatividad garantizada: $\|\text{Extract}(\text{Mirror}(\text{raw})) - \text{MirrorFeatures}(\text{Extract}(\text{raw}))\|_\infty \le 10^{-6}$.
 
 ---
 
 ## 3. Manifiesto del Detector de Visión
 
-Los detectores MediaPipe Tasks Vision (en CPU) deben inicializarse con los siguientes artefactos y umbrales unificados:
+Los detectores `@mediapipe/tasks-vision` operan con los siguientes artefactos sellados en `config_hash`:
+- **Detector de Manos:** [`expresat/frontend/public/models/hand_landmarker.task`](../../expresat/frontend/public/models/hand_landmarker.task)
+  - **SHA256:** `fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1`
+- **Detector de Pose:** [`expresat/frontend/public/models/pose_landmarker_lite.task`](../../expresat/frontend/public/models/pose_landmarker_lite.task)
+  - **SHA256:** `59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a`
 
-### Modelos y Checksums (SHA256)
-- **Detector de Manos:** `public/models/hand_landmarker.task`
-  - **SHA256:** `fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1` (7,858,683 bytes)
-- **Detector de Pose:** `public/models/pose_landmarker_lite.task`
-  - **SHA256:** `59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a` (5,833,260 bytes)
-
-### Umbrales de Confianza Unificados
-- `minHandDetectionConfidence`: `0.50`
-- `minHandPresenceConfidence`: `0.50`
-- `minTrackingConfidence`: `0.50`
-- `minPoseDetectionConfidence`: `0.50`
-- `minPosePresenceConfidence`: `0.50`
-- `numHands`: `2`, `numPoses`: `1`, `delegate`: `'CPU'`, `runningMode`: `'VIDEO'`.
+### Parámetros Alineados en `signEngine.js` (`v1.4.0`)
+- `HandLandmarker`: `runningMode: 'VIDEO'`, `numHands: 2`, `minHandDetectionConfidence: 0.50`, `minHandPresenceConfidence: 0.50`, `minTrackingConfidence: 0.50`.
+- `PoseLandmarker`: `runningMode: 'VIDEO'`, `numPoses: 1`, `minPoseDetectionConfidence: 0.50`, `minPosePresenceConfidence: 0.50`, `minTrackingConfidence: 0.50`, `poseCadence: 1`.
+- `enablePose: true` obligatorio siempre que exista transporte remoto / inferencia neural activa (`useSignEngine.js`, `Translator.jsx`).
 
 ---
 
-## 4. Composición del Vector y Marcos de Referencia
+## 4. Composición del Vector 178D y Normalización Isotrópica (`2d_iso_4_3`)
 
-El vector contiene 178 elementos `float32`:
-- `[0..51]` (52D): Upper Pose (13 landmarks $\times$ 4: $x, y, z, \text{visibility}$).
-- `[52..114]` (63D): Mano Izquierda (21 landmarks $\times$ 3: $x, y, z$).
-- `[115..177]` (63D): Mano Derecha (21 landmarks $\times$ 3: $x, y, z$).
+El vector contiene 178 valores `float32`:
+- `[0..51]` (52D): Upper Pose (13 landmarks `[0, 11..22]` $\times$ 4: $x', y', z', \text{vis}'$).
+- `[52..114]` (63D): Mano Izquierda (`leftHand`, 21 landmarks $\times$ 3: $x', y', z'$).
+- `[115..177]` (63D): Mano Derecha (`rightHand`, 21 landmarks $\times$ 3: $x', y', z'$).
 
-### Normalización Canónica:
-1. **Centro de hombros:** $C_x = (P_{11,x} + P_{12,x}) / 2$, $C_y = (P_{11,y} + P_{12,y}) / 2$, $C_z = (P_{11,z} + P_{12,z}) / 2$.
-2. **Escala de hombros:** Distancia euclidiana 3D inter-humeral $D = \sqrt{\Delta x^2 + \Delta y^2 + \Delta z^2}$.
+### Fórmulas Canónicas `v1.4.0`
+1. **Centro de hombros:**
+   $$C_x = \frac{P_{11,x} + P_{12,x}}{2}, \quad C_y = \frac{P_{11,y} + P_{12,y}}{2}, \quad C_z = \frac{P_{11,z} + P_{12,z}}{2}$$
+2. **Escala isotrópica 2D 4:3 (`d_metric = "2d_iso_4_3"`, inmune a deriva monocular de `pose.z`):**
+   $$D = \frac{1}{A}\sqrt{\left((P_{11,x} - P_{12,x})\cdot A\right)^2 + (P_{11,y} - P_{12,y})^2}, \quad A = \frac{4}{3}, \quad D_{\min} = 0.08$$
 3. **Upper Pose (`[0..51]`):**
-   $$x' = \frac{x - C_x}{D}, \quad y' = \frac{y - C_y}{D}, \quad z' = \frac{z - C_z}{D}, \quad \text{vis}' = \text{clamp}(\text{vis}, 0.0, 1.0)$$
+   - $x' = (x - C_x)/D$, $y' = (y - C_y)/D$, $\text{vis}' = \text{clamp}(\text{vis}, 0.0, 1.0)$.
+   - **Política `pose.z'` (`v1.4.0`):**
+     - `P00, P11..P14` (posiciones `0..4`): $z' = \text{clip}((z - C_z)/D, -2.0, +2.0)$.
+     - **`P15..P22`** (posiciones `5..12`): **$z' = 0.0$ exacto** (elimina el sesgo monocular de extrapolación desde cadera).
 4. **Manos (`[52..114]` y `[115..177]`):**
-   - En el plano $XY$: $x' = (x_{\text{hand}, i} - C_x) / D, \quad y' = (y_{\text{hand}, i} - C_y) / D$.
-   - En el eje $Z$: $z' = (z_{\text{hand}, i} - z_{\text{hand}, \text{wrist}}) / D$, donde $z_{\text{wrist}} = z_0$ de esa mano.
-   - Si una mano está ausente: **63 ceros exactos (`0.0f`)**.
+   - $x' = (x_i - C_x)/D$, $y' = (y_i - C_y)/D$, $z' = (z_i - z_0)/D$ (relativo a la muñeca $z_0$ de esa mano).
+   - Mano ausente: **63 ceros exactos (`0.0f`)**.
+5. **Integridad numérica:** cualquier coordenada/visibilidad/timestamp no finito (`NaN`, `±Inf`) rechaza inmediatamente el frame o ventana con `ERR_NON_FINITE_LANDMARKS`.
 
 ---
 
-## 5. Algoritmo Canónico `ExtractWindow`: Secuencia Corregida por Bloques
+## 5. Algoritmo Canónico `ExtractWindow` (`v1.4.0`)
 
-Para evitar distorsiones o cruces fantasmas cuando el detector cambia el orden de las manos entre frames, el orden de operaciones es **estricto, por bloques anatómicos e inmutable**:
-
-```
-[Frames crudos de entrada con timestamps t_ms]
-                      ↓
-1. Validación previa de hombros crudos (P11 y P12 presentes, vis ≥ 0.40, en [0, 1])
-   - Verificación de brechas continuas: si gap > 100 ms → ERR_INVALID_FRAME_GAP_TOO_LARGE.
-                      ↓
-2. Asignación anatómica de manos por frame crudo:
-   - Para cada frame crudo se asignan las detecciones a slots anatómicos fijos:
-     raw_left_hand (o null) y raw_right_hand (o null), usando costo conjunto con
-     término espacial, término de etiqueta y continuidad temporal.
-                      ↓
-3. Remuestreo temporal por bloque a 15 frames equidistantes (Δt = 66.67 ms):
-   - Upper Pose: interpolación lineal 3D de cada landmark.
-   - Bloque Mano Izquierda: se interpola si está presente en ambos extremos; si solo en uno,
-     se toma del extremo más cercano; si en ninguno, queda ausente (null).
-   - Bloque Mano Derecha: remuestreo idéntico e independiente del bloque izquierdo.
-                      ↓
-4. Cálculo de Escala y Centro por Ventana:
-   - D_k = dist3D(P11, P12) para cada frame remuestreado k = 0..14.
-   - D_ventana = mediana(D_0..D_14), C_ventana = mediana(C_0..C_14).
-   - Validación: Si D_ventana < 0.08 → RECHAZAR con ERR_SHOULDERS_TOO_SMALL.
-                      ↓
-5. Filtro EMA temporal por bloque (α = 0.50):
-   - Upper Pose: suavizado temporal continuo reiniciado en k=0.
-   - Bloque Mano Izquierda: si reaparece tras estar ausente, reinicia estado al frame actual;
-     mientras permanezca presente, se suaviza con EMA.
-   - Bloque Mano Derecha: filtro EMA independiente con idéntica regla de reinicio.
-                      ↓
-6. Normalización final y Ensamble del Tensor (1, 15, 178) float32:
-   - Normalización de Pose y Manos usando C_ventana y D_ventana.
-   - Bloques ausentes rellenados con 63 ceros exactos.
+```mermaid
+flowchart TD
+    IN["Frames crudos con t_ms real monotónico"] --> S1["1. Filtrar hombros finitos (vis >= 0.40, en [0, 1]) y ordenar por t_ms"]
+    S1 --> S2["2. Compuertas temporales estrictas: gap <= 100 ms, tail == 0, unique >= 12/15, bridges <= 3/14"]
+    S2 --> S3["3. Asignación anatómica directa por frame crudo ('Left'->leftHand/P15, 'Right'->rightHand/P16) con dist2d_iso y TTL muñeca = 200 ms"]
+    S3 --> S4["4. Remuestreo LERP por bloque a 15 slots equidistantes (dt = 66.67 ms)"]
+    S4 --> S5["5. Mediana de ventana D_2D_iso (si < 0.08 -> ERR_SHOULDERS_TOO_SMALL) y C_ventana"]
+    S5 --> S6["6. EMA temporal por bloque (alpha = 0.50; reinicio independiente al reaparecer una mano)"]
+    S6 --> S7["7. Normalización v1.4.0 (P15..P22 z'=0, P00/P11..14 z' clip [-2,2]) -> Tensor (1, 15, 178) float32"]
 ```
 
 ---
 
-## 6. Algoritmo de Asignación Conjunta con Término de Etiqueta y Continuidad
+## 6. Asignación Anatómica Directa, Costo Unificado y TTL de Muñeca (`v1.4.0`)
 
-### 6.1 Costo de Asignación Robusto
-Para cada mano detectada $H_i$, se evalúa la asignación a las muñecas de pose $P_{15}$ (izquierda) y $P_{16}$ (derecha):
-$$d_{\text{left}}(H_i) = \text{dist2D}(H_{i,0}, P_{15}), \quad d_{\text{right}}(H_i) = \text{dist2D}(H_{i,0}, P_{16})$$
-
-#### Regla de Descarte por Desconexión:
-Si $\min(d_{\text{left}}, d_{\text{right}}) > 1.75 \cdot D$, **SOLO se descarta la mano si la visibilidad de la muñeca de pose correspondiente es confiable**:
-$$\text{descartar}(H_i) \iff \min(d_{\text{left}}, d_{\text{right}}) > 1.75 \cdot D \;\land\; \text{vis}(P_{\text{cercano}}) \ge 0.50$$
-Si $\text{vis}(P_{15}) < 0.50$ o $\text{vis}(P_{16}) < 0.50$, la pose no tiene suficiente confianza para descartar manos por desconexión.
-
-#### Función de Costo Conjunto para 2 Manos ($H_0, H_1$):
-$$\text{costo}_A = d_{\text{left}}(H_0) + d_{\text{right}}(H_1) + \text{PenalizaciónEtiqueta}(H_0 \to \text{izq}, H_1 \to \text{der}) + \text{PenalizaciónTemporal}(H_0, H_1)$$
-$$\text{costo}_B = d_{\text{left}}(H_1) + d_{\text{right}}(H_0) + \text{PenalizaciónEtiqueta}(H_1 \to \text{izq}, H_0 \to \text{der}) + \text{PenalizaciónTemporal}(H_1, H_0)$$
-
-Donde todas las magnitudes están expresadas en unidades de $D$:
-- MediaPipe en frame no espejado entrega:
-  - `'Right'` $\to$ mano izquierda del firmante (penalización $+0.25 \cdot D$ si se asigna a mano derecha).
-  - `'Left'` $\to$ mano derecha del firmante (penalización $+0.25 \cdot D$ si se asigna a mano izquierda).
-- Término de continuidad temporal: penaliza la distancia euclidiana a la muñeca de la mano asignada en el frame previo ($+0.5 \cdot \text{dist2D}(H, H_{\text{prev}})$ en unidades de $D$).
-
-$$\text{costo}_A = d_{\text{left}}(H_0) + d_{\text{right}}(H_1) + \text{PenalizaciónEtiqueta}(0.25 \cdot D) + 0.5 \cdot \text{dist2D}(H, H_{\text{prev}})$$
-$$\text{costo}_B = d_{\text{left}}(H_1) + d_{\text{right}}(H_0) + \text{PenalizaciónEtiqueta}(0.25 \cdot D) + 0.5 \cdot \text{dist2D}(H, H_{\text{prev}})$$
-
-#### Registro de Ambigüedad:
-Si $|\text{costo}_A - \text{costo}_B| < 0.15 \cdot D$ (manos cruzadas o en el centro del pecho), se incrementa el contador `ambiguous_handedness_count` en el manifiesto de la toma, registrando ambos casos (1 mano y 2 manos).
+1. **Convención directa de lateralidad (`handedness_convention = "direct"`):**
+   - Empíricamente verificada sobre grabaciones reales (`0/36` discrepancias frente a `36/36` en v1.3.0):
+     - `'Left'` $\to$ bloque izquierdo `[52..114]` (anclado a muñeca de pose `P15`).
+     - `'Right'` $\to$ bloque derecho `[115..177]` (anclado a muñeca de pose `P16`).
+2. **Métrica espacial consistente:** todas las distancias de muñeca a pose (`d_left`, `d_right`), el umbral de desconexión ($1.75 \cdot D$ cuando $\text{vis}(P_{\text{cercano}}) \ge 0.50$) y el término de continuidad temporal usan `dist2d_iso` (4:3).
+3. **Scoring unificado para 1 y 2 manos:**
+   - Penalización por etiqueta discordante: $+0.25 \cdot D$.
+   - Continuidad temporal simétrica (solo cuando ambas muñecas previas `prev_left_w` y `prev_right_w` están vigentes): $+0.50 \cdot \text{dist2d\_iso}(H, H_{\text{prev}})$.
+   - Para 1 mano se aplica el mismo costo unificado (espacial + etiqueta + continuidad), eliminando el override ciego de etiqueta que en v1.3.0 anulaba la geometría de pose.
+4. **Expiración de memoria de muñeca (`WRIST_MEMORY_TTL_MS = 200.0 ms`):** si una mano no se detecta durante $> 200.0\text{ ms}$, su posición previa expira a `null` para evitar anclajes obsoletos.
 
 ---
 
-## 7. Brechas Temporales y Tolerancia
+## 7. Compuertas Temporales Estrictas (`v1.4.0`)
 
-- $\text{Brecha} = t_{\text{siguiente\_válido}} - t_{\text{último\_válido}} - \Delta t_{\text{nominal}}$.
-- Umbral máximo: **$\le 100\text{ ms}$**.
-  - A 15 FPS: 1 frame perdido ($66.7\text{ ms}$) $\implies$ Permitido. $\ge 2$ frames perdidos $\implies$ `ERR_INVALID_FRAME_GAP_TOO_LARGE`.
-  - A 30 FPS: hasta 3 frames perdidos ($100\text{ ms}$) $\implies$ Permitido. $\ge 4$ frames perdidos $\implies$ Rechazado.
-
----
-
-## 8. Modos Declarativos por Clase y Duraciones Unificadas
-
-Todas las tomas del dataset tienen una duración temporal unificada:
-- **Duración máxima de toma:** **$2.5\text{ s}$ ($2500\text{ ms}$)**.
-- **Margen de captura cruda:** $1.5\text{ s}$ a $2.5\text{ s}$.
-
-| Modo | Definición | Requisito de Segmentación | Criterio de Aceptación |
-|---|---|---|---|
-| `"estatica"` | Seña en pose fija sin trayectoria (ej. A, B, C... 1, 2, 3...) | El usuario debe **mantener la pose estable durante $\ge 1200\text{ ms}$**. | Varianza posicional articular $< 0.35 \text{ palmScale}/\text{s}$ durante la ventana central de 1000 ms. |
-| `"dinamica"` | Seña con trayectoria cinemática (ej. J, Z, "hola", "gracias") | Movimiento con curva de aceleración y desaceleración. | Desplazamiento articular acumulado $\ge 0.15 \times D$ dentro de los 2500 ms. |
+Ninguna compuerta puede relajarse para enmascarar hardware lento:
+1. **Brecha cruda absoluta (`ERR_INVALID_FRAME_GAP_TOO_LARGE`):** $\max_i (t_{i+1} - t_i) \le 100.0\text{ ms}$ (comparación directa, sin restar $\Delta t_{\text{nom}}$ y sin escalar con `duration_ms`).
+2. **Cero extrapolación de cola (`ERR_WINDOW_TAIL_EXTRAPOLATION`):** $t_{\text{último}} + 10^{-6} \ge \tau_{14} = t_0 + 14 \cdot (\text{duration\_ms} / 15)$ (prohibido clonar el último frame para rellenar la cola).
+3. **Densidad mínima real (`ERR_WINDOW_LOW_UNIQUE_FRAMES`):** al menos **`12 / 15`** frames crudos únicos mapeados por vecino más cercano a la rejilla $\{\tau_0, \dots, \tau_{14}\}$.
+4. **Límite de puentes anchos (`ERR_WINDOW_HIGH_INTERPOLATION`):** como máximo **`3 / 14`** transiciones entre slots consecutivos cuyo punto medio caiga sobre un intervalo crudo $> 1.25 \cdot \Delta t_{\text{nom}}$.
 
 ---
 
-## 9. Tabla Única de Códigos de Error
+## 8. Tabla Única de Códigos de Error (`v1.4.0`)
 
 | Código de Error | Condición Disparadora | Comportamiento |
 |---|---|---|
-| `ERR_POSE_MISSING` | `pose == null` o `len(pose) < 23` | Rechazar frame. |
+| `ERR_POSE_MISSING` | `pose == null` o `len(pose) < 23` | Rechazar frame / ventana. |
+| `ERR_NON_FINITE_LANDMARKS` | Cualquier `x, y, z, visibility, t_ms` es `NaN` o `±Inf` | Rechazar frame / ventana. |
 | `ERR_SHOULDER_VISIBILITY` | $\text{vis}(P_{11}) < 0.40 \lor \text{vis}(P_{12}) < 0.40$ | Rechazar frame. |
-| `ERR_SHOULDERS_TOO_SMALL` | $D_{\text{ventana}} < 0.08$ | Rechazar frame o ventana. Prohibido recortar con `std::max`. |
-| `ERR_OUT_OF_BOUNDS` | Hombros fuera del cuadro ($x, y \notin [0.0, 1.0]$) | Rechazar frame. |
-| `ERR_HAND_DISCONNECTED` | $\min(d_{\text{left}}, d_{\text{right}}) > 1.75 \cdot D \land \text{vis}(P_{\text{wrist}}) \ge 0.50$ | Descartar mano espuria. |
-| `ERR_INVALID_FRAME_GAP_TOO_LARGE` | Brecha sin tracking $> 100 \text{ ms}$ | Rechazar toma completa. |
-| `ERR_INVALID_ASPECT_RATIO` | $|(W/H) - (4/3)| > 0.05$ | Rechazar captura de cámara. |
-| `ERR_CPP_NOT_CONFORMANT` | Invocación de inferencia nativa C++ en v1.3.0 | Rechazar ejecución con return de error explícito. |
+| `ERR_SHOULDERS_TOO_SMALL` | $D_{\text{2D\_iso}} < 0.08$ | Rechazar frame / ventana. |
+| `ERR_OUT_OF_BOUNDS` | Hombros fuera de $[0.0, 1.0]$ | Rechazar frame. |
+| `ERR_HAND_DISCONNECTED` | $\min(d_{\text{left}}, d_{\text{right}}) > 1.75 \cdot D \land \text{vis}(P_{\text{cercano}}) \ge 0.50$ | Descartar mano espuria. |
+| `ERR_INVALID_FRAME_GAP_TOO_LARGE` | $(t_{i+1} - t_i) > 100.0\text{ ms}$ | Rechazar ventana / toma. |
+| `ERR_WINDOW_TAIL_EXTRAPOLATION` | $t_{\text{último}} + 10^{-6} < \tau_{14}$ | Rechazar ventana. |
+| `ERR_WINDOW_LOW_UNIQUE_FRAMES` | Frames reales únicos más cercanos $< 12/15$ | Rechazar ventana. |
+| `ERR_WINDOW_HIGH_INTERPOLATION` | Puentes anchos $> 3/14$ ($> 1.25 \cdot \Delta t_{\text{nom}}$) | Rechazar ventana. |
+| `ERR_INVALID_ASPECT_RATIO` | $|(W/H) - (4/3)| > 0.05$ | Emitir error en `SignEngine` / rechazar toma en `DevRecorder`. |
+| `ERR_CAPTURE_FPS_TOO_LOW` | `avg_fps < 15.0` en `DevRecorder` | Marcar toma rechazada. |
+| `ERR_CAPTURE_NO_HANDS_IN_ACTIVE_SIGN` | Presencia de manos $< 60\%$ en seña activa (`label != "reposo"`) | Marcar toma rechazada. |
+| `IncompatibleFeatureSpecError` | `model_metadata.json` sin `1.4.x` o `config_hash` incompatible | Abortar arranque de `InferenceEngine`. |
 
 ---
 
-## 10. Fixture Único Compartido, Tolerancia Elemento a Elemento ($L_\infty$) y `config_hash`
+## 9. `config_hash` Canónico (`v1.4.0`) y Esquema `.raw.json`
 
-Las pruebas de conformidad en todos los lenguajes (Python y JavaScript) deben consumir **obligatoriamente el archivo canónico único**:
-`tests/fixtures/feature_spec_cases.json`
+### 9.1 Campos sellados en `config_hash` (27 claves ordenadas, JSON compacto sin espacios)
+`aspect_ratio ("4:3")`, `d_metric ("2d_iso_4_3")`, `delegate`, `duration_ms (1000)`, `ema_alpha (0.5)`, `feature_spec_version ("1.4.0")`, `hand_ambiguity_thresh (0.15)`, `hand_disconnected_thresh (1.75)`, `hand_landmarker_sha256`, `handedness_convention ("direct")`, `max_bridge_count (3)`, `max_gap_ms (100)`, `min_unique_real_frames (12)`, `pose_cadence`, `pose_landmarker_sha256`, `pose_upper_indices`, `pose_wrist_min_vis (0.5)`, `pose_z_clip_abs (2)`, `pose_z_zero_indices`, `sequence_length (15)`, `shoulder_vis_thresh (0.4)`, `shoulders_d_min (0.08)`, `target_fps (15)`, `total_features (178)`, `weight_label_penalty (0.25)`, `weight_temporal_continuity (0.5)`, `wrist_memory_ttl_ms (200)`.
 
-### 10.1 Regla de Aceptación Numérica ($L_\infty$):
-Para todo vector o tensor generado, la comparación con la salida esperada se evalúa **elemento a elemento** bajo la norma del supremo:
-$$\|v_{\text{obtenido}} - v_{\text{esperado}}\|_\infty = \max_{i} |v_{\text{obtenido}, i} - v_{\text{esperado}, i}| \le 10^{-6}$$
-Está prohibido evaluar únicamente la diferencia de normas escalares.
-
-### 10.2 Cálculo Canónico de `config_hash`:
-El hash de configuración criptográfica se calcula como el digest SHA256 del JSON canónico ordenado que contiene:
-1. `feature_spec_version`: `"1.3.0"`
-2. Parámetros dimensionales y temporales (`total_features: 178`, `sequence_length: 15`, `target_fps: 15`, `duration_ms: 1000.0`, `shoulders_d_min: 0.08`).
-3. Pesos de asignación (`weight_label_penalty: 0.25`, `weight_temporal_continuity: 0.50`).
-4. **`fixtures_sha256`:** El hash SHA256 íntegro de `tests/fixtures/feature_spec_cases.json`.
-
-Cualquier cambio en las salidas esperadas o en la formulación matemática modifica `fixtures_sha256`, altera el `config_hash` y obliga a incrementar la versión `minor` (ej. de 1.2 a 1.3).
-
----
-
-## 11. Esquema Canónico de Tomas Crudas (`.raw.json`) y Auditoría por Segmentos
-
-### 11.1 Esquema de Toma Cruda Generada por el Grabador de Desarrollo:
-```json
-{
-  "version": "1.3.0",
-  "type": "expresat_dev_recording_raw",
-  "recorded_at": "2026-11-10T20:50:00.000Z",
-  "duration_ms": 18000,
-  "total_frames": 540,
-  "videoWidth": 640,
-  "videoHeight": 480,
-  "frames": [
-    {
-      "t_ms": 33.3,
-      "videoWidth": 640,
-      "videoHeight": 480,
-      "hands": [
-        {
-          "landmarks": [{ "x": 0.45, "y": 0.60, "z": -0.02 }],
-          "categoryName": "Left",
-          "score": 0.98
-        }
-      ],
-      "pose": [
-        { "x": 0.51, "y": 0.35, "z": 0.10, "visibility": 0.99 }
-      ]
-    }
-  ]
-}
-```
-
-### 11.2 Segmentos Temporales con `--segments` en `inspect_recording.py`:
-Permite verificar automáticamente una toma real de calibración dividida por ventanas temporales:
-- `reposo`: Sin manos detectadas o manos inactivas.
-- `solo_derecha`: Mano derecha física del firmante activa (MediaPipe `Left` -> slot right [115..177] activo, slot left inactivo).
-- `solo_izquierda`: Mano izquierda física del firmante activa (MediaPipe `Right` -> slot left [52..114] activo, slot right inactivo).
-- `ambas`: Ambas manos activas en sus respectivos slots anatómicos sin ambigüedad.
-- `cruce`: Ambas manos cruzadas en el centro del pecho (`is_ambiguous == True`).
-
+### 9.2 Esquema `.raw.json` (`v1.4.0`)
+Validado por [`tests/schemas/recording_raw.schema.json`](../../tests/schemas/recording_raw.schema.json) y [`tests/schemas/validate_recording.py`](../../tests/schemas/validate_recording.py). Las grabaciones `version = "1.4.0"` requieren obligatoriamente `feature_spec_version`, `config_hash`, `pose_cadence`, `model_artifacts`, `track_settings`, `interval_metrics`, `edge_metrics` y `hand_presence_metrics`, manteniendo retrocompatibilidad de lectura con tomas históricas `v1.3.x`.

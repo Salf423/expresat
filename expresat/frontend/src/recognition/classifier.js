@@ -1,9 +1,10 @@
 /**
- * src/recognition/classifier.js — Clasificador geométrico declarativo e interfaz Classifier
+ * Pure geometric classifier, canonical demo catalog, time-based smoothing/hysteresis,
+ * dynamic wave detection, anti-repetition cooldown, and Classifier interface.
  *
- * Extiende la interfaz `Classifier { predict(frames) -> { label, category, confidence, details } }`
- * conectando el catálogo declarativo (`src/recognition/signs/`), el matcher con desempate por grupo
- * confundible y el rechazo por baja confianza (`reason: 'LOW_CONFIDENCE'`).
+ * Defines the base `Classifier { predict(frames) -> { label, confidence, details } }`
+ * interface implemented by `GeometricClassifier` (in-browser, no trained model required)
+ * and the `ModelClassifier` adapter for plugging in an ONNX/GRU neural model later.
  */
 
 import {
@@ -11,16 +12,11 @@ import {
   isValidHandLandmarks,
   fingerStates,
   palmScale,
+  resolveAspectRatio,
 } from './geometry.js';
-import {
-  getSignCatalog,
-  matchCatalog,
-  buildTrajectoryContext,
-  SIGN_TYPES,
-} from './signs/index.js';
 
 /**
- * Etiquetas canónicas base (retrocompatibilidad con rearquitectura-demo).
+ * Canonical sign labels recognized by the geometric classifier.
  */
 export const SIGN_LABELS = Object.freeze({
   MANO_ABIERTA: 'Mano Abierta',
@@ -35,209 +31,683 @@ export const SIGN_LABELS = Object.freeze({
 });
 
 /**
- * Extrae `{ landmarks, handedness, timestampMs }` desde cualquier formato de frame soportado:
- * - Arreglo directo de 21 puntos `[{x,y,z}, ...]`
- * - Objeto `{ rightHand, leftHand, hands, landmarks, handedness, timestampMs }`
+ * Single source of truth for the verified geometric signs supported in local demo mode.
+ * Consumed directly by `Translator.jsx` (Quick Guide + offline TTS) and `GeometricClassifier`.
  */
-export function extractHandWithMeta(frame, fallbackTs = null) {
-  if (!frame) return null;
+export const SIGN_CATALOG = Object.freeze([
+  Object.freeze({
+    id: 'mano_abierta',
+    label: SIGN_LABELS.MANO_ABIERTA,
+    type: 'static',
+    hint: '5 dedos extendidos',
+    speakText: 'Mano abierta',
+  }),
+  Object.freeze({
+    id: 'puno',
+    label: SIGN_LABELS.PUNO,
+    type: 'static',
+    hint: 'Puño cerrado',
+    speakText: 'Puño',
+  }),
+  Object.freeze({
+    id: 'uno',
+    label: SIGN_LABELS.UNO,
+    type: 'static',
+    hint: 'Solo índice',
+    speakText: 'Uno',
+  }),
+  Object.freeze({
+    id: 'dos',
+    label: SIGN_LABELS.DOS,
+    type: 'static',
+    hint: 'Índice y medio',
+    speakText: 'Dos',
+  }),
+  Object.freeze({
+    id: 'ok',
+    label: SIGN_LABELS.OK,
+    type: 'static',
+    hint: 'Círculo pulgar-índice y 3 dedos arriba',
+    speakText: 'OK',
+  }),
+  Object.freeze({
+    id: 'bien',
+    label: SIGN_LABELS.BIEN,
+    type: 'static',
+    hint: 'Pulgar arriba',
+    speakText: 'Bien',
+  }),
+  Object.freeze({
+    id: 'te_quiero',
+    label: SIGN_LABELS.TE_QUIERO,
+    type: 'static',
+    hint: 'Pulgar, índice y meñique',
+    speakText: 'Te quiero',
+  }),
+  Object.freeze({
+    id: 'lunes',
+    label: SIGN_LABELS.LUNES,
+    type: 'static',
+    hint: 'Pulgar e índice en L',
+    speakText: 'Lunes',
+  }),
+  Object.freeze({
+    id: 'hola',
+    label: SIGN_LABELS.HOLA,
+    type: 'dynamic',
+    hint: 'Saludo lateral con mano abierta',
+    speakText: 'Hola',
+  }),
+]);
 
-  if (Array.isArray(frame)) {
-    if (frame.length < 21) return null;
-    return {
-      landmarks: frame,
-      handedness: typeof frame.handedness === 'string' ? frame.handedness : 'Right',
-      timestampMs: typeof frame.timestampMs === 'number' ? frame.timestampMs : fallbackTs,
-    };
+const CATALOG_BY_LABEL = new Map(SIGN_CATALOG.map((entry) => [entry.label, entry]));
+
+/**
+ * Looks up catalog metadata (id, type, hint, speakText) by canonical sign label.
+ */
+export function getSignCatalogEntry(label) {
+  return CATALOG_BY_LABEL.get(label) || null;
+}
+
+export const DEFAULT_MIN_CONFIDENCE = 0.68;
+
+function clamp01(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function extractFrameTimestampMs(frame) {
+  if (!frame || typeof frame !== 'object' || Array.isArray(frame)) return null;
+  const raw = frame.t_ms ?? frame.timestamp_ms ?? frame.timestamp;
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+}
+
+function scoreGeometricMargins(margins, shapeFactor = 1.0) {
+  if (!Array.isArray(margins) || margins.length === 0) return 0;
+  let minM = 1;
+  let sumM = 0;
+  for (let i = 0; i < margins.length; i++) {
+    const m = clamp01(margins[i]);
+    if (m < minM) minM = m;
+    sumM += m;
   }
+  const avgM = sumM / margins.length;
+  const blended = 0.55 * minM + 0.45 * avgM;
+  const base = 0.62 + 0.37 * blended;
+  const shaped = base * (0.86 + 0.14 * clamp01(shapeFactor));
+  return Number(Math.max(0, Math.min(0.99, shaped)).toFixed(4));
+}
 
+/**
+ * Extracts all candidate 21-point hand landmark arrays with their v1.4.0 anatomical slot id.
+ * Preserves symmetry between left and right hands so neither side is blindly discarded.
+ *
+ * @param {Array|Object} frame
+ * @returns {Array<{ handId: string, landmarks: Array }>}
+ */
+export function extractHandsFromFrame(frame) {
+  if (!frame) return [];
+  if (Array.isArray(frame)) {
+    return frame.length >= 21 ? [{ handId: 'hand_0', landmarks: frame }] : [];
+  }
   if (typeof frame === 'object') {
-    const ts =
-      typeof frame.timestampMs === 'number'
-        ? frame.timestampMs
-        : typeof frame.timestamp === 'number'
-          ? frame.timestamp
-          : fallbackTs;
-
+    const out = [];
     if (Array.isArray(frame.rightHand) && frame.rightHand.length >= 21) {
-      return {
-        landmarks: frame.rightHand,
-        handedness: frame.handedness || 'Right',
-        timestampMs: ts,
-      };
+      out.push({ handId: 'rightHand', landmarks: frame.rightHand });
     }
     if (Array.isArray(frame.leftHand) && frame.leftHand.length >= 21) {
-      return {
-        landmarks: frame.leftHand,
-        handedness: frame.handedness || 'Left',
-        timestampMs: ts,
-      };
+      out.push({ handId: 'leftHand', landmarks: frame.leftHand });
     }
-    if (Array.isArray(frame.hands) && frame.hands.length > 0 && Array.isArray(frame.hands[0])) {
-      if (frame.hands[0].length < 21) return null;
-      return {
-        landmarks: frame.hands[0],
-        handedness: frame.handedness || 'Right',
-        timestampMs: ts,
-      };
+    if (out.length > 0) return out;
+
+    if (Array.isArray(frame.hands) && frame.hands.length > 0) {
+      for (let i = 0; i < frame.hands.length; i++) {
+        const item = frame.hands[i];
+        const lm = Array.isArray(item) ? item : item?.landmarks;
+        if (Array.isArray(lm) && lm.length >= 21) {
+          const cat =
+            (!Array.isArray(item) && (item?.categoryName || item?.label)) ||
+            frame.handedness?.[i]?.[0]?.categoryName ||
+            frame.handedness?.[i]?.[0]?.label ||
+            null;
+          const handId =
+            cat === 'Left' ? 'leftHand' : cat === 'Right' ? 'rightHand' : `hand_${i}`;
+          out.push({ handId, landmarks: lm });
+        }
+      }
+      if (out.length > 0) return out;
     }
+
     if (Array.isArray(frame.landmarks) && frame.landmarks.length >= 21) {
-      return {
-        landmarks: frame.landmarks,
-        handedness: frame.handedness || 'Right',
-        timestampMs: ts,
-      };
+      return [{ handId: 'hand_0', landmarks: frame.landmarks }];
     }
   }
-
-  return null;
+  return [];
 }
 
 /**
- * Extrae el arreglo de 21 landmarks de mano desde distintos formatos de entrada.
+ * Extracts the primary 21-point hand landmark array from supported input formats.
  */
 export function extractHandFromFrame(frame) {
-  const meta = extractHandWithMeta(frame);
-  return meta ? meta.landmarks : null;
+  const candidates = extractHandsFromFrame(frame);
+  return candidates.length > 0 ? candidates[0].landmarks : null;
 }
 
 /**
- * Clasifica un único frame de 21 landmarks de mano evaluando las señas estáticas del catálogo declarativo.
- *
- * @param {Array<{x:number, y:number, z?:number}>|Object} frameOrLandmarks
- * @param {Object} [options]
- * @returns {{ label: string|null, category: string|null, confidence: number, states: Object|null, reason: string, details: Object }}
+ * Classifies a single validated 21-point hand array into a static gesture with
+ * continuous margin-based confidence and explicit ambiguity/low-confidence rejection.
  */
-export function classifyStaticHand(frameOrLandmarks, options = {}) {
-  const meta = extractHandWithMeta(frameOrLandmarks);
-  if (!meta || !isValidHandLandmarks(meta.landmarks)) {
+function classifySingleHandLandmarks(
+  landmarks,
+  { aspectRatio = 1.0, minConfidence = DEFAULT_MIN_CONFIDENCE } = {}
+) {
+  if (!landmarks || !isValidHandLandmarks(landmarks, { aspectRatio })) {
     return {
       label: null,
-      category: null,
       confidence: 0,
       states: null,
       reason: 'INVALID_OR_NOISY_LANDMARKS',
-      details: { reason: 'INVALID_OR_NOISY_LANDMARKS', states: null },
     };
   }
 
-  const states = fingerStates(meta.landmarks, { handedness: meta.handedness });
+  const states = fingerStates(landmarks, { aspectRatio, _skipValidation: true });
   if (!states) {
     return {
       label: null,
-      category: null,
       confidence: 0,
       states: null,
       reason: 'DEGENERATE_HAND_GEOMETRY',
-      details: { reason: 'DEGENERATE_HAND_GEOMETRY', states: null },
     };
   }
 
-  const staticCatalog = (options.catalog || getSignCatalog()).filter(
-    (s) => s.tipo === SIGN_TYPES.ESTATICA
-  );
+  const {
+    thumb,
+    index,
+    middle,
+    ring,
+    pinky,
+    isPinching,
+    thumbIndexTipDist,
+    thumbIndexAngleDeg,
+    thumbUpScore,
+    indexMiddleSpread,
+    details,
+  } = states;
 
-  const matched = matchCatalog(staticCatalog, states, null, options);
+  const tD = details.thumb;
+  const iD = details.index;
+  const mD = details.middle;
+  const rD = details.ring;
+  const pD = details.pinky;
+
+  const finalize = (label, confidence, reason) => {
+    if (confidence < minConfidence) {
+      return {
+        label: null,
+        confidence: 0,
+        states,
+        reason: 'LOW_CONFIDENCE_AMBIGUOUS',
+      };
+    }
+    return { label, confidence, states, reason };
+  };
+
+  // 1. OK / Pinza: thumb and index tips joined (< 0.36 * palmScale), index NOT straight,
+  // and remaining three fingers (middle, ring, pinky) clearly extended.
+  // Disjoint from natural closed fists where middle/ring/pinky are curled.
+  if (isPinching && !index && middle && ring && pinky) {
+    const tightness = clamp01(1 - thumbIndexTipDist / 0.38);
+    const confidence = scoreGeometricMargins(
+      [tightness, mD.extensionMargin, rD.extensionMargin, pD.extensionMargin],
+      0.5 + 0.5 * tightness
+    );
+    return finalize(
+      SIGN_LABELS.OK,
+      confidence,
+      'Pulgar e índice en círculo OK con medio, anular y meñique extendidos'
+    );
+  }
+
+  // 2. Open hand (Mano Abierta): all 5 fingers clearly extended
+  if (thumb && index && middle && ring && pinky) {
+    const confidence = scoreGeometricMargins([
+      tD.extensionMargin,
+      iD.extensionMargin,
+      mD.extensionMargin,
+      rD.extensionMargin,
+      pD.extensionMargin,
+    ]);
+    return finalize(SIGN_LABELS.MANO_ABIERTA, confidence, 'Cinco dedos extendidos');
+  }
+
+  // 3. Fist (Puño): all 5 fingers explicitly curled (rejects relaxed / Letra C / Letra A postures)
+  if (tD.curled && iD.curled && mD.curled && rD.curled && pD.curled) {
+    const confidence = scoreGeometricMargins([
+      tD.curlMargin,
+      iD.curlMargin,
+      mD.curlMargin,
+      rD.curlMargin,
+      pD.curlMargin,
+    ]);
+    return finalize(SIGN_LABELS.PUNO, confidence, 'Cinco dedos flexionados en puño');
+  }
+
+  // 4. One (Uno): index extended only, thumb and remaining fingers explicitly curled
+  if (tD.curled && index && mD.curled && rD.curled && pD.curled) {
+    const confidence = scoreGeometricMargins([
+      tD.curlMargin,
+      iD.extensionMargin,
+      mD.curlMargin,
+      rD.curlMargin,
+      pD.curlMargin,
+    ]);
+    return finalize(SIGN_LABELS.UNO, confidence, 'Solo dedo índice extendido');
+  }
+
+  // 5. Two (Dos): index and middle extended, thumb/ring/pinky explicitly curled
+  if (tD.curled && index && middle && rD.curled && pD.curled) {
+    const spreadScore = clamp01((indexMiddleSpread - 0.1) / 0.25);
+    const confidence = scoreGeometricMargins(
+      [tD.curlMargin, iD.extensionMargin, mD.extensionMargin, rD.curlMargin, pD.curlMargin],
+      0.55 + 0.45 * spreadScore
+    );
+    return finalize(SIGN_LABELS.DOS, confidence, 'Dedos índice y medio extendidos');
+  }
+
+  // 6. ILY (Te Quiero): thumb, index, and pinky extended; middle and ring explicitly curled
+  if (thumb && index && mD.curled && rD.curled && pinky) {
+    const confidence = scoreGeometricMargins([
+      tD.extensionMargin,
+      iD.extensionMargin,
+      mD.curlMargin,
+      rD.curlMargin,
+      pD.extensionMargin,
+    ]);
+    return finalize(
+      SIGN_LABELS.TE_QUIERO,
+      confidence,
+      'Pulgar, índice y meñique extendidos (ILY)'
+    );
+  }
+
+  // 7. Lunes (letter L): thumb and index extended forming an explicit L angle [35°, 140°]
+  if (thumb && index && mD.curled && rD.curled && pD.curled) {
+    if (thumbIndexAngleDeg < 35 || thumbIndexAngleDeg > 140) {
+      return {
+        label: null,
+        confidence: 0,
+        states,
+        reason: 'AMBIGUOUS_THUMB_INDEX_ANGLE',
+      };
+    }
+    const distFromIdeal = Math.abs(thumbIndexAngleDeg - 85);
+    const angleFactor = clamp01(1 - Math.max(0, distFromIdeal - 20) / 45);
+    const confidence = scoreGeometricMargins(
+      [tD.extensionMargin, iD.extensionMargin, mD.curlMargin, rD.curlMargin, pD.curlMargin],
+      0.5 + 0.5 * angleFactor
+    );
+    return finalize(SIGN_LABELS.LUNES, confidence, 'Pulgar e índice extendidos en L');
+  }
+
+  // 8. Good (Bien): extended thumb pointing upward/tilted (rejects thumbs-down), 4 long fingers curled
+  if (thumb && iD.curled && mD.curled && rD.curled && pD.curled) {
+    if (thumbUpScore < 0.05) {
+      return {
+        label: null,
+        confidence: 0,
+        states,
+        reason: 'THUMB_NOT_UPWARD',
+      };
+    }
+    const upFactor = clamp01((thumbUpScore - 0.05) / 0.55);
+    const confidence = scoreGeometricMargins(
+      [tD.extensionMargin, iD.curlMargin, mD.curlMargin, rD.curlMargin, pD.curlMargin],
+      0.5 + 0.5 * upFactor
+    );
+    return finalize(SIGN_LABELS.BIEN, confidence, 'Pulgar extendido hacia arriba');
+  }
+
+  const anyAmbiguous =
+    tD.ambiguous || iD.ambiguous || mD.ambiguous || rD.ambiguous || pD.ambiguous;
 
   return {
-    label: matched.label,
-    category: matched.category,
-    confidence: matched.confidence,
+    label: null,
+    confidence: 0,
     states,
-    reason: matched.details?.reason || 'LOW_CONFIDENCE',
-    details: matched.details,
+    reason: anyAmbiguous ? 'AMBIGUOUS_OR_REST_POSTURE' : 'UNRECOGNIZED_CONFIGURATION',
   };
 }
 
 /**
- * Detecta oscilación lateral (saludo "Hola") sobre una ventana temporal de frames.
- * Analiza los cambios de dirección en el desplazamiento de la muñeca relativizados a `palmScale`.
+ * Classifies a single frame (one or two hands) into a static gesture.
+ * When both hands are visible, evaluates both symmetrically under v1.4.0 direct slots
+ * and prioritizes the hand actively forming a recognized sign (with optional sticky `preferredHandId`).
  *
- * @param {Array<Array<{x:number,y:number,z?:number}>>} handFrames
+ * @param {Array<{x:number, y:number, z?:number}>|Object} frameOrLandmarks
+ * @param {Object} [options]
+ * @param {number} [options.aspectRatio]
+ * @param {number} [options.minConfidence]
+ * @param {string|null} [options.preferredHandId]
+ * @returns {{ label: string|null, confidence: number, states: Object|null, reason: string, handId?: string|null, landmarks?: Array|null }}
+ */
+export function classifyStaticHand(frameOrLandmarks, options = {}) {
+  const aspectRatio =
+    options.aspectRatio ??
+    (frameOrLandmarks && !Array.isArray(frameOrLandmarks)
+      ? resolveAspectRatio(frameOrLandmarks)
+      : 1.0);
+  const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+  const preferredHandId = options.preferredHandId ?? null;
+
+  const candidates = extractHandsFromFrame(frameOrLandmarks);
+  if (candidates.length === 0) {
+    return {
+      label: null,
+      confidence: 0,
+      states: null,
+      reason: 'INVALID_OR_NOISY_LANDMARKS',
+      handId: null,
+      landmarks: null,
+    };
+  }
+
+  if (candidates.length === 1) {
+    const res = classifySingleHandLandmarks(candidates[0].landmarks, {
+      aspectRatio,
+      minConfidence,
+    });
+    return {
+      ...res,
+      handId: candidates[0].handId,
+      landmarks: candidates[0].landmarks,
+    };
+  }
+
+  const evaluated = candidates.map((cand) => ({
+    ...cand,
+    res: classifySingleHandLandmarks(cand.landmarks, { aspectRatio, minConfidence }),
+  }));
+
+  const recognized = evaluated.filter((item) => item.res.label !== null);
+  let chosen = null;
+
+  if (recognized.length === 1) {
+    chosen = recognized[0];
+  } else if (recognized.length > 1) {
+    const sticky = preferredHandId
+      ? recognized.find((item) => item.handId === preferredHandId)
+      : null;
+    if (sticky) {
+      chosen = sticky;
+    } else {
+      recognized.sort((a, b) => {
+        const ay = a.landmarks[HAND_LANDMARKS.WRIST]?.y ?? 1;
+        const by = b.landmarks[HAND_LANDMARKS.WRIST]?.y ?? 1;
+        if (Math.abs(ay - by) > 0.08) return ay - by;
+        return b.res.confidence - a.res.confidence;
+      });
+      chosen = recognized[0];
+    }
+  } else {
+    const validOnes = evaluated.filter((item) => item.res.states !== null);
+    const sticky = preferredHandId
+      ? validOnes.find((item) => item.handId === preferredHandId)
+      : null;
+    chosen = sticky || validOnes[0] || evaluated[0];
+  }
+
+  return {
+    ...chosen.res,
+    handId: chosen.handId,
+    landmarks: chosen.landmarks,
+  };
+}
+
+/**
+ * Detects genuine lateral oscillation ("Hola" greeting wave) across a time-bounded window.
+ *
+ * Uses a ZigZag hysteresis turning-point detector so behavior is strictly FPS-independent
+ * (identical at 10, 15, and 30 FPS):
+ * - Counts ONLY confirmed interior direction reversals of amplitude >= `minHalfAmpRatio * avgScale`
+ *   (eliminating 1-reversal entry-overshoot false positives).
+ * - Filters by `waveWindowMs` when timestamps (`tMs`) are present.
+ * - Enforces recency (`maxIdleTailMs`) so holding the hand still clears "Hola" rapidly
+ *   without a 1+ second "Zombie Hola" tail at low FPS.
+ *
+ * @param {Array<Array<{x:number,y:number,z?:number}>|{landmarks?:Array, wristX?:number, scale?:number, tMs?:number}>} handFrames
+ * @param {Object} [options]
+ * @param {number} [options.waveWindowMs=900]
+ * @param {number} [options.minHalfAmpRatio=0.22]
+ * @param {number} [options.minReversals=2]
+ * @param {number} [options.maxIdleTailMs=280]
+ * @param {number} [options.aspectRatio=1.0]
  * @returns {{ isWaving: boolean, directionChanges: number, totalAmplitude: number }}
  */
-export function detectWaveMotion(handFrames) {
+export function detectWaveMotion(handFrames, options = {}) {
   if (!Array.isArray(handFrames) || handFrames.length < 5) {
     return { isWaving: false, directionChanges: 0, totalAmplitude: 0 };
   }
 
-  const validWrists = [];
-  let scaleSum = 0;
+  const waveWindowMs = options.waveWindowMs ?? 900;
+  const minHalfAmpRatio = options.minHalfAmpRatio ?? 0.22;
+  const minReversals = options.minReversals ?? 2;
+  const maxIdleTailMs = options.maxIdleTailMs ?? 280;
+  const aspectRatio = options.aspectRatio ?? 1.0;
 
-  for (const item of handFrames) {
-    const lm = Array.isArray(item) ? item : extractHandFromFrame(item);
-    if (lm && isValidHandLandmarks(lm)) {
-      const s = palmScale(lm);
-      validWrists.push(lm[HAND_LANDMARKS.WRIST].x);
-      scaleSum += s;
+  const samples = [];
+  let hasTimestamps = false;
+
+  for (let i = 0; i < handFrames.length; i++) {
+    const entry = handFrames[i];
+    if (!entry) continue;
+    if (Array.isArray(entry)) {
+      if (isValidHandLandmarks(entry, { aspectRatio })) {
+        samples.push({
+          x: entry[HAND_LANDMARKS.WRIST].x,
+          scale: palmScale(entry, { aspectRatio }),
+          tMs: null,
+        });
+      }
+    } else if (typeof entry === 'object') {
+      const tMs =
+        typeof entry.tMs === 'number' && Number.isFinite(entry.tMs)
+          ? entry.tMs
+          : extractFrameTimestampMs(entry);
+      if (tMs !== null) hasTimestamps = true;
+
+      if (typeof entry.wristX === 'number' && typeof entry.scale === 'number' && entry.scale > 0) {
+        samples.push({ x: entry.wristX, scale: entry.scale, tMs });
+      } else if (Array.isArray(entry.landmarks)) {
+        const entryAspect = entry.aspectRatio ?? aspectRatio;
+        if (isValidHandLandmarks(entry.landmarks, { aspectRatio: entryAspect })) {
+          samples.push({
+            x: entry.landmarks[HAND_LANDMARKS.WRIST].x,
+            scale: palmScale(entry.landmarks, { aspectRatio: entryAspect }),
+            tMs,
+          });
+        }
+      }
     }
   }
 
-  if (validWrists.length < 5) {
+  if (samples.length < 5) {
     return { isWaving: false, directionChanges: 0, totalAmplitude: 0 };
   }
 
-  const avgScale = scaleSum / validWrists.length;
-  const minHalfAmp = 0.12 * avgScale;
-  const noiseThreshold = 0.015 * avgScale;
-
-  let currentDir = 0;
-  const extremes = [validWrists[0]];
-
-  for (let i = 0; i < validWrists.length - 1; i++) {
-    const diff = validWrists[i + 1] - validWrists[i];
-    if (Math.abs(diff) < noiseThreshold) continue;
-    const newDir = diff > 0 ? 1 : -1;
-    if (currentDir !== 0 && newDir !== currentDir) {
-      extremes.push(validWrists[i]);
+  let activeSamples = samples;
+  if (hasTimestamps) {
+    const latestT = samples[samples.length - 1].tMs;
+    if (latestT !== null) {
+      activeSamples = samples.filter((s) => s.tMs === null || latestT - s.tMs <= waveWindowMs);
     }
-    currentDir = newDir;
   }
-  extremes.push(validWrists[validWrists.length - 1]);
 
-  let validChanges = 0;
+  if (activeSamples.length < 5) {
+    return { isWaving: false, directionChanges: 0, totalAmplitude: 0 };
+  }
+
+  let scaleSum = 0;
+  for (let i = 0; i < activeSamples.length; i++) {
+    scaleSum += activeSamples[i].scale;
+  }
+  const avgScale = scaleSum / activeSamples.length;
+  if (!Number.isFinite(avgScale) || avgScale < 1e-6) {
+    return { isWaving: false, directionChanges: 0, totalAmplitude: 0 };
+  }
+
+  const minHalfAmp = minHalfAmpRatio * avgScale;
+  const motionEps = 0.06 * avgScale;
+
+  // ZigZag interior turning-point extraction (strictly counts interior reversals >= minHalfAmp)
+  let trend = 0;
+  let anchorX = activeSamples[0].x;
+  let extX = activeSamples[0].x;
+  let extT = activeSamples[0].tMs;
+  let lastMotionX = activeSamples[0].x;
+  let lastMotionT = activeSamples[0].tMs;
+
+  let reversals = 0;
   let totalAmplitude = 0;
-  let lastVal = extremes[0];
 
-  for (let i = 1; i < extremes.length; i++) {
-    const amp = Math.abs(extremes[i] - lastVal);
-    if (amp >= minHalfAmp) {
-      validChanges++;
-      totalAmplitude += amp / avgScale;
-      lastVal = extremes[i];
+  for (let i = 1; i < activeSamples.length; i++) {
+    const { x, tMs } = activeSamples[i];
+
+    if (Math.abs(x - lastMotionX) >= motionEps) {
+      lastMotionX = x;
+      lastMotionT = tMs;
+    }
+
+    if (trend === 0) {
+      if (x - anchorX >= minHalfAmp) {
+        trend = 1;
+        extX = x;
+        extT = tMs;
+      } else if (anchorX - x >= minHalfAmp) {
+        trend = -1;
+        extX = x;
+        extT = tMs;
+      }
+    } else if (trend === 1) {
+      if (x > extX) {
+        extX = x;
+        extT = tMs;
+      } else if (extX - x >= minHalfAmp) {
+        // Confirmed interior peak at extX
+        reversals++;
+        totalAmplitude += Math.abs(extX - anchorX) / avgScale;
+        anchorX = extX;
+        trend = -1;
+        extX = x;
+        extT = tMs;
+      }
+    } else if (x < extX) {
+      extX = x;
+      extT = tMs;
+    } else if (x - extX >= minHalfAmp) {
+      // Confirmed interior trough at extX
+      reversals++;
+      totalAmplitude += Math.abs(anchorX - extX) / avgScale;
+      anchorX = extX;
+      trend = 1;
+      extX = x;
+      extT = tMs;
+    }
+  }
+
+  // Include the active trailing leg amplitude once at least one reversal occurred
+  if (reversals > 0 && Math.abs(extX - anchorX) >= minHalfAmp) {
+    totalAmplitude += Math.abs(extX - anchorX) / avgScale;
+  }
+
+  let isRecent = true;
+  if (hasTimestamps) {
+    const latestT = activeSamples[activeSamples.length - 1].tMs;
+    const refT = lastMotionT ?? extT;
+    if (latestT !== null && refT !== null && latestT - refT > maxIdleTailMs) {
+      isRecent = false;
     }
   }
 
   return {
-    isWaving: validChanges >= 2,
-    directionChanges: validChanges,
+    isWaving: isRecent && reversals >= minReversals,
+    directionChanges: reversals,
     totalAmplitude: Number(totalAmplitude.toFixed(4)),
   };
 }
 
 /**
- * Suavizador temporal por votación de mayoría sobre los últimos N frames.
+ * Temporal majority-voting smoother with real-time `t_ms` windowing, minimum stability
+ * duration (~250-350 ms), and entry/exit hysteresis.
+ *
+ * Supports both:
+ * - Time-based mode (default whenever `timestampMs` is supplied): FPS-independent across 10/15/30 FPS.
+ * - Legacy frame-count mode (`new SmoothingVoter(windowSize, minVotes)` without timestamps) for
+ *   backward compatibility with stateless frame tests.
  */
 export class SmoothingVoter {
   /**
-   * @param {number} windowSize Tamaño de la ventana de votación (por defecto 5)
-   * @param {number} minVotes Mínimo de votos para confirmar una etiqueta (por defecto ceil(windowSize / 2))
+   * @param {number|Object} [windowSizeOrOptions]
+   * @param {number} [legacyMinVotes]
    */
-  constructor(windowSize = 5, minVotes = Math.ceil(windowSize / 2)) {
-    this.windowSize = Math.max(1, windowSize);
-    this.minVotes = Math.max(1, Math.min(this.windowSize, minVotes));
+  constructor(windowSizeOrOptions = {}, legacyMinVotes = undefined) {
+    if (typeof windowSizeOrOptions === 'number') {
+      this.windowSize = Math.max(1, windowSizeOrOptions);
+      this.minVotes = Math.max(
+        1,
+        Math.min(this.windowSize, legacyMinVotes ?? Math.ceil(this.windowSize / 2))
+      );
+      this.windowMs = 450;
+      this.minStableMs = 260;
+      this.enterRatio = 0.55;
+      this.exitRatio = 0.3;
+      this.releaseMs = 360;
+      this._legacyFrameDefaults = true;
+    } else {
+      const opts = windowSizeOrOptions || {};
+      this.windowSize = Math.max(1, opts.windowSize ?? 5);
+      this.minVotes = Math.max(1, opts.minVotes ?? 2);
+      this.windowMs = Math.max(100, opts.windowMs ?? 450);
+      this.minStableMs = Math.max(0, opts.minStableMs ?? 260);
+      this.enterRatio = clamp01(opts.enterRatio ?? 0.55);
+      this.exitRatio = clamp01(opts.exitRatio ?? 0.3);
+      this.releaseMs = Math.max(100, opts.releaseMs ?? 360);
+      this._legacyFrameDefaults = Boolean(opts.windowSize !== undefined && opts.windowMs === undefined);
+    }
+
     this.history = [];
+    this.confirmedLabel = null;
+    this._candidateLabel = null;
+    this._candidateSinceMs = null;
+    this._lastConfirmedSeenMs = -Infinity;
+    this._lastTimestampMs = null;
   }
 
   /**
-   * Registra una nueva predicción `{ label, category, confidence }` y devuelve el consenso suavizado.
-   * @param {{ label: string|null, category?: string|null, confidence: number }} prediction
+   * Records a new `{ label, confidence }` prediction and returns the smoothed consensus.
+   * When `timestampMs` (or `prediction.t_ms` / `prediction.timestamp`) is finite, operates
+   * strictly in real milliseconds (`t_ms`) with entry/exit hysteresis.
+   *
+   * @param {{ label: string|null, confidence: number, t_ms?: number, timestamp?: number }} prediction
+   * @param {number|null} [timestampMs]
    */
-  push(prediction) {
+  push(prediction, timestampMs = null) {
+    const resolvedTs =
+      typeof timestampMs === 'number' && Number.isFinite(timestampMs)
+        ? timestampMs
+        : extractFrameTimestampMs(prediction);
+
+    if (resolvedTs === null) {
+      return this._pushFrameMode(prediction);
+    }
+
+    return this._pushTimeMode(prediction, resolvedTs);
+  }
+
+  _pushFrameMode(prediction) {
     this.history.push({
       label: prediction?.label ?? null,
-      category: prediction?.category ?? null,
       confidence: prediction?.confidence ?? 0,
+      tMs: null,
     });
     if (this.history.length > this.windowSize) {
       this.history.shift();
@@ -245,15 +715,11 @@ export class SmoothingVoter {
 
     const counts = new Map();
     const confSums = new Map();
-    const categories = new Map();
 
     for (const item of this.history) {
       if (!item.label) continue;
       counts.set(item.label, (counts.get(item.label) || 0) + 1);
       confSums.set(item.label, (confSums.get(item.label) || 0) + item.confidence);
-      if (item.category) {
-        categories.set(item.label, item.category);
-      }
     }
 
     let bestLabel = null;
@@ -266,39 +732,183 @@ export class SmoothingVoter {
       }
     }
 
-    if (bestLabel && bestCount >= this.minVotes) {
+    const requiredVotes = this._legacyFrameDefaults
+      ? this.minVotes
+      : Math.max(this.minVotes, Math.ceil(this.windowSize / 2));
+
+    if (bestLabel && bestCount >= requiredVotes) {
       const avgConf = confSums.get(bestLabel) / bestCount;
+      this.confirmedLabel = bestLabel;
       return {
         label: bestLabel,
-        category: categories.get(bestLabel) || null,
         confidence: Number(avgConf.toFixed(4)),
         votes: bestCount,
         windowSize: this.history.length,
+        stableMs: 0,
+        stabilityProgress: 1,
+        candidateLabel: bestLabel,
+      };
+    }
+
+    this.confirmedLabel = null;
+    return {
+      label: null,
+      confidence: 0,
+      votes: bestCount,
+      windowSize: this.history.length,
+      stableMs: 0,
+      stabilityProgress: bestLabel ? clamp01(bestCount / requiredVotes) : 0,
+      candidateLabel: bestLabel,
+    };
+  }
+
+  _pushTimeMode(prediction, tMs) {
+    // Handle backward clock jump safely (e.g. test restart)
+    if (this._lastTimestampMs !== null && tMs < this._lastTimestampMs) {
+      this.reset();
+    }
+    this._lastTimestampMs = tMs;
+
+    const label = prediction?.label ?? null;
+    const confidence = prediction?.confidence ?? 0;
+
+    this.history.push({ label, confidence, tMs });
+
+    // Prune entries strictly older than `windowMs` (keep at least the newest sample)
+    while (this.history.length > 1 && tMs - this.history[0].tMs > this.windowMs) {
+      this.history.shift();
+    }
+
+    const counts = new Map();
+    const confSums = new Map();
+    const lastSeenByLabel = new Map();
+
+    for (let i = 0; i < this.history.length; i++) {
+      const item = this.history[i];
+      if (!item.label) continue;
+      counts.set(item.label, (counts.get(item.label) || 0) + 1);
+      confSums.set(item.label, (confSums.get(item.label) || 0) + item.confidence);
+      lastSeenByLabel.set(item.label, item.tMs);
+    }
+
+    const totalSamples = this.history.length;
+    let bestLabel = null;
+    let bestCount = 0;
+    let bestAvgConf = 0;
+
+    for (const [lbl, cnt] of counts.entries()) {
+      const avg = confSums.get(lbl) / cnt;
+      if (cnt > bestCount || (cnt === bestCount && avg > bestAvgConf)) {
+        bestCount = cnt;
+        bestLabel = lbl;
+        bestAvgConf = avg;
+      }
+    }
+
+    const bestRatio = totalSamples > 0 ? bestCount / totalSamples : 0;
+
+    // Track continuous candidate stability duration in ms
+    if (bestLabel && bestRatio >= this.enterRatio) {
+      if (this._candidateLabel !== bestLabel) {
+        this._candidateLabel = bestLabel;
+        // Anchor candidate start to the earliest consecutive/recent sample of this label in the window
+        let firstInWindow = tMs;
+        for (let i = this.history.length - 1; i >= 0; i--) {
+          if (this.history[i].label === bestLabel) {
+            firstInWindow = this.history[i].tMs;
+          } else if (this.history[i].label !== null) {
+            break;
+          }
+        }
+        this._candidateSinceMs = firstInWindow;
+      }
+    } else if (!bestLabel || bestRatio < this.exitRatio) {
+      this._candidateLabel = null;
+      this._candidateSinceMs = null;
+    }
+
+    const candidateStableMs =
+      this._candidateLabel && this._candidateSinceMs !== null
+        ? Math.max(0, tMs - this._candidateSinceMs)
+        : 0;
+
+    const bestMeetsEntry =
+      Boolean(bestLabel) &&
+      bestCount >= this.minVotes &&
+      bestRatio >= this.enterRatio &&
+      candidateStableMs >= this.minStableMs;
+
+    if (this.confirmedLabel === null) {
+      if (bestMeetsEntry) {
+        this.confirmedLabel = bestLabel;
+        this._lastConfirmedSeenMs = lastSeenByLabel.get(bestLabel) ?? tMs;
+      }
+    } else if (bestLabel && bestLabel !== this.confirmedLabel && bestMeetsEntry) {
+      // Competing sign met full entry + stability threshold -> clean transition
+      this.confirmedLabel = bestLabel;
+      this._lastConfirmedSeenMs = lastSeenByLabel.get(bestLabel) ?? tMs;
+    } else {
+      // Hysteresis: maintain confirmed label while share stays >= exitRatio and recent
+      const currCount = counts.get(this.confirmedLabel) || 0;
+      const currRatio = totalSamples > 0 ? currCount / totalSamples : 0;
+      if (currCount > 0) {
+        const seenAt = lastSeenByLabel.get(this.confirmedLabel);
+        if (seenAt !== undefined) {
+          this._lastConfirmedSeenMs = seenAt;
+        }
+      }
+      const sinceLastSeenMs = tMs - this._lastConfirmedSeenMs;
+      if (currRatio < this.exitRatio || sinceLastSeenMs > this.releaseMs) {
+        this.confirmedLabel = null;
+      }
+    }
+
+    if (this.confirmedLabel) {
+      const confCount = counts.get(this.confirmedLabel) || 0;
+      const avgConf = confCount > 0 ? confSums.get(this.confirmedLabel) / confCount : bestAvgConf;
+      return {
+        label: this.confirmedLabel,
+        confidence: Number(avgConf.toFixed(4)),
+        votes: confCount,
+        windowSize: totalSamples,
+        stableMs: Math.round(candidateStableMs),
+        stabilityProgress: 1,
+        candidateLabel: this.confirmedLabel,
       };
     }
 
     return {
       label: null,
-      category: null,
       confidence: 0,
       votes: bestCount,
-      windowSize: this.history.length,
+      windowSize: totalSamples,
+      stableMs: Math.round(candidateStableMs),
+      stabilityProgress:
+        this._candidateLabel && this.minStableMs > 0
+          ? Number(clamp01(candidateStableMs / this.minStableMs).toFixed(2))
+          : 0,
+      candidateLabel: this._candidateLabel || bestLabel,
     };
   }
 
   reset() {
     this.history = [];
+    this.confirmedLabel = null;
+    this._candidateLabel = null;
+    this._candidateSinceMs = null;
+    this._lastConfirmedSeenMs = -Infinity;
+    this._lastTimestampMs = null;
   }
 }
 
 /**
- * Interfaz base Classifier.
- * Permite intercambiar `GeometricClassifier` hoy por `ModelClassifier` después sin tocar `engine/` ni `ui/`.
+ * Base Classifier interface.
+ * Swapping `GeometricClassifier` for `ModelClassifier` leaves `engine/` and `ui/` untouched.
  */
 export class Classifier {
   /**
-   * @param {Array<any>|any} _frames Secuencia de frames o un frame individual
-   * @returns {{ label: string|null, category?: string|null, confidence: number, details?: Object }}
+   * @param {Array<any>|any} _frames Sequence of frames or a single frame
+   * @returns {{ label: string|null, confidence: number, details?: Object }}
    */
   predict(_frames) {
     throw new Error('Classifier.predict(frames) debe ser implementado por la subclase');
@@ -308,54 +918,81 @@ export class Classifier {
 }
 
 /**
- * Implementación geométrica declarativa en navegador.
- * Soporta tanto predicción directa sobre un lote de frames `predict(frames)`
- * como acumulación progresiva frame a frame con ventana temporal en milisegundos y suavizado por votación.
+ * Deterministic in-browser geometric classifier.
+ * Supports batch window prediction `predict(frames)` as well as progressive
+ * frame-by-frame streaming with real-time `t_ms` buffering, hysteresis smoothing,
+ * and smart anti-repetition commitment cooldown.
  */
 export class GeometricClassifier extends Classifier {
   /**
    * @param {Object} [options]
-   * @param {number} [options.windowMs=750] Ventana temporal en milisegundos para señas dinámicas (15–30 FPS)
-   * @param {number} [options.bufferSize=30] Límite máximo de muestras en el buffer temporal
-   * @param {number} [options.smoothingWindow=5] Ventana de frames para suavizado por votación
-   * @param {number} [options.minVotes=3] Votos mínimos para emitir etiqueta suavizada
-   * @param {number} [options.minConfidence=0.72] Umbral mínimo de confianza para no rechazar
-   * @param {number} [options.minMargin=0.05] Margen mínimo sobre el segundo mejor candidato distinto
-   * @param {'all'|'legacy'|'alphabet'|'numbers'} [options.mode='all'] Filtro de categoría del catálogo
+   * @param {number} [options.bufferSize=45] Maximum safety cap for temporal wave buffer
+   * @param {number} [options.waveWindowMs=900] Temporal window in ms for wave motion detection
+   * @param {number} [options.waveGapResetMs=250] Hand absence gap in ms that clears wave history
+   * @param {number} [options.waveIdleTailMs=280] Stationary tail in ms that ends active wave state
+   * @param {number} [options.windowMs=450] Voting window duration in ms
+   * @param {number} [options.minStableMs=260] Minimum stability duration in ms to confirm a sign
+   * @param {number} [options.enterRatio=0.55] Vote ratio required to enter a sign
+   * @param {number} [options.exitRatio=0.30] Vote ratio below which a confirmed sign releases
+   * @param {number} [options.releaseMs=360] Max silence duration in ms before releasing a sign
+   * @param {number} [options.sameSignCooldownMs=1200] Minimum cooldown in ms to re-commit the same sign
+   * @param {number} [options.switchCooldownMs=300] Minimum cooldown in ms between different signs
+   * @param {number} [options.restResetMs=400] Minimum rest duration in ms required before repeating a sign
+   * @param {number} [options.minConfidence=0.68] Minimum geometric-margin confidence to accept a sign
+   * @param {number} [options.smoothingWindow] Legacy frame window size (used only when frames omit timestamps)
+   * @param {number} [options.minVotes] Minimum vote count
    */
   constructor(options = {}) {
     super();
-    this.windowMs = options.windowMs ?? 750;
-    this.bufferSize = options.bufferSize ?? 30;
-    this.minConfidence = options.minConfidence ?? 0.72;
-    this.minMargin = options.minMargin ?? 0.05;
-    this.mode = options.mode ?? 'all';
-    this.assumedFps = options.assumedFps ?? 25;
-    this.frameBuffer = [];
-    this._seqCounter = 0;
-    this.voter = new SmoothingVoter(
-      options.smoothingWindow ?? 5,
-      options.minVotes ?? Math.ceil((options.smoothingWindow ?? 5) / 2)
-    );
-  }
+    this.bufferSize = Math.max(15, options.bufferSize ?? 45);
+    this.waveWindowMs = options.waveWindowMs ?? 900;
+    this.waveGapResetMs = options.waveGapResetMs ?? 250;
+    this.waveIdleTailMs = options.waveIdleTailMs ?? 280;
+    this.minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
 
-  setMode(mode) {
-    this.mode = mode || 'all';
-    this.voter.reset();
+    this.sameSignCooldownMs = options.sameSignCooldownMs ?? 1200;
+    this.switchCooldownMs = options.switchCooldownMs ?? 300;
+    this.restResetMs = options.restResetMs ?? 400;
+
+    this.frameBuffer = [];
+    this.activeHandId = null;
+    this._lastValidHandMs = null;
+
+    // Smart commitment / anti-repetition cooldown state
+    this._lastCommittedLabel = null;
+    this._lastCommittedMs = -Infinity;
+    this._activeHeldLabel = null;
+    this._restStartMs = null;
+    this._sawRestEnough = false;
+    this._fallbackSeq = 0;
+
+    this.voter = new SmoothingVoter({
+      windowSize: options.smoothingWindow ?? 5,
+      minVotes:
+        options.minVotes ??
+        (options.smoothingWindow !== undefined ? Math.ceil(options.smoothingWindow / 2) : 2),
+      windowMs: options.windowMs ?? 450,
+      minStableMs: options.minStableMs ?? 260,
+      enterRatio: options.enterRatio ?? 0.55,
+      exitRatio: options.exitRatio ?? 0.3,
+      releaseMs: options.releaseMs ?? 360,
+    });
   }
 
   /**
-   * Clasifica un frame individual o una lista de frames.
+   * Classifies a single frame or a batch of frames.
    *
    * @param {Array<any>|Object} framesInput
-   * @returns {{ label: string|null, category: string|null, confidence: number, details: Object }}
+   * @returns {{ label: string|null, confidence: number, committed: boolean, committedLabel: string|null, state: string, details: Object }}
    */
   predict(framesInput) {
     if (!framesInput) {
       return {
         label: null,
-        category: null,
         confidence: 0,
+        committed: false,
+        committedLabel: null,
+        state: 'idle',
         details: { reason: 'EMPTY_INPUT', states: null },
       };
     }
@@ -370,167 +1007,262 @@ export class GeometricClassifier extends Classifier {
       return this._predictBatch(framesInput);
     }
 
-    // Modo frame individual con ventana temporal en milisegundos y votación
-    const fallbackTs = this._seqCounter++ * (1000 / this.assumedFps);
-    const meta = extractHandWithMeta(framesInput, fallbackTs);
+    const tMs = extractFrameTimestampMs(framesInput);
+    const aspectRatio = !Array.isArray(framesInput) ? resolveAspectRatio(framesInput) : 1.0;
 
-    if (!meta || !isValidHandLandmarks(meta.landmarks)) {
-      const voted = this.voter.push({ label: null, category: null, confidence: 0 });
+    const staticRes = classifyStaticHand(framesInput, {
+      aspectRatio,
+      minConfidence: this.minConfidence,
+      preferredHandId: this.activeHandId,
+    });
+    const hand = staticRes.landmarks;
+
+    if (!hand || !staticRes.states) {
+      // Clear stale wave history once hand absence exceeds waveGapResetMs (eliminates Phantom Hola)
+      if (
+        tMs !== null &&
+        this._lastValidHandMs !== null &&
+        tMs - this._lastValidHandMs >= this.waveGapResetMs
+      ) {
+        this.frameBuffer = [];
+        this.activeHandId = null;
+      } else if (tMs === null) {
+        this.frameBuffer = [];
+        this.activeHandId = null;
+      }
+
+      const voted = this.voter.push({ label: null, confidence: 0 }, tMs);
+      const commitInfo = this._updateCommitment(voted.label, tMs);
+
       return {
         label: voted.label,
-        category: voted.category,
         confidence: voted.confidence,
+        committed: commitInfo.committed,
+        committedLabel: commitInfo.committedLabel,
+        state: voted.label ? 'confirmed' : 'idle',
         details: {
           rawLabel: null,
-          reason: 'INVALID_OR_NOISY_LANDMARKS',
+          reason: staticRes.reason || 'INVALID_OR_NOISY_LANDMARKS',
           states: null,
+          handId: null,
           votes: voted.votes,
+          stableMs: voted.stableMs,
+          stabilityProgress: voted.stabilityProgress,
         },
       };
     }
 
-    this.frameBuffer.push(meta);
-    // Podar entradas fuera de la ventana temporal en ms o por tope de memoria
-    const cutoffTs = meta.timestampMs - this.windowMs;
-    while (
-      this.frameBuffer.length > this.bufferSize ||
-      (this.frameBuffer.length > 2 && this.frameBuffer[0].timestampMs < cutoffTs)
-    ) {
-      this.frameBuffer.shift();
+    // Clear wave buffer when hand returns after absence gap or when switching left<->right hand
+    const hadAbsenceGap =
+      tMs !== null &&
+      this._lastValidHandMs !== null &&
+      tMs - this._lastValidHandMs >= this.waveGapResetMs;
+    const switchedHand =
+      this.activeHandId !== null &&
+      staticRes.handId !== null &&
+      staticRes.handId !== this.activeHandId;
+
+    if (hadAbsenceGap || switchedHand) {
+      this.frameBuffer = [];
     }
 
-    const states = fingerStates(meta.landmarks, { handedness: meta.handedness });
-    const trajContext = buildTrajectoryContext(this.frameBuffer, this.windowMs);
-    const matched = matchCatalog(getSignCatalog(), states, trajContext, {
-      minConfidence: this.minConfidence,
-      minMargin: this.minMargin,
-      mode: this.mode,
+    this.activeHandId = staticRes.handId;
+    if (tMs !== null) {
+      this._lastValidHandMs = tMs;
+    }
+
+    // Record wave trajectory only while hand is open (prevents non-open hand motion triggering Hola)
+    if (staticRes.label === SIGN_LABELS.MANO_ABIERTA) {
+      this.frameBuffer.push({
+        landmarks: hand,
+        wristX: hand[HAND_LANDMARKS.WRIST].x,
+        scale: staticRes.states.palmScale,
+        aspectRatio,
+        tMs,
+      });
+      if (tMs !== null) {
+        while (
+          this.frameBuffer.length > 1 &&
+          this.frameBuffer[0].tMs !== null &&
+          tMs - this.frameBuffer[0].tMs > this.waveWindowMs
+        ) {
+          this.frameBuffer.shift();
+        }
+      }
+      if (this.frameBuffer.length > this.bufferSize) {
+        this.frameBuffer.shift();
+      }
+    } else if (staticRes.states.extendedCount <= 3) {
+      // Hand is no longer open; discard prior wave trajectory
+      this.frameBuffer = [];
+    }
+
+    let rawLabel = staticRes.label;
+    let rawConfidence = staticRes.confidence;
+    let reason = staticRes.reason;
+
+    const wave = detectWaveMotion(this.frameBuffer, {
+      waveWindowMs: this.waveWindowMs,
+      maxIdleTailMs: this.waveIdleTailMs,
+      aspectRatio,
     });
 
-    const voted = this.voter.push({
-      label: matched.label,
-      category: matched.category,
-      confidence: matched.confidence,
-    });
+    if (rawLabel === SIGN_LABELS.MANO_ABIERTA && wave.isWaving) {
+      const ampScore = clamp01((wave.totalAmplitude - 0.35) / 1.0);
+      rawLabel = SIGN_LABELS.HOLA;
+      rawConfidence = Number(
+        Math.min(0.99, Math.max(rawConfidence, 0.84 + 0.14 * ampScore)).toFixed(4)
+      );
+      reason = `Mano abierta con saludo dinámico (${wave.directionChanges} cambios de dirección)`;
+    }
 
-    const wave = detectWaveMotion(this.frameBuffer.map((f) => f.landmarks));
+    const voted = this.voter.push({ label: rawLabel, confidence: rawConfidence }, tMs);
+    const commitInfo = this._updateCommitment(voted.label, tMs);
+
+    let state = 'rejected';
+    if (voted.label) {
+      state = 'confirmed';
+    } else if (rawLabel || voted.candidateLabel) {
+      state = 'detecting';
+    }
 
     return {
       label: voted.label,
-      category: voted.category || matched.category,
       confidence: voted.confidence,
+      committed: commitInfo.committed,
+      committedLabel: commitInfo.committedLabel,
+      state,
       details: {
-        ...matched.details,
-        rawLabel: matched.label,
-        rawCategory: matched.category,
-        rawConfidence: matched.confidence,
+        rawLabel,
+        rawConfidence,
         smoothedLabel: voted.label,
+        handId: staticRes.handId,
         votes: voted.votes,
-        reason: voted.label ? matched.details.reason : matched.details.reason || 'LOW_CONFIDENCE',
-        states,
+        stableMs: voted.stableMs,
+        stabilityProgress: voted.stabilityProgress,
+        reason,
+        states: staticRes.states,
         wave,
-        trajectory: trajContext,
       },
     };
   }
 
+  _updateCommitment(confirmedLabel, timestampMs) {
+    const tMs =
+      timestampMs !== null && Number.isFinite(timestampMs)
+        ? timestampMs
+        : ++this._fallbackSeq * 67;
+
+    if (!confirmedLabel) {
+      if (this._restStartMs === null) {
+        this._restStartMs = tMs;
+      }
+      if (tMs - this._restStartMs >= this.restResetMs) {
+        this._sawRestEnough = true;
+        this._activeHeldLabel = null;
+      }
+      return { committed: false, committedLabel: null };
+    }
+
+    this._restStartMs = null;
+
+    // Still holding the exact same sign continuously -> never re-commit
+    if (confirmedLabel === this._activeHeldLabel) {
+      return { committed: false, committedLabel: null };
+    }
+
+    const isSameAsLast = confirmedLabel === this._lastCommittedLabel;
+    const elapsedSinceLast = tMs - this._lastCommittedMs;
+
+    const canCommit = isSameAsLast
+      ? this._sawRestEnough && elapsedSinceLast >= this.sameSignCooldownMs
+      : elapsedSinceLast >= this.switchCooldownMs;
+
+    if (!canCommit) {
+      return { committed: false, committedLabel: null };
+    }
+
+    this._lastCommittedLabel = confirmedLabel;
+    this._lastCommittedMs = tMs;
+    this._activeHeldLabel = confirmedLabel;
+    this._sawRestEnough = false;
+
+    return { committed: true, committedLabel: confirmedLabel };
+  }
+
   /**
-   * Evalúa un lote completo de frames de forma determinista y sin estado residual.
+   * Evaluates a complete batch of frames (e.g., 5 to 15 frames) deterministically without residual state.
    */
   _predictBatch(frames) {
     if (frames.length === 0) {
       return {
         label: null,
-        category: null,
         confidence: 0,
+        committed: false,
+        committedLabel: null,
+        state: 'idle',
         details: { reason: 'EMPTY_BATCH', states: null },
       };
     }
 
-    const stepMs = 1000 / this.assumedFps;
-    const validMetas = [];
+    const waveSamples = [];
     const batchVoter = new SmoothingVoter(
       frames.length,
       Math.max(1, Math.ceil(frames.length * 0.5))
     );
-    let lastValidStates = null;
-    let lastStaticMatch = null;
-    const catalog = getSignCatalog();
-    const staticCatalog = catalog.filter((s) => s.tipo === SIGN_TYPES.ESTATICA);
-    const dynamicCatalog = catalog.filter((s) => s.tipo === SIGN_TYPES.DINAMICA);
+    let lastValidStatic = null;
+    let batchHandId = null;
 
-    for (let i = 0; i < frames.length; i++) {
-      const meta = extractHandWithMeta(frames[i], i * stepMs);
-      if (meta && isValidHandLandmarks(meta.landmarks)) {
-        validMetas.push(meta);
-        const st = fingerStates(meta.landmarks, { handedness: meta.handedness });
-        lastValidStates = st;
-        const m = matchCatalog(staticCatalog, st, null, {
-          minConfidence: this.minConfidence,
-          minMargin: this.minMargin,
-          mode: this.mode,
-        });
-        lastStaticMatch = m;
-        batchVoter.push({
-          label: m.label,
-          category: m.category,
-          confidence: m.confidence,
-        });
+    for (const frame of frames) {
+      const aspectRatio = !Array.isArray(frame) ? resolveAspectRatio(frame) : 1.0;
+      const tMs = extractFrameTimestampMs(frame);
+      const res = classifyStaticHand(frame, {
+        aspectRatio,
+        minConfidence: this.minConfidence,
+        preferredHandId: batchHandId,
+      });
+      if (res.landmarks && res.states) {
+        if (!batchHandId || res.handId === batchHandId) {
+          batchHandId = res.handId;
+          waveSamples.push({
+            landmarks: res.landmarks,
+            wristX: res.landmarks[HAND_LANDMARKS.WRIST].x,
+            scale: res.states.palmScale,
+            aspectRatio,
+            tMs,
+          });
+        }
+        lastValidStatic = res;
+        batchVoter.push({ label: res.label, confidence: res.confidence });
       } else {
-        batchVoter.push({ label: null, category: null, confidence: 0 });
+        batchVoter.push({ label: null, confidence: 0 });
       }
     }
 
-    if (validMetas.length === 0 || !lastValidStates) {
+    if (waveSamples.length === 0 || !lastValidStatic) {
       return {
         label: null,
-        category: null,
         confidence: 0,
+        committed: false,
+        committedLabel: null,
+        state: 'idle',
         details: { reason: 'INVALID_OR_NOISY_LANDMARKS', states: null },
       };
     }
 
-    const trajContext = buildTrajectoryContext(validMetas, Math.max(this.windowMs, frames.length * stepMs));
-    const wave = detectWaveMotion(validMetas.map((m) => m.landmarks));
-
-    // Evaluar primero si la secuencia completa activa una seña dinámica sobre el estado representativo
-    const representativeMeta = validMetas[Math.floor(validMetas.length / 2)];
-    const repStates = fingerStates(representativeMeta.landmarks, {
-      handedness: representativeMeta.handedness,
+    const wave = detectWaveMotion(waveSamples, {
+      waveWindowMs: this.waveWindowMs,
+      maxIdleTailMs: this.waveIdleTailMs,
     });
-    const dynamicMatch = matchCatalog(dynamicCatalog, repStates, trajContext, {
-      minConfidence: this.minConfidence,
-      minMargin: this.minMargin,
-      mode: this.mode,
-    });
-
-    if (dynamicMatch.label && validMetas.length >= Math.max(3, Math.ceil(frames.length * 0.5))) {
-      return {
-        label: dynamicMatch.label,
-        category: dynamicMatch.category,
-        confidence: dynamicMatch.confidence,
-        details: {
-          ...dynamicMatch.details,
-          states: repStates,
-          votes: validMetas.length,
-          totalFrames: frames.length,
-          wave,
-          trajectory: trajContext,
-        },
-      };
-    }
-
-    // Consenso estático sobre el lote
     const consensus = batchVoter.history.reduce(
       (acc, cur) => {
         if (cur.label) {
           acc.counts[cur.label] = (acc.counts[cur.label] || 0) + 1;
           acc.conf[cur.label] = (acc.conf[cur.label] || 0) + cur.confidence;
-          acc.cat[cur.label] = cur.category;
         }
         return acc;
       },
-      { counts: {}, conf: {}, cat: {} }
+      { counts: {}, conf: {} }
     );
 
     let bestLabel = null;
@@ -546,50 +1278,60 @@ export class GeometricClassifier extends Classifier {
     if (!bestLabel || bestCount < minRequired) {
       return {
         label: null,
-        category: null,
-        confidence: lastStaticMatch?.confidence ?? 0,
+        confidence: 0,
+        committed: false,
+        committedLabel: null,
+        state: 'rejected',
         details: {
-          ...(lastStaticMatch?.details || {}),
-          reason:
-            validMetas.length < minRequired
-              ? 'NO_CONSENSUS_OR_NOISY_BATCH'
-              : 'LOW_CONFIDENCE',
-          states: lastValidStates,
+          reason: 'NO_CONSENSUS_OR_NOISY_BATCH',
+          states: lastValidStatic.states,
           wave,
-          trajectory: trajContext,
         },
       };
     }
 
-    const finalConf = Number((consensus.conf[bestLabel] / bestCount).toFixed(4));
-    const finalCategory = consensus.cat[bestLabel] || null;
+    let finalLabel = bestLabel;
+    let finalConf = Number((consensus.conf[bestLabel] / bestCount).toFixed(4));
+
+    if (finalLabel === SIGN_LABELS.MANO_ABIERTA && wave.isWaving) {
+      const ampScore = clamp01((wave.totalAmplitude - 0.35) / 1.0);
+      finalLabel = SIGN_LABELS.HOLA;
+      finalConf = Number(Math.min(0.99, Math.max(finalConf, 0.84 + 0.14 * ampScore)).toFixed(4));
+    }
 
     return {
-      label: bestLabel,
-      category: finalCategory,
+      label: finalLabel,
       confidence: finalConf,
+      committed: true,
+      committedLabel: finalLabel,
+      state: 'confirmed',
       details: {
-        ...(lastStaticMatch?.details || {}),
-        category: finalCategory,
-        states: lastValidStates,
+        reason: lastValidStatic.reason,
+        states: lastValidStatic.states,
         votes: bestCount,
         totalFrames: frames.length,
         wave,
-        trajectory: trajContext,
       },
     };
   }
 
   reset() {
     this.frameBuffer = [];
-    this._seqCounter = 0;
+    this.activeHandId = null;
+    this._lastValidHandMs = null;
+    this._lastCommittedLabel = null;
+    this._lastCommittedMs = -Infinity;
+    this._activeHeldLabel = null;
+    this._restStartMs = null;
+    this._sawRestEnough = false;
+    this._fallbackSeq = 0;
     this.voter.reset();
   }
 }
 
 /**
- * Punto de enchufe para el futuro clasificador con modelo neuronal entrenado (ONNX / WebSocket).
- * Cumple la misma interfaz `Classifier { predict(frames) -> { label, confidence } }`.
+ * Adapter stub for a future trained neural model classifier (ONNX / WebSocket).
+ * Implements the same `Classifier { predict(frames) -> { label, confidence } }` interface.
  */
 export class ModelClassifier extends Classifier {
   constructor(inferFn = null) {
@@ -603,7 +1345,6 @@ export class ModelClassifier extends Classifier {
     }
     return {
       label: null,
-      category: null,
       confidence: 0,
       details: { reason: 'MODEL_NOT_LOADED' },
     };
@@ -611,7 +1352,7 @@ export class ModelClassifier extends Classifier {
 }
 
 /**
- * Función de conveniencia `classify(framesOrLandmarks, options)` para uso funcional directo.
+ * Convenience wrapper `classify(framesOrLandmarks)` for stateless functional usage.
  */
 export function classify(framesOrLandmarks, options = {}) {
   const isSingleHand =
@@ -620,16 +1361,12 @@ export function classify(framesOrLandmarks, options = {}) {
     framesOrLandmarks[0] &&
     typeof framesOrLandmarks[0].x === 'number';
 
-  if (
-    isSingleHand ||
-    (!Array.isArray(framesOrLandmarks) && typeof framesOrLandmarks === 'object' && framesOrLandmarks !== null)
-  ) {
+  if (isSingleHand || (!Array.isArray(framesOrLandmarks) && typeof framesOrLandmarks === 'object')) {
     const res = classifyStaticHand(framesOrLandmarks, options);
     return {
       label: res.label,
-      category: res.category,
       confidence: res.confidence,
-      details: res.details,
+      details: { reason: res.reason, states: res.states, handId: res.handId },
     };
   }
 

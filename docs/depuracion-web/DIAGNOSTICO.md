@@ -1,30 +1,34 @@
-# Diagnóstico de fallo en handshake WebSocket - ExpresaT
+# Diagnóstico de Fallo en Handshake WebSocket — ExpresaT
 
-## Fecha: 2026-11-08
+- **Fecha:** 2026-11-08
+- **Estado:** **Histórico — Diagnóstico de incidente en despliegue Cloud**
+- **Entorno evaluado:**
+  - **Frontend:** `https://ecpresatt.netlify.app` (Netlify)
+  - **Backend:** `https://expresat.onrender.com` (Render, FastAPI + WebSockets)
+  - **Modo:** Cloud (despliegue en producción)
 
-## Entorno
-- Frontend: `https://ecpresatt.netlify.app` (Netlify)
-- Backend: `https://expresat.onrender.com` (Render, FastAPI + WebSockets)
-- Modo: Cloud (despliegue en producción)
+> [!NOTE]
+> Incidente puntual de infraestructura/proxy documentado el 2026-11-08. Posteriormente, el código de [expresat/backend/main.py](../../expresat/backend/main.py) y [expresat/.env.example](../../expresat/.env.example) incorporó ambos dominios (`https://expresat.netlify.app` y `https://ecpresatt.netlify.app`) en `CORS_ORIGINS_DEFAULT`, y el cliente web pasó a usar [WSClient](../../expresat/frontend/src/transport/wsClient.js). Ver [README.md de docs](../README.md).
 
 ---
 
 ## Resumen Ejecutivo
 
-**Causa raíz:** El handshake WebSocket falla porque **Cloudflare** (servicio de proxy/CDN en Render) devuelve **403 Forbidden** para las solicitudes de upgrade WebSocket a `wss://expresat.onrender.com/ws/translate`. La conexión nunca alcanza al origen (FastAPI). El error `NS_ERROR_WEBSOCKET_CONNECTION_REFUSED` en Firefox es consecuente de que Cloudflare rechaza la conexión antes de establecerla.
+**Causa raíz:** El handshake WebSocket falla porque **Cloudflare** (proxy/CDN frente a Render) devuelve **403 Forbidden** ante las solicitudes de actualización WebSocket (`Upgrade: websocket`) hacia `wss://expresat.onrender.com/ws/translate`. La petición no alcanza al servidor de origen (FastAPI); el error `NS_ERROR_WEBSOCKET_CONNECTION_REFUSED` en Firefox es consecuencia directa de ese rechazo previo.
 
-**Estado:** La ruta del WebSocket frontend (`/ws/translate`) coincide con la del backend. El problema es de infraestructura/proxy, no de lógica de código.
+**Conclusión de código:** La ruta WebSocket del cliente (`/ws/translate`) coincide con la del backend. El bloqueo proviene de infraestructura/proxy, no de incompatibilidad de rutas.
 
 ---
 
 ## Evidencia
 
 ### 1. Error en la consola del navegador (Firefox)
-```
+```text
 NS_ERROR_WEBSOCKET_CONNECTION_REFUSED
 al conectar a wss://expresat.onrender.com/translate
 ```
-*Note: El navegador muestra la ruta `/translate`, pero el cliente real construye `wss://expresat.onrender.com/ws/translate` (ver sección 2).*
+> [!NOTE]
+> Firefox resume en pantalla la ruta final `/translate`, mientras el cliente solicita `wss://expresat.onrender.com/ws/translate` (véase §2).
 
 ### 2. Captura de red (pestaña Red, Firefox)
 - `GET https://expresat.onrender.com/health` → **200 OK** (servicio vivo, HTTP funciona)
@@ -85,14 +89,15 @@ curl -i -N \
 ### 6. Endpoints WebSocket identificados
 
 | Componente | Endpoint |
-|------------|----------|
-| **Frontend** (apiService.js, línea 69) | `wss://expresat.onrender.com/ws/translate` |
-| **Backend** (main.py, línea 288) | `@app.websocket("/ws/translate")` ✅ **Coincide** |
-| **Backend** (main.py, línea 415) | `@app.websocket("/ws")` (legacy, redirige a `/ws/translate`) |
+|---|---|
+| **Frontend** (`apiService.js` histórico) | `wss://expresat.onrender.com/ws/translate` |
+| **Backend** (`main.py`) | `@app.websocket("/ws/translate")` — **Coincide** |
+| **Backend** (`main.py` ruta legacy) | `@app.websocket("/ws")` (redirección legacy hacia `/ws/translate`) |
 
-*Las rutas coinciden. El problema no es la definición del endpoint.*
+> [!NOTE]
+> Las rutas coinciden; el rechazo HTTP 403 descrito en este incidente provino del proxy antes del backend.
 
-### 7. Configuración CORS (backend/main.py, líneas 51-58)
+### 7. Configuración CORS (`backend/main.py`, estado durante el incidente)
 
 ```python
 CORS_ORIGINS_DEFAULT = [
@@ -105,7 +110,7 @@ CORS_ORIGINS_DEFAULT = [
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", ",".join(CORS_ORIGINS_DEFAULT)).split(",")
 ```
 
-*El origen configurado es `https://expresat.netlify.app`, pero el dominio actual es `ecpresatt.netlify.app` (diferencia en el prefijo `ec` vs `ex`). Sin embargo, al ser el error 403 proveniente de Cloudflare **antes** de que la solicitud llegue al middleware CORS de FastAPI, este es un factor secundario y no la causa primaria.*
+*(Observación: durante el incidente, la lista incluía `https://expresat.netlify.app` mientras el frontend desplegado respondía desde `https://ecpresatt.netlify.app`. En el código actual, ambos dominios figuran en `CORS_ORIGINS_DEFAULT` dentro de [`expresat/backend/main.py`](../../expresat/backend/main.py).)*
 
 ---
 
@@ -113,85 +118,32 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", ",".join(CORS_ORIGINS_DEFAULT)).split("
 
 ### Flujo del problema
 
-1. El frontend (`ApiService.connect()`) construye la URL WebSocket:
-   ```
-   wsUrl = "wss://" + "expresat.onrender.com" + "/ws/translate"
-   → wss://expresat.onrender.com/ws/translate
-   ```
+1. El frontend histórico (`ApiService.connect()`) construía la URL `wss://expresat.onrender.com/ws/translate`.
+2. El navegador enviaba un HTTP Upgrade con `Origin: https://ecpresatt.netlify.app`.
+3. **Cloudflare** (proxy frente a Render) devolvía **403 Forbidden** (`server: cloudflare`, `cf-ray`) sin reenviar la conexión a FastAPI:
+   - `/health` respondía `200 OK` (peticiones HTTP estándar permitidas).
+   - No se establecía sesión WebSocket ni envío de frames.
 
-2. El navegador envía un upgrade WebSocket con headers:
-   - `Upgrade: websocket`
-   - `Connection: Upgrade`
-   - `Sec-WebSocket-Key`
-   - `Sec-WebSocket-Version: 13`
-   - `Origin: https://ecpresatt.netlify.app`
-
-3. **Cloudflare** (proxy en Render) recibe la solicitud y **devuelve 403 Forbidden** inmediatamente. El header `cf-ray` y `server: cloudflare` confirman esto.
-
-4. La conexión nunca llega al servidor FastAPI, por eso:
-   - El health check `/health` retorna 200 OK (peticiones HTTP normales sí pasan)
-   - No hay error de cámara o MediaPipe (nunca se establece la conexión WS)
-   - FPS marca 0 porque no se envían frames
-
-### ¿Por qué Cloudflare devuelve 403?
-
-No hay configuración pública explícita, pero los indicios son:
-
-- Cloudflare puede tener un **firewall rule** que bloquea los headers `Upgrade: websocket` para este dominio
-- Falta **habilitar soporte de WebSocket** en la configuración de Cloudflare para el dominio `expresat.onrender.com`
-- El patrón de solicitud puede ser marcado como sospechoso por el sistema de seguridad de Cloudflare
-
-*Importante: Las peticiones HTTP normales (`/health`, `/labels`) sí pasan a través de Cloudflare exitosamente, lo que confirma que Cloudflare está activo pero tiene una regla específica que bloquea el upgrade WebSocket.*
+### Posibles causas del bloqueo en Cloudflare
+- Regla de Firewall/WAF bloqueando cabeceras `Upgrade: websocket`.
+- Soporte de WebSockets deshabilitado para el subdominio/zona en la configuración de proxy.
+- Regla de seguridad disparada por la firma del upgrade en la ruta.
 
 ---
 
-## Corrección Propuesta
+## Acciones Recomendadas en el Incidente
 
-### Opción 1: Configurar Cloudflare (recomendada)
-
-1. Ingresar al panel de Cloudflare del dominio `expresat.onrender.com`
-2. Verificar la regla **Firewall** → Revisar si hay reglas que bloqueen métodos `Upgrade` o headers de WebSocket
-3. Asegurarse de que **WebSockets** estén habilitados para el servicio (Cloudflare Pages o Workers KV pueden requerir configuración especial)
-4. Probar la conexión nuevamente después de los cambios
-
-### Opción 2: Saltar Cloudflare / Usar modo "Full DNS"
-
-1. En Cloudflare, cambiar el modo de `expresat.onrender.com` de "Proxied" (nube naranja) a "DNS Only" (nube gris)
-2. Esto hará que las conexiones WebSocket vayan directamente al origen Render sin pasar por el proxy de Cloudflare
-3. *Advertencia:* Perderá algunas protecciones de Cloudflare, pero permitirá las conexiones WebSocket
-
-### Opción 3: Ajustar configuración en Render/FastAPI
-
-1. Verificar que el servicio de Render esté configurado para aceptar conexiones WebSocket (algunos planes/estándares tienen límites)
-2. Añadir headers adicionales que Cloudflare espere (si la bloqueo es por firma/missing header)
-3. Revisar logs del servicio en Render durante intentos de conexión WS
-
-### Opción 4: Corregir el typo de origen en CORS
-
-El archivo `Deploys.md` y el backend configuran `CORS_ORIGINS=https://expresat.netlify.app`, pero el dominio real es `ecpresatt.netlify.app`. Este typo debería corregirse:
-
-```env
-CORS_ORIGINS=https://ecpresatt.netlify.app,https://expresat.com
-```
-
-*Nota: Aunque no es la causa raíz del 403 de Cloudflare, corregirlo evitará problemas adicionales si Cloudflare pasa la solicitud al origen y este rechaza por CORS.*
+1. **Configurar Cloudflare:** Revisar reglas WAF/Firewall para permitir `Upgrade: websocket` hacia `/ws/translate` y habilitar soporte WebSocket.
+2. **Validar bypass/DNS (diagnóstico):** Comprobar temporalmente con modo DNS-Only si el bloqueo desaparece al ir directo al origen Render.
+3. **Verificar servicio en Render y CORS:** Confirmar soporte de WebSockets en el plan/instancia y mantener sincronizada la variable `CORS_ORIGINS` (incluyendo los dominios activos de Netlify).
+4. **Verificar tras el cambio:** Validar el handshake con `wscat` o `websocat` sobre `wss://expresat.onrender.com/ws/translate`.
 
 ---
 
-## Próximos Pasos
+## Referencia de Tareas (del diagnóstico de 2026-11-08)
 
-1. **Aplicar la corrección** (preferiblemente la Opción 1 o 2 para eliminar el bloqueo de Cloudflare)
-2. **Verificar la conexión WS** con la prueba aislada (wscat/websocat contra `wss://expresat.onrender.com/ws/translate`)
-3. **Confirmar FPS > 0** una vez establecida la conexión WebSocket
-4. **Corregir el typo** de `ecpresatt.netlify.app` vs `expresat.netlify.app` en las variables de entorno de CORS
-5. **Reanudar el bucle revisor**: verificar conexión WS estable → cámara activa → landmarks → FPS > 0
-
----
-
-## Referencia de Tareas (del diagnóstico original)
-
-- Tarea 1 (Cliente): ✅ Completada - La URL se construye como `wss://expresat.onrender.com/ws/translate`
-- Tarea 2 (Servidor): ✅ Completada - Endpoint `/ws/translate` existe en FastAPI, el problema es Cloudflare 403
-- Tarea 3 (Prueba aislada): ⚠️ Pendiente - Se necesita wscat/websocat después de aplicar la corrección
-- Tarea 4 (Contrato cliente-servidor): ✅ Completada - Formato de mensajes definido en main.py y apiService.js
-- Tarea 5 (Entrega): ✅ Archivo generado en `docs/depuracion-web/DIAGNOSTICO.md`
+- Tarea 1 (Cliente): **Completada** — Construcción correcta de `wss://expresat.onrender.com/ws/translate`.
+- Tarea 2 (Servidor): **Completada** — Endpoint `/ws/translate` operativo en FastAPI.
+- Tarea 3 (Prueba aislada en cloud): **Pendiente tras ajuste de infraestructura** — Validar handshake con `wscat`/`websocat` después de ajustar proxy/CORS.
+- Tarea 4 (Contrato cliente-servidor): **Completada** — Alineado en `main.py` y transportes web.
+- Tarea 5 (Entrega): **Completada** — Archivo generado en `docs/depuracion-web/DIAGNOSTICO.md`.

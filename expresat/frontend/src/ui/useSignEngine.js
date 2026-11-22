@@ -1,53 +1,130 @@
 /**
- * src/ui/useSignEngine.js — Hook React que integra SignEngine, Classifier (GeometricClassifier) y WSClient
+ * React hook integrating SignEngine, Classifier (GeometricClassifier), and optional WSClient.
  *
- * Garantías:
- * - El tracking y reconocimiento geométrico funcionan 100% en el navegador sin requerir backend ni login.
- * - Cleanup idempotente bajo React 19 StrictMode (sin streams de cámara abiertos ni AbortError).
- * - Contadores separados de FPS reales (`cameraFps` e `inferenceFps`).
- * - Estado explícito del transporte WebSocket (`idle | connecting | open | auth_error | failed`).
- * - Sin `setState` síncrono durante el cuerpo del render.
+ * Documentation & Vault References:
+ *   - Data Flow Diagram:   `Obsidian_exp/Flujo de datos.md`
+ *   - Frontend Code Guide: `Obsidian_exp/Explicacion del codigo/Frontend/Vite_React.md`
+ *   - Agent Playbook #5:   `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
+ *
+ * Guarantees (FEATURE_SPEC v1.4.0):
+ * - Local Demo Mode runs 100% in-browser (no backend, no PoseLandmarker overhead, zero WS race).
+ * - Enables PoseLandmarker whenever neural remote transport, DevRecorder, or explicit pose mode is active.
+ * - Active gesture card auto-expires cleanly when the hand lowers or enters rest.
+ * - Accumulated history appends strictly on cooldown-gated `committed` rising edges.
+ * - Idempotent cleanup under React 19 StrictMode (no leaked camera streams or AbortError).
+ * - Separate real FPS counters (`cameraFps` and `inferenceFps`).
+ * - Sends unsmoothed `frameData.raw` with real monotonic `t_ms` in a time-bounded window
+ *   (>= 12 frames, span >= 933.33 ms) over WebSocket whenever remote transport is enabled.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { SignEngine } from '../engine/index.js';
-import { GeometricClassifier } from '../recognition/index.js';
+import { GeometricClassifier, getSignCatalogEntry } from '../recognition/index.js';
 import { WSClient, WS_STATES } from '../transport/index.js';
 import { AuthService } from '../services/authService.js';
 import { LandmarkTracker } from '../services/landmarkTracker.js';
 import { CONFIG, getActiveEndpoints } from '../config.js';
 import { renderCanvasFrame } from './drawLandmarks.js';
 
-function isSameRenderedGesture(prev, nextLabel, nextCategory, nextConfidence, nextSource, nextDetails) {
-  if (!prev) return false;
+const WS_WINDOW_RETENTION_MS = 1100;
+const WS_MIN_SPAN_MS = 1000 * (14 / 15); // 933.333... ms (zero tail extrapolation for v1.4.0)
+const WS_MIN_FRAMES = 12;
+const WS_MAX_BUFFER_FRAMES = 60;
+const TELEMETRY_UI_INTERVAL_MS = 250; // <= 4 Hz UI refresh when telemetry drawer is open
+const MAX_HISTORY_ITEMS = 40;
+
+let _historyEntrySeq = 0;
+
+export function resolveEnablePose({
+  enablePose = false,
+  enableRemoteTransport = false,
+  devRecorderActive = false,
+  configEnablePose = false,
+} = {}) {
+  return Boolean(enablePose || enableRemoteTransport || devRecorderActive || configEnablePose);
+}
+
+/**
+ * Determines whether local geometric predictions should update the active gesture state.
+ * Prevents local-vs-remote overwrite races whenever WebSocket neural transport is OPEN.
+ */
+export function shouldApplyLocalPrediction({
+  enableRemoteTransport = false,
+  wsState = WS_STATES.IDLE,
+} = {}) {
+  return !(enableRemoteTransport && wsState === WS_STATES.OPEN);
+}
+
+/**
+ * Build a raw unsmoothed frame for backend WebSocket inference (`FEATURE_SPEC v1.4.0`).
+ * Preserves real monotonic `t_ms`, raw `pose`/`hands`/`handedness`, and direct `leftHand`/`rightHand`.
+ */
+export function buildWsInferenceFrame(frameData) {
+  const raw = frameData?.raw || frameData;
+  const tMs =
+    typeof frameData?.timestamp === 'number' && Number.isFinite(frameData.timestamp)
+      ? frameData.timestamp
+      : performance.now();
+
+  return {
+    t_ms: tMs,
+    pose: raw?.pose ?? null,
+    hands: Array.isArray(raw?.hands) ? raw.hands : [],
+    handedness: Array.isArray(raw?.handedness) ? raw.handedness : [],
+    leftHand: raw?.leftHand ?? null,
+    rightHand: raw?.rightHand ?? null,
+  };
+}
+
+/**
+ * Append a raw frame to the rolling WebSocket window buffer and prune stale entries.
+ * Returns `{ ready, spanMs }` indicating whether the buffer satisfies v1.4.0 window coverage.
+ */
+export function updateWsRollingBuffer(
+  buffer,
+  frameData,
+  windowRetentionMs = WS_WINDOW_RETENTION_MS,
+  maxFrames = WS_MAX_BUFFER_FRAMES
+) {
+  const entry = buildWsInferenceFrame(frameData);
+  buffer.push(entry);
+
+  const latestTs = entry.t_ms;
+  while (
+    buffer.length > WS_MIN_FRAMES &&
+    latestTs - buffer[0].t_ms > windowRetentionMs
+  ) {
+    buffer.shift();
+  }
+  while (buffer.length > maxFrames) {
+    buffer.shift();
+  }
+
+  const spanMs = buffer.length >= 2 ? buffer[buffer.length - 1].t_ms - buffer[0].t_ms : 0;
+  const ready = buffer.length >= WS_MIN_FRAMES && spanMs >= WS_MIN_SPAN_MS;
+  return { ready, spanMs };
+}
+
+function isSameRenderedGesture(prev, next) {
+  if (!prev || !next) return false;
   if (
-    prev.label !== nextLabel ||
-    prev.category !== nextCategory ||
-    prev.source !== nextSource ||
-    Math.round((prev.confidence || 0) * 100) !== Math.round((nextConfidence || 0) * 100)
+    prev.label !== next.label ||
+    prev.source !== next.source ||
+    prev.state !== next.state ||
+    Math.round((prev.confidence || 0) * 20) !== Math.round((next.confidence || 0) * 20)
   ) {
     return false;
   }
-  const prevDetails = prev.details;
-  const prevReason = prevDetails?.reason || null;
-  const nextReason = nextDetails?.reason || null;
-  if (prevReason !== nextReason) return false;
-
-  const prevAliases = prevDetails?.aliases;
-  const nextAliases = nextDetails?.aliases;
-  if ((prevAliases?.length || 0) !== (nextAliases?.length || 0)) return false;
-  if (prevAliases && nextAliases && prevAliases[0] !== nextAliases[0]) return false;
-
-  const ps = prevDetails?.states;
-  const ns = nextDetails?.states;
-  if (Boolean(ps) !== Boolean(ns)) return false;
-  if (ps && ns) {
+  const prevStates = prev.details?.states;
+  const nextStates = next.details?.states;
+  if (Boolean(prevStates) !== Boolean(nextStates)) return false;
+  if (prevStates && nextStates) {
     if (
-      ps.thumb !== ns.thumb ||
-      ps.index !== ns.index ||
-      ps.middle !== ns.middle ||
-      ps.ring !== ns.ring ||
-      ps.pinky !== ns.pinky
+      prevStates.thumb !== nextStates.thumb ||
+      prevStates.index !== nextStates.index ||
+      prevStates.middle !== nextStates.middle ||
+      prevStates.ring !== nextStates.ring ||
+      prevStates.pinky !== nextStates.pinky
     ) {
       return false;
     }
@@ -55,17 +132,53 @@ function isSameRenderedGesture(prev, nextLabel, nextCategory, nextConfidence, ne
   return true;
 }
 
+/**
+ * Pure reducer applying a classifier prediction to the active gesture UI state.
+ * Auto-expires `label` and `confidence` when `prediction.label === null`.
+ */
+export function applyGesturePrediction(prev, prediction, source = 'local') {
+  const hasLabel = Boolean(prediction?.label);
+  const next = {
+    label: hasLabel ? prediction.label : null,
+    confidence: hasLabel ? (prediction.confidence ?? 0) : 0,
+    source,
+    state: prediction?.state || (hasLabel ? 'confirmed' : 'idle'),
+    details: prediction?.details ?? null,
+  };
+  return isSameRenderedGesture(prev, next) ? prev : next;
+}
+
+/**
+ * Pure reducer appending a newly committed sign (rising edge after cooldown) to the sentence history.
+ */
+export function appendCommittedSign(prevHistory, prediction, maxItems = MAX_HISTORY_ITEMS) {
+  if (!prediction?.committed || !prediction?.committedLabel) {
+    return prevHistory;
+  }
+  const label = prediction.committedLabel;
+  const catalogEntry = getSignCatalogEntry(label);
+  const entry = {
+    id: `sign_${++_historyEntrySeq}_${Date.now()}`,
+    label,
+    speakText: catalogEntry?.speakText || label,
+    confidence: prediction.confidence ?? 0,
+    timestamp: Date.now(),
+  };
+  const next = [...prevHistory, entry];
+  return next.length > maxItems ? next.slice(next.length - maxItems) : next;
+}
+
 export function useSignEngine({
   videoRef,
   canvasRef,
   trackingConfig = { enabled: true },
   classifierInstance = null,
-  enableRemoteTransport = true,
-  recognitionMode = 'all',
+  enableRemoteTransport = false,
   enablePose = false,
-  enableDevTelemetry = Boolean(typeof import.meta !== 'undefined' && import.meta.env?.DEV),
+  devRecorderActive = false,
   telemetryDrawerOpen = false,
-  skipLocalClassification = false,
+  showDiagnosticBadges = false,
+  onSignCommitted = null,
 } = {}) {
   const [fps, setFps] = useState({ cameraFps: 0, inferenceFps: 0 });
   const [engineStatus, setEngineStatus] = useState({
@@ -78,15 +191,17 @@ export function useSignEngine({
 
   const [gesture, setGesture] = useState({
     label: null,
-    category: null,
     confidence: 0,
     source: 'local', // 'local' | 'remote'
+    state: 'idle', // 'idle' | 'detecting' | 'confirmed' | 'rejected'
     details: null,
   });
 
+  const [history, setHistory] = useState([]);
+
   const [wsSnapshot, setWsSnapshot] = useState({
     state: WS_STATES.IDLE,
-    detail: 'Modo Demo en navegador activo (backend opcional)',
+    detail: 'Modo Demo Local 100% en navegador (sin backend)',
     retryCount: 0,
     serverDemoMode: null,
     latencyMs: 0,
@@ -103,9 +218,10 @@ export function useSignEngine({
   const trackerRef = useRef(null);
   const latestFrameRef = useRef(null);
   const trackingConfigRef = useRef(trackingConfig);
-  const recognitionModeRef = useRef(recognitionMode);
   const telemetryDrawerOpenRef = useRef(Boolean(telemetryDrawerOpen));
-  const skipLocalClassificationRef = useRef(Boolean(skipLocalClassification));
+  const showDiagnosticBadgesRef = useRef(Boolean(showDiagnosticBadges));
+  const enableRemoteTransportRef = useRef(Boolean(enableRemoteTransport));
+  const onSignCommittedRef = useRef(onSignCommitted);
   const lastLandmarksCountRef = useRef(0);
   const lastTelemetryUiMsRef = useRef(0);
   const wsBatchBufferRef = useRef([]);
@@ -116,6 +232,18 @@ export function useSignEngine({
   }, [trackingConfig]);
 
   useEffect(() => {
+    showDiagnosticBadgesRef.current = Boolean(showDiagnosticBadges);
+  }, [showDiagnosticBadges]);
+
+  useEffect(() => {
+    enableRemoteTransportRef.current = Boolean(enableRemoteTransport);
+  }, [enableRemoteTransport]);
+
+  useEffect(() => {
+    onSignCommittedRef.current = onSignCommitted;
+  }, [onSignCommitted]);
+
+  useEffect(() => {
     telemetryDrawerOpenRef.current = Boolean(telemetryDrawerOpen);
     if (!telemetryDrawerOpen) {
       setTelemetry(null);
@@ -124,24 +252,24 @@ export function useSignEngine({
     }
   }, [telemetryDrawerOpen]);
 
-  useEffect(() => {
-    skipLocalClassificationRef.current = Boolean(skipLocalClassification);
-  }, [skipLocalClassification]);
-
-  useEffect(() => {
-    recognitionModeRef.current = recognitionMode;
-    if (classifierRef.current && typeof classifierRef.current.setMode === 'function') {
-      classifierRef.current.setMode(recognitionMode);
-    }
-  }, [recognitionMode]);
-
-  // 1. Inicializar Transporte WebSocket Opcional (desacoplado del motor de visión)
+  // 1. Initialize optional WebSocket transport (disabled by default in 100% Local Demo Mode)
   useEffect(() => {
     if (!enableRemoteTransport) {
+      wsClientRef.current = null;
+      setWsSnapshot((prev) =>
+        prev.state === WS_STATES.IDLE
+          ? prev
+          : {
+              ...prev,
+              state: WS_STATES.IDLE,
+              detail: 'Modo Demo Local 100% en navegador (sin backend)',
+            }
+      );
       return undefined;
     }
 
     let isMounted = true;
+    const wsBatchBuffer = wsBatchBufferRef.current;
     const authService = new AuthService();
     const endpoints = getActiveEndpoints();
     const wsClient = new WSClient({ url: endpoints.wsUrl });
@@ -150,6 +278,9 @@ export function useSignEngine({
     const unsubState = wsClient.onStateChange((snap) => {
       if (isMounted) {
         setWsSnapshot(snap);
+        if (snap.state !== WS_STATES.OPEN) {
+          wsBatchBufferRef.current.length = 0;
+        }
       }
     });
 
@@ -158,9 +289,9 @@ export function useSignEngine({
       if (msg.type === 'translation' && msg.payload?.label) {
         setGesture((prev) => ({
           label: msg.payload.label,
-          category: msg.payload.category ?? prev.category,
           confidence: msg.payload.confidence ?? prev.confidence,
           source: 'remote',
+          state: 'confirmed',
           details: {
             ...prev.details,
             remoteDebug: msg.payload.debug || null,
@@ -224,10 +355,18 @@ export function useSignEngine({
       unsubMsg();
       wsClient.disconnect();
       wsClientRef.current = null;
+      wsBatchBuffer.length = 0;
     };
   }, [enableRemoteTransport]);
 
-  // 2. Inicializar SignEngine (cámara + MediaPipe en hilo principal) y GeometricClassifier
+  // 2. Initialize SignEngine (camera + main-thread MediaPipe) and GeometricClassifier
+  const resolvedEnablePose = resolveEnablePose({
+    enablePose,
+    enableRemoteTransport,
+    devRecorderActive,
+    configEnablePose: CONFIG.enablePose,
+  });
+
   useEffect(() => {
     const videoEl = videoRef?.current;
     if (!videoEl) return undefined;
@@ -236,37 +375,35 @@ export function useSignEngine({
     const classifier =
       classifierInstance ||
       new GeometricClassifier({
-        windowMs: 750,
-        bufferSize: 30,
-        smoothingWindow: 5,
-        minVotes: 3,
+        windowMs: 450,
+        minStableMs: 260,
+        enterRatio: 0.55,
+        exitRatio: 0.3,
+        releaseMs: 360,
+        waveWindowMs: 900,
+        waveGapResetMs: 250,
+        waveIdleTailMs: 280,
+        sameSignCooldownMs: 1200,
+        switchCooldownMs: 300,
+        restResetMs: 400,
       });
-    if (typeof classifier.setMode === 'function') {
-      classifier.setMode(recognitionModeRef.current);
-    }
     classifierRef.current = classifier;
 
     const tracker = new LandmarkTracker();
     trackerRef.current = tracker;
 
-    const devTelemetryEnabled = Boolean(enableDevTelemetry);
-    if (!devTelemetryEnabled) {
-      setDevSnapshot(null);
-    }
-
     const engine = new SignEngine({
       targetFps: CONFIG.targetFps,
-      enablePose: Boolean(enablePose || CONFIG.enablePose),
+      enablePose: resolvedEnablePose,
       modelComplexity: CONFIG.modelComplexity,
       backend: CONFIG.mediapipeBackend,
-      enableDevTelemetry: devTelemetryEnabled,
     });
     engineRef.current = engine;
 
     const unsubStatus = engine.onStatus((st) => {
       if (isMounted) {
         setEngineStatus(st);
-        if (devTelemetryEnabled && st?.state === 'running') {
+        if (import.meta.env.DEV && st?.state === 'running') {
           setDevSnapshot(engine.getDevSnapshot());
         }
       }
@@ -275,7 +412,7 @@ export function useSignEngine({
     const unsubError = engine.onError((errObj) => {
       if (isMounted) {
         setEngineError(errObj);
-        if (devTelemetryEnabled) {
+        if (import.meta.env.DEV) {
           setDevSnapshot(engine.getDevSnapshot());
         }
       }
@@ -287,23 +424,21 @@ export function useSignEngine({
       }
     });
 
-    const unsubDevSnapshot = devTelemetryEnabled
+    const unsubDevSnapshot = import.meta.env.DEV
       ? engine.onDevSnapshot((snap) => {
-          // Durante grabando no disparar setState 1 Hz para no contaminar <Profiler> ni tickWaitMs
           if (isMounted && snap && snap.phase !== 'grabando') {
             setDevSnapshot(snap);
           }
         })
       : () => {};
 
-    const devTel = devTelemetryEnabled ? engine._devTelemetry : null;
+    const devTel = import.meta.env.DEV ? engine._devTelemetry : null;
 
     const unsubFrame = engine.onFrame((frameData) => {
       if (!isMounted) return;
       latestFrameRef.current = frameData;
 
-      if (devTelemetryEnabled) devTel?.mark('expresat:ui_dispatch:start');
-      // Contar landmarks detectados solo evitando setState si el conteo no cambió
+      if (import.meta.env.DEV) devTel?.mark('expresat:ui_dispatch:start');
       let handPts = 0;
       const handsArr = frameData.hands;
       if (Array.isArray(handsArr)) {
@@ -313,11 +448,11 @@ export function useSignEngine({
       }
       const posePts = Array.isArray(frameData.pose) ? frameData.pose.length : 0;
       const totalPts = handPts + posePts;
-      if (lastLandmarksCountRef.current !== totalPts) {
+      if (totalPts !== lastLandmarksCountRef.current) {
         lastLandmarksCountRef.current = totalPts;
         setLandmarksCount(totalPts);
       }
-      if (devTelemetryEnabled && devTel) {
+      if (import.meta.env.DEV && devTel) {
         const countSetMs = devTel.endAndMeasure(
           'expresat:stage:ui_dispatch:count',
           'expresat:ui_dispatch:start',
@@ -328,16 +463,20 @@ export function useSignEngine({
         }
       }
 
-      // Actualizar LandmarkTracker solo con el nivel de detalle requerido por UI
-      const cfg = trackingConfigRef.current;
-      const drawerOpen = telemetryDrawerOpenRef.current;
-      if (cfg?.enabled && canvasRef?.current) {
-        if (devTelemetryEnabled) devTel?.mark('expresat:tracker:start');
-        const snap = tracker.update(frameData, canvasRef.current.width, canvasRef.current.height, {
-          includeTelemetry: drawerOpen,
-          trackHistory: Boolean(cfg.showTrails || drawerOpen),
-        });
-        if (devTelemetryEnabled && devTel) {
+      if (trackingConfigRef.current?.enabled && canvasRef?.current) {
+        const drawerOpen = telemetryDrawerOpenRef.current;
+        const showTrails = Boolean(trackingConfigRef.current?.showTrails);
+        if (import.meta.env.DEV) devTel?.mark('expresat:tracker:start');
+        const snap = tracker.update(
+          frameData,
+          canvasRef.current.width,
+          canvasRef.current.height,
+          {
+            includeTelemetry: drawerOpen,
+            trackHistory: showTrails,
+          }
+        );
+        if (import.meta.env.DEV && devTel) {
           const trackerMs = devTel.endAndMeasure(
             'expresat:stage:tracker',
             'expresat:tracker:start',
@@ -346,16 +485,16 @@ export function useSignEngine({
           if (trackerMs !== null && trackerMs !== undefined) {
             devTel.recordStageDuration('tracker', trackerMs);
           }
-          if (drawerOpen) devTel.mark('expresat:ui_telemetry:start');
+          devTel.mark('expresat:ui_telemetry:start');
         }
         if (drawerOpen) {
-          const nowTel = performance.now();
-          if (nowTel - lastTelemetryUiMsRef.current >= 200) {
-            lastTelemetryUiMsRef.current = nowTel;
+          const nowUi = performance.now();
+          if (nowUi - lastTelemetryUiMsRef.current >= TELEMETRY_UI_INTERVAL_MS) {
+            lastTelemetryUiMsRef.current = nowUi;
             setTelemetry(snap);
           }
         }
-        if (devTelemetryEnabled && devTel && drawerOpen) {
+        if (import.meta.env.DEV && devTel) {
           const telSetMs = devTel.endAndMeasure(
             'expresat:stage:ui_dispatch:telemetry',
             'expresat:ui_telemetry:start',
@@ -367,17 +506,18 @@ export function useSignEngine({
         }
       }
 
-      // Renderizar frame y landmarks en el Canvas
+      // Render video frame and landmarks onto the Canvas
       if (canvasRef?.current && videoRef?.current) {
-        if (devTelemetryEnabled) devTel?.mark('expresat:dibujo:start');
+        if (import.meta.env.DEV) devTel?.mark('expresat:dibujo:start');
         renderCanvasFrame({
           canvas: canvasRef.current,
           video: videoRef.current,
           frameData,
           tracker,
-          trackingConfig: cfg,
+          trackingConfig: trackingConfigRef.current,
+          showDiagnosticBadges: showDiagnosticBadgesRef.current,
         });
-        if (devTelemetryEnabled && devTel) {
+        if (import.meta.env.DEV && devTel) {
           const canvasMs = devTel.endAndMeasure(
             'expresat:stage:dibujo',
             'expresat:dibujo:start',
@@ -389,67 +529,36 @@ export function useSignEngine({
         }
       }
 
-      // Clasificación geométrica local (saltar cuando la salida fue reemplazada por el Panel Dev)
-      if (!skipLocalClassificationRef.current) {
-        if (devTelemetryEnabled) devTel?.mark('expresat:ui_gesture:start');
+      // Local geometric classification (suppressed while an active remote WS session owns predictions)
+      const wsState = wsClientRef.current?.state ?? WS_STATES.IDLE;
+      if (
+        shouldApplyLocalPrediction({
+          enableRemoteTransport: enableRemoteTransportRef.current,
+          wsState,
+        })
+      ) {
+        if (import.meta.env.DEV) devTel?.mark('expresat:ui_gesture:start');
         const localPrediction = classifier.predict(frameData);
-        if (localPrediction.label) {
-          const nextCat = localPrediction.category || localPrediction.details?.category || null;
-          setGesture((prev) =>
-            isSameRenderedGesture(
-              prev,
-              localPrediction.label,
-              nextCat,
-              localPrediction.confidence,
-              'local',
-              localPrediction.details
-            )
-              ? prev
-              : {
-                  label: localPrediction.label,
-                  category: nextCat,
-                  confidence: localPrediction.confidence,
-                  source: 'local',
-                  details: localPrediction.details,
-                }
-          );
-        } else if (frameData.hands.length > 0) {
-          setGesture((prev) =>
-            isSameRenderedGesture(
-              prev,
-              null,
-              null,
-              localPrediction.confidence,
-              'local',
-              localPrediction.details
-            )
-              ? prev
-              : {
-                  label: null,
-                  category: null,
-                  confidence: localPrediction.confidence,
-                  source: 'local',
-                  details: localPrediction.details,
-                }
-          );
-        } else {
-          setGesture((prev) =>
-            isSameRenderedGesture(
-              prev,
-              prev.label,
-              prev.category,
-              prev.confidence,
-              prev.source,
-              localPrediction.details
-            )
-              ? prev
-              : {
-                  ...prev,
-                  details: localPrediction.details,
-                }
-          );
+        setGesture((prev) => applyGesturePrediction(prev, localPrediction, 'local'));
+
+        if (localPrediction.committed && localPrediction.committedLabel) {
+          const catalogEntry = getSignCatalogEntry(localPrediction.committedLabel);
+          const committedPayload = {
+            label: localPrediction.committedLabel,
+            speakText: catalogEntry?.speakText || localPrediction.committedLabel,
+            confidence: localPrediction.confidence ?? 0,
+          };
+          setHistory((prev) => appendCommittedSign(prev, localPrediction));
+          if (typeof onSignCommittedRef.current === 'function') {
+            try {
+              onSignCommittedRef.current(committedPayload);
+            } catch (cbErr) {
+              console.warn('[useSignEngine] Error en onSignCommitted:', cbErr);
+            }
+          }
         }
-        if (devTelemetryEnabled && devTel) {
+
+        if (import.meta.env.DEV && devTel) {
           const gestureUiMs = devTel.endAndMeasure(
             'expresat:stage:ui_dispatch',
             'expresat:ui_gesture:start',
@@ -461,25 +570,18 @@ export function useSignEngine({
         }
       }
 
-      // Acumular ventana de 15 frames y enviar opcionalmente por WebSocket si está OPEN
-      wsBatchBufferRef.current.push({
-        pose: frameData.pose,
-        leftHand: frameData.leftHand,
-        rightHand: frameData.rightHand,
-      });
-      if (wsBatchBufferRef.current.length > 15) {
-        wsBatchBufferRef.current.shift();
-      }
-
-      const now = performance.now();
+      // Buffer unsmoothed raw frames with real monotonic `t_ms` only when WS is OPEN
       if (
+        enableRemoteTransportRef.current &&
         wsClientRef.current &&
-        wsClientRef.current.state === WS_STATES.OPEN &&
-        wsBatchBufferRef.current.length === 15 &&
-        now - lastWsSendTimeRef.current >= 500
+        wsClientRef.current.state === WS_STATES.OPEN
       ) {
-        lastWsSendTimeRef.current = now;
-        wsClientRef.current.sendLandmarks([...wsBatchBufferRef.current]);
+        const { ready } = updateWsRollingBuffer(wsBatchBufferRef.current, frameData);
+        const now = performance.now();
+        if (ready && now - lastWsSendTimeRef.current >= 500) {
+          lastWsSendTimeRef.current = now;
+          wsClientRef.current.sendLandmarks(wsBatchBufferRef.current.slice());
+        }
       }
     });
 
@@ -497,7 +599,7 @@ export function useSignEngine({
       tracker.reset();
       engineRef.current = null;
     };
-  }, [videoRef, canvasRef, classifierInstance, enablePose, enableDevTelemetry]);
+  }, [videoRef, canvasRef, classifierInstance, resolvedEnablePose]);
 
   const reconnectTransport = useCallback(() => {
     if (wsClientRef.current) {
@@ -506,20 +608,26 @@ export function useSignEngine({
     }
   }, []);
 
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+  }, []);
+
   const clearGesture = useCallback(() => {
     classifierRef.current?.reset();
     setGesture({
       label: null,
-      category: null,
       confidence: 0,
       source: 'local',
+      state: 'idle',
       details: null,
     });
+    setHistory([]);
   }, []);
 
   const refreshDevSnapshot = useCallback(() => {
-    const snap = engineRef.current?.getDevSnapshot?.() ?? null;
-    setDevSnapshot(snap);
+    if (import.meta.env.DEV && engineRef.current) {
+      setDevSnapshot(engineRef.current.getDevSnapshot());
+    }
   }, []);
 
   return {
@@ -527,13 +635,14 @@ export function useSignEngine({
     engineStatus,
     engineError,
     gesture,
+    history,
     wsSnapshot,
     landmarksCount,
     telemetry,
-    latestFrameRef,
     devSnapshot,
     refreshDevSnapshot,
     reconnectTransport,
+    clearHistory,
     clearGesture,
     engineRef,
   };

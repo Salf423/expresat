@@ -1,0 +1,31 @@
+# Secrets & local env files (build uses ARG/ENV in Dockerfile)
+.env*
+!.env.example
+
+# Local recordings, raw captures & capture fixtures
+recordings_local/
+raw_captures/
+captures/
+capturas/
+*.raw.json
+*.raw.bin
+*.raw.meta.json
+*.raw.jsonl
+*.webm
+public/test_*.png
+
+# Dependencies, build artifacts & tests
+node_modules/
+dist/
+dist-ssr/
+test-results/
+playwright-report/
+logs/
+*.log
+
+# OS / Editors
+.DS_Store
+.git
+.vscode
+.idea
+*.sw?

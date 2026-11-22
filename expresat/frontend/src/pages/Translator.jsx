@@ -1,12 +1,14 @@
-import React, { Profiler, useRef, useState } from 'react';
+import React, { Profiler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   Activity,
   MessageSquare,
   Sparkles,
   Volume2,
+  VolumeX,
   Copy,
   Check,
+  Trash2,
   Info,
   Layers,
   ChevronDown,
@@ -14,19 +16,18 @@ import {
   BarChart2,
   AlertTriangle,
   RefreshCw,
-  Wrench,
 } from 'lucide-react';
 import { useSignEngine } from '../ui/index.js';
 import { onDevProfilerRender } from '../engine/index.js';
+import { SIGN_CATALOG, getSignCatalogEntry } from '../recognition/index.js';
 import { WS_STATES } from '../transport/index.js';
 import { COLOR_LEGEND_ITEMS } from '../services/landmarkTracker.js';
 import { CONFIG } from '../config.js';
 import { DevRecorder } from '../components/DevRecorder.jsx';
 import { DevInstrumentationPanel } from '../components/DevInstrumentationPanel.jsx';
-import { readInitialDevMode, persistDevMode } from '../utils/devMode.js';
 
 const WS_STATE_LABELS = Object.freeze({
-  [WS_STATES.IDLE]: 'Modo Local',
+  [WS_STATES.IDLE]: 'Modo Demo Local',
   [WS_STATES.CONNECTING]: 'Conectando…',
   [WS_STATES.OPEN]: 'Conectado',
   [WS_STATES.AUTH_ERROR]: 'Modo Demo Local (Sin Token)',
@@ -41,30 +42,35 @@ const FINGER_NAMES_ES = Object.freeze([
   { key: 'pinky', label: 'Meñique' },
 ]);
 
-const CATEGORY_LABELS_ES = Object.freeze({
-  letra: 'Letra',
-  numero: 'Número',
-  basica: 'Seña base',
-});
+function speakTextOffline(text, onStart, onEnd) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text) {
+    return false;
+  }
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'es-MX';
+    utterance.rate = 1.0;
+    utterance.onstart = () => onStart?.();
+    utterance.onend = () => onEnd?.();
+    utterance.onerror = () => onEnd?.();
+    window.speechSynthesis.speak(utterance);
+    return true;
+  } catch (err) {
+    console.warn('[Translator] Error en síntesis de voz offline:', err?.message || err);
+    onEnd?.();
+    return false;
+  }
+}
 
 const Translator = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   const [copied, setCopied] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [debugVisible, setDebugVisible] = useState(false);
-  const [recognitionMode, setRecognitionMode] = useState('all');
-  const [devTargetLabel, setDevTargetLabel] = useState('A');
-  const [devRecording, setDevRecording] = useState(false);
-  const [devMode, setDevMode] = useState(() => readInitialDevMode());
-
-  const handleToggleDevMode = () => {
-    setDevMode((prev) => {
-      const next = !prev;
-      persistDevMode(next);
-      return next;
-    });
-  };
   const [trackingConfig, setTrackingConfig] = useState({
     enabled: true,
     showTrails: true,
@@ -76,72 +82,60 @@ const Translator = () => {
   const [showTelemetryDrawer, setShowTelemetryDrawer] = useState(false);
   const [selectedPartFilter, setSelectedPartFilter] = useState('all');
 
+  const autoSpeakRef = useRef(autoSpeak);
+  useEffect(() => {
+    autoSpeakRef.current = autoSpeak;
+  }, [autoSpeak]);
+
+  const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+
+  const handleSignCommitted = useCallback((entry) => {
+    if (!autoSpeakRef.current || !entry?.speakText) return;
+    speakTextOffline(
+      entry.speakText,
+      () => setIsSpeaking(true),
+      () => setIsSpeaking(false)
+    );
+  }, []);
+
+  // Modo Demo Local 100% en navegador: sin backend WS ni PoseLandmarker (máximos FPS reales).
+  // DevRecorder activa PoseLandmarker bajo demanda únicamente durante grabaciones de dataset v1.4.0.
   const {
     fps,
     engineStatus,
     engineError,
     gesture,
+    history,
     wsSnapshot,
     landmarksCount,
     telemetry,
-    latestFrameRef,
     devSnapshot,
     refreshDevSnapshot,
     reconnectTransport,
+    clearGesture,
     engineRef,
   } = useSignEngine({
     videoRef,
     canvasRef,
     trackingConfig,
-    enableRemoteTransport: true,
-    recognitionMode,
-    enablePose: Boolean(devMode || CONFIG.enablePose),
-    enableDevTelemetry: devMode,
+    enableRemoteTransport: false,
+    enablePose: false,
     telemetryDrawerOpen: showTelemetryDrawer,
-    skipLocalClassification: devMode,
+    showDiagnosticBadges: debugVisible,
+    onSignCommitted: handleSignCommitted,
   });
 
-  const handleRecordRealFixture = () => {
-    if (devRecording) return;
-    setDevRecording(true);
-    const captured = [];
-    const startTs = performance.now();
-
-    const timer = window.setInterval(() => {
-      const current = latestFrameRef?.current;
-      const now = performance.now();
-      if (current && Array.isArray(current.hands) && current.hands.length > 0) {
-        captured.push({
-          landmarks: current.hands[0],
-          handedness: current.rightHand ? 'Right' : 'Left',
-          timestampMs: Math.round(now - startTs),
-        });
+  // Cancel any active speech synthesis on unmount
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
       }
-      if (now - startTs >= 1800) {
-        window.clearInterval(timer);
-        setDevRecording(false);
-        const payload = {
-          expectedLabel: devTargetLabel,
-          mode: /^[0-9]+$/.test(devTargetLabel) ? 'numbers' : 'alphabet',
-          recordedAt: new Date().toISOString(),
-          sampleCount: captured.length,
-          frames: captured,
-        };
-        const blob = new Blob([JSON.stringify(payload, null, 2)], {
-          type: 'application/json',
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `fixture_${devTargetLabel}_${Date.now()}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    }, 50);
-  };
+    };
+  }, []);
 
-  // Atajos de teclado: Ctrl+Shift+D (Debug) y Ctrl+Shift+T (Tracker)
-  React.useEffect(() => {
+  // Keyboard shortcuts: Ctrl+Shift+D (Debug) and Ctrl+Shift+T (Tracker)
+  useEffect(() => {
     const handleKey = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'D') {
         e.preventDefault();
@@ -156,31 +150,73 @@ const Translator = () => {
   }, []);
 
   const translation = gesture.label || '';
-  const gestureCategory = gesture.category || gesture.details?.category || null;
-  const categoryLabel = gestureCategory ? CATEGORY_LABELS_ES[gestureCategory] || gestureCategory : null;
-  const isLowConfidenceRejection =
-    !translation && gesture.details?.reason === 'LOW_CONFIDENCE';
   const confidencePct = gesture.confidence ? Math.round(gesture.confidence * 100) : 0;
   const fingerStates = gesture.details?.states || null;
   const isWsOpen = wsSnapshot.state === WS_STATES.OPEN;
   const wsStatusLabel = WS_STATE_LABELS[wsSnapshot.state] || wsSnapshot.state;
 
-  const handleSpeak = () => {
-    if ('speechSynthesis' in window && translation) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(translation);
-      utterance.lang = 'es-MX';
-      window.speechSynthesis.speak(utterance);
-    }
-  };
+  const sentenceDisplayText = useMemo(
+    () => history.map((item) => item.label).join(' · '),
+    [history]
+  );
 
-  const handleCopy = () => {
-    if (translation && navigator.clipboard) {
-      navigator.clipboard.writeText(translation);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const sentenceSpeakText = useMemo(
+    () => history.map((item) => item.speakText || item.label).join(', '),
+    [history]
+  );
+
+  const copyPayload = sentenceDisplayText || translation;
+  const speakPayload =
+    sentenceSpeakText ||
+    (translation ? getSignCatalogEntry(translation)?.speakText || translation : '');
+
+  const handleSpeakSentence = useCallback(() => {
+    if (!speakPayload) return;
+    speakTextOffline(
+      speakPayload,
+      () => setIsSpeaking(true),
+      () => setIsSpeaking(false)
+    );
+  }, [speakPayload]);
+
+  const handleCopy = useCallback(() => {
+    if (!copyPayload || !navigator.clipboard) return;
+    navigator.clipboard
+      .writeText(copyPayload)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch((err) => {
+        console.warn('[Translator] No se pudo copiar al portapapeles:', err?.message || err);
+      });
+  }, [copyPayload]);
+
+  const handleClearAll = useCallback(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
     }
-  };
+    clearGesture();
+  }, [clearGesture]);
+
+  const emptyStateMessage =
+    gesture.state === 'detecting'
+      ? 'Estabilizando seña…'
+      : gesture.state === 'rejected'
+        ? 'Mano en reposo o postura no reconocida'
+        : 'Esperando señas frente a la cámara…';
+
+  const confidenceBadgeStyle =
+    confidencePct >= 85
+      ? {
+          background: 'var(--success-bg)',
+          color: 'var(--success-color)',
+        }
+      : {
+          background: 'var(--warning-bg)',
+          color: 'var(--warning-color)',
+        };
 
   const content = (
     <div
@@ -230,16 +266,15 @@ const Translator = () => {
             </span>
           </div>
           <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-            Posiciónate frente a la cámara con las manos visibles. Reconocimiento geométrico 100% en
-            navegador.
+            Posiciónate frente a la cámara con las manos visibles. Reconocimiento geométrico y voz
+            100% offline en tu navegador.
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
-          {/* Telemetry Indicator (WCAG aria-live="polite") */}
+          {/* Telemetry Indicator (non-live region so 1 Hz FPS updates never spam screen readers) */}
           <div
-            role="status"
-            aria-live="polite"
+            aria-label="Métricas de rendimiento y modo de operación"
             className="glass-panel"
             style={{
               display: 'flex',
@@ -250,7 +285,7 @@ const Translator = () => {
               flexWrap: 'wrap',
             }}
           >
-            {/* FPS Cámara */}
+            {/* Camera FPS */}
             <div
               data-testid="camera-fps"
               style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
@@ -268,7 +303,7 @@ const Translator = () => {
 
             <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
 
-            {/* FPS Inferencia Real */}
+            {/* Real Inference FPS */}
             <div
               data-testid="inference-fps"
               style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
@@ -286,7 +321,7 @@ const Translator = () => {
 
             <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
 
-            {/* Estado explícito del transporte WebSocket */}
+            {/* Explicit Local / WebSocket transport status */}
             <div
               data-testid="ws-status"
               data-ws-state={wsSnapshot.state}
@@ -294,7 +329,11 @@ const Translator = () => {
               title={wsSnapshot.detail}
             >
               <span
-                className={`status-dot ${isWsOpen ? 'status-dot--online' : 'status-dot--offline'}`}
+                className={`status-dot ${
+                  isWsOpen || wsSnapshot.state === WS_STATES.IDLE
+                    ? 'status-dot--online'
+                    : 'status-dot--offline'
+                }`}
                 aria-hidden="true"
               />
               <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)' }}>
@@ -316,8 +355,8 @@ const Translator = () => {
             </div>
           </div>
 
-          {/* Indicador DEV separado: Cámara Real (rVFC) independiente del bucle de inferencia */}
-          {devMode && (
+          {/* Separate DEV indicator: real camera rate (rVFC) decoupled from inference loop */}
+          {import.meta.env.DEV && (
             <div
               data-testid="real-camera-fps"
               className="glass-panel"
@@ -351,7 +390,7 @@ const Translator = () => {
         </div>
       </header>
 
-      {/* Banner de Error Visible de Cámara o WASM */}
+      {/* Camera or WASM engine error banner */}
       {engineError && (
         <div
           role="alert"
@@ -378,7 +417,7 @@ const Translator = () => {
         </div>
       )}
 
-      {/* Aviso informativo cuando se opera sin backend o sin token (No bloquea tracking) */}
+      {/* Info banner when remote transport is configured but unavailable */}
       {!engineError &&
         (wsSnapshot.state === WS_STATES.FAILED || wsSnapshot.state === WS_STATES.AUTH_ERROR) && (
           <div
@@ -421,7 +460,6 @@ const Translator = () => {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
-                flexWrap: 'wrap',
               }}
             >
               <span
@@ -460,41 +498,26 @@ const Translator = () => {
                 <Layers size={13} />
                 <span>{trackingConfig.enabled ? 'Tracker On' : 'Tracker Off'}</span>
               </button>
-              <button
-                type="button"
-                data-testid="dev-mode-toggle"
-                aria-pressed={devMode}
-                aria-label={
-                  devMode
-                    ? 'Desactivar modo desarrollador y calibración MediaPipe'
-                    : 'Activar modo desarrollador para grabar muestras de calibración MediaPipe'
-                }
-                title="Activar o desactivar modo desarrollador en producción (grabador 18s e instrumentación)"
-                onClick={handleToggleDevMode}
-                className="chip"
-                style={{
-                  cursor: 'pointer',
-                  border: `1px solid ${
-                    devMode ? 'var(--accent-primary)' : 'var(--input-border)'
-                  }`,
-                  background: devMode ? 'var(--accent-primary-bg)' : 'var(--input-bg)',
-                  color: devMode ? 'var(--accent-primary)' : 'var(--text-color)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                }}
-              >
-                <Wrench size={13} aria-hidden="true" />
-                <span>{devMode ? 'Modo Dev: On' : 'Modo Dev'}</span>
-              </button>
             </div>
           </div>
+
+          {import.meta.env.DEV ? (
+            <>
+              <Profiler id="dev_recorder" onRender={onDevProfilerRender}>
+                <DevRecorder engineRef={engineRef} videoRef={videoRef} />
+              </Profiler>
+              <DevInstrumentationPanel
+                engineRef={engineRef}
+                devSnapshot={devSnapshot}
+                onRefreshSnapshot={refreshDevSnapshot}
+              />
+            </>
+          ) : null}
 
           <div className="video-container" style={{ position: 'relative' }}>
             <video
               ref={videoRef}
+              aria-label="Vista previa de cámara para detección de señas"
               style={{
                 position: 'absolute',
                 width: 0,
@@ -523,7 +546,7 @@ const Translator = () => {
             />
           </div>
 
-          {/* Controles del Tracker */}
+          {/* Tracker controls */}
           {trackingConfig.enabled && (
             <div
               style={{
@@ -667,7 +690,7 @@ const Translator = () => {
                     alignItems: 'center',
                   }}
                 >
-                  {COLOR_LEGEND_ITEMS.map((item) => (
+                  {COLOR_LEGEND_ITEMS.filter((item) => item.group === 'Mano').map((item) => (
                     <span
                       key={item.label}
                       style={{
@@ -787,230 +810,151 @@ const Translator = () => {
           )}
         </section>
 
-        {/* Panel 2: En Modo Desarrollador reemplaza la salida de cada acción por el Panel Dev */}
-        {devMode ? (
-          <section
-            className="glass-panel translator-panel"
-            aria-label="Panel del Modo Desarrollador"
-            data-testid="dev-mode-panel"
-            style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
-          >
-            <div className="panel-header" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
-              <Wrench size={20} color="var(--accent-primary)" />
-              <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>
-                Panel Modo Desarrollador — Calibración MediaPipe
-              </h2>
-              <span
-                className="chip"
-                style={{
-                  marginLeft: 'auto',
-                  fontSize: '0.72rem',
-                  background: 'var(--accent-primary-bg)',
-                  color: 'var(--accent-primary)',
-                  borderColor: 'var(--accent-primary-border)',
-                  fontWeight: 600,
-                }}
-              >
-                Salida reemplazada por herramientas Dev
-              </span>
-            </div>
-
-            <Profiler id="dev_recorder" onRender={onDevProfilerRender}>
-              <DevRecorder engineRef={engineRef} videoRef={videoRef} enabled={devMode} />
-            </Profiler>
-
-            <DevInstrumentationPanel
-              engineRef={engineRef}
-              devSnapshot={devSnapshot}
-              onRefreshSnapshot={refreshDevSnapshot}
-              enabled={devMode}
-            />
-
-            <div
-              data-testid="dev-fixture-recorder"
-              style={{
-                padding: '0.75rem 0.9rem',
-                borderRadius: 'var(--radius-md)',
-                background: 'var(--panel-bg)',
-                border: '1px dashed var(--panel-border)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: '0.5rem',
-              }}
-            >
-              <span style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
-                [DEV] Grabar fixture real (~1.8s):
-              </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <select
-                  aria-label="Seleccionar seña a grabar"
-                  value={devTargetLabel}
-                  onChange={(e) => setDevTargetLabel(e.target.value)}
-                  style={{
-                    fontSize: '0.72rem',
-                    padding: '0.2rem 0.45rem',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'var(--input-bg)',
-                    color: 'var(--text-color)',
-                    border: '1px solid var(--panel-border)',
-                  }}
-                >
-                  {[
-                    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10',
-                    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'LL',
-                    'M', 'N', 'Ñ', 'O', 'P', 'Q', 'R', 'RR', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-                  ].map((lbl) => (
-                    <option key={lbl} value={lbl}>
-                      Seña {lbl}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  data-testid="dev-record-fixture-btn"
-                  onClick={handleRecordRealFixture}
-                  disabled={devRecording}
-                  style={{
-                    fontSize: '0.72rem',
-                    padding: '0.22rem 0.65rem',
-                    borderRadius: 'var(--radius-sm)',
-                    background: devRecording ? 'rgba(239,68,68,0.2)' : 'var(--accent-primary-bg)',
-                    color: devRecording ? '#FCA5A5' : 'var(--accent-primary)',
-                    border: '1px solid var(--accent-primary)',
-                    cursor: devRecording ? 'wait' : 'pointer',
-                    fontWeight: 600,
-                  }}
-                >
-                  {devRecording ? 'Grabando...' : 'Descargar JSON'}
-                </button>
-              </div>
-            </div>
-          </section>
-        ) : (
+        {/* Panel 2: Live Translation, Sentence History, Offline TTS & Unified Guide */}
         <section className="glass-panel translator-panel" aria-label="Resultado de Traducción">
           <div className="panel-header" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
             <MessageSquare size={20} color="var(--accent-secondary)" />
             <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>Gesto Detectado</h2>
             <div
-              role="group"
-              aria-label="Modo de vocabulario LSM"
               style={{
                 marginLeft: 'auto',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '0.3rem',
+                gap: '0.4rem',
                 flexWrap: 'wrap',
               }}
             >
-              {[
-                { id: 'all', label: 'Todo' },
-                { id: 'alphabet', label: 'Alfabeto' },
-                { id: 'numbers', label: 'Números' },
-                { id: 'legacy', label: 'Básicas' },
-              ].map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  data-testid={`mode-btn-${m.id}`}
-                  onClick={() => setRecognitionMode(m.id)}
-                  style={{
-                    fontSize: '0.72rem',
-                    padding: '0.2rem 0.55rem',
-                    borderRadius: 'var(--radius-sm)',
-                    border: `1px solid ${
-                      recognitionMode === m.id ? 'var(--accent-primary)' : 'var(--panel-border)'
-                    }`,
-                    background:
-                      recognitionMode === m.id ? 'var(--accent-primary-bg)' : 'var(--input-bg)',
-                    color: recognitionMode === m.id ? 'var(--accent-primary)' : 'var(--text-muted)',
-                    fontWeight: recognitionMode === m.id ? 700 : 500,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {m.label}
-                </button>
-              ))}
-              {translation && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleSpeak}
-                    className="btn-icon"
-                    title="Pronunciar texto en voz alta"
-                    aria-label="Pronunciar traducción"
-                    style={{ width: '32px', height: '32px' }}
-                  >
-                    <Volume2 size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopy}
-                    className="btn-icon"
-                    title="Copiar al portapapeles"
-                    aria-label="Copiar traducción al portapapeles"
-                    style={{ width: '32px', height: '32px' }}
-                  >
-                    {copied ? <Check size={16} color="var(--success-color)" /> : <Copy size={16} />}
-                  </button>
-                </>
-              )}
+              <button
+                type="button"
+                data-testid="auto-speak-toggle"
+                onClick={() => setAutoSpeak((v) => !v)}
+                disabled={!ttsSupported}
+                aria-pressed={autoSpeak}
+                className="chip"
+                title={
+                  ttsSupported
+                    ? 'Activar o desactivar pronunciación automática en es-MX al confirmar cada seña'
+                    : 'Síntesis de voz no soportada en este navegador'
+                }
+                style={{
+                  cursor: ttsSupported ? 'pointer' : 'not-allowed',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  fontSize: '0.73rem',
+                  fontWeight: 600,
+                  background: autoSpeak ? 'var(--accent-secondary-bg)' : 'var(--input-bg)',
+                  color: autoSpeak ? 'var(--accent-secondary)' : 'var(--text-muted)',
+                  border: `1px solid ${
+                    autoSpeak ? 'var(--accent-secondary)' : 'var(--panel-border)'
+                  }`,
+                }}
+              >
+                {autoSpeak ? <Volume2 size={13} /> : <VolumeX size={13} />}
+                <span>Voz automática: {autoSpeak ? 'Sí' : 'No'}</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="speak-sentence-btn"
+                onClick={handleSpeakSentence}
+                disabled={!ttsSupported || !speakPayload}
+                className="btn-icon"
+                title="Leer oración en voz alta (es-MX offline)"
+                aria-label="Leer oración en voz alta"
+                style={{
+                  padding: '0.28rem 0.65rem',
+                  fontSize: '0.74rem',
+                  fontWeight: 600,
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  cursor: ttsSupported && speakPayload ? 'pointer' : 'not-allowed',
+                  opacity: ttsSupported && speakPayload ? 1 : 0.5,
+                  border: `1px solid ${isSpeaking ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                  background: isSpeaking ? 'var(--accent-primary-bg)' : 'var(--input-bg)',
+                  color: isSpeaking ? 'var(--accent-primary)' : 'var(--text-color)',
+                }}
+              >
+                <Volume2 size={14} />
+                <span>Leer oración</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="copy-translation-btn"
+                onClick={handleCopy}
+                disabled={!copyPayload}
+                className="btn-icon"
+                title="Copiar al portapapeles"
+                aria-label="Copiar traducción al portapapeles"
+                style={{
+                  width: '30px',
+                  height: '30px',
+                  opacity: copyPayload ? 1 : 0.45,
+                  cursor: copyPayload ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {copied ? <Check size={15} color="var(--success-color)" /> : <Copy size={15} />}
+              </button>
+
+              <button
+                type="button"
+                data-testid="clear-translation-btn"
+                onClick={handleClearAll}
+                disabled={!translation && history.length === 0}
+                className="btn-icon"
+                title="Limpiar gesto actual e historial"
+                aria-label="Limpiar oración e historial"
+                style={{
+                  padding: '0.28rem 0.6rem',
+                  fontSize: '0.74rem',
+                  fontWeight: 600,
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  opacity: translation || history.length > 0 ? 1 : 0.45,
+                  cursor: translation || history.length > 0 ? 'pointer' : 'not-allowed',
+                  border: '1px solid var(--border-color)',
+                  background: 'var(--input-bg)',
+                  color: 'var(--text-color)',
+                }}
+              >
+                <Trash2 size={13} />
+                <span>Limpiar</span>
+              </button>
             </div>
           </div>
 
+          {/* Active Sign Card (auto-expires cleanly to idle/rejected when hand drops or rests) */}
           <div
             className="translation-output"
-            role="region"
-            aria-live="polite"
+            data-gesture-state={gesture.state}
             style={{
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'center',
               alignItems: 'center',
-              minHeight: '220px',
+              minHeight: '170px',
               position: 'relative',
             }}
           >
             {translation ? (
               <div style={{ textAlign: 'center', animation: 'fade-up 0.2s ease-out' }}>
-                <div
+                <span
+                  data-testid="gesture-confidence-badge"
+                  className="chip"
                   style={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    flexWrap: 'wrap',
-                    marginBottom: '0.75rem',
+                    marginBottom: '0.65rem',
+                    borderColor: 'transparent',
+                    ...confidenceBadgeStyle,
                   }}
                 >
-                  {categoryLabel && (
-                    <span
-                      data-testid="detected-category"
-                      className="chip"
-                      style={{
-                        background: 'var(--accent-primary-bg)',
-                        color: 'var(--accent-primary)',
-                        borderColor: 'var(--accent-primary)',
-                        fontWeight: 700,
-                      }}
-                    >
-                      Categoría: {categoryLabel}
-                    </span>
-                  )}
-                  <span
-                    data-testid="detected-confidence"
-                    className="chip"
-                    style={{
-                      background: 'var(--success-bg)',
-                      color: 'var(--success-color)',
-                      borderColor: 'transparent',
-                    }}
-                  >
-                    Confianza: {confidencePct}% ({gesture.source === 'remote' ? 'Servidor' : 'Local'})
-                  </span>
-                </div>
+                  Confianza: {confidencePct}% ({gesture.source === 'remote' ? 'Servidor' : 'Local'})
+                </span>
                 <p
                   data-testid="detected-gesture"
                   className="translation-text"
@@ -1018,52 +962,6 @@ const Translator = () => {
                 >
                   {translation}
                 </p>
-                {Array.isArray(gesture.details?.aliases) && gesture.details.aliases.length > 0 && (
-                  <p
-                    data-testid="detected-aliases"
-                    style={{
-                      margin: '0.45rem 0 0 0',
-                      fontSize: '0.78rem',
-                      color: 'var(--text-muted)',
-                    }}
-                  >
-                    Equivalente en LSM: {gesture.details.aliases.join(', ')}
-                  </p>
-                )}
-              </div>
-            ) : isLowConfidenceRejection ? (
-              <div
-                style={{
-                  textAlign: 'center',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '0.6rem',
-                }}
-              >
-                <span
-                  data-testid="detected-category"
-                  className="chip"
-                  style={{
-                    background: 'rgba(245, 158, 11, 0.15)',
-                    color: '#F59E0B',
-                    borderColor: 'transparent',
-                  }}
-                >
-                  Baja confianza ({confidencePct}%)
-                </span>
-                <p
-                  data-testid="detected-gesture"
-                  className="translation-placeholder"
-                  style={{ margin: 0, color: 'var(--text-color)', fontWeight: 600 }}
-                >
-                  No reconocido
-                </p>
-                <span
-                  style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', maxWidth: '300px' }}
-                >
-                  Ajusta la postura u orientación de tu mano frente a la cámara
-                </span>
               </div>
             ) : (
               <div
@@ -1072,27 +970,130 @@ const Translator = () => {
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  gap: '0.75rem',
+                  gap: '0.65rem',
                 }}
               >
-                <Sparkles size={32} color="var(--text-subtle)" />
+                <Sparkles
+                  size={28}
+                  color={
+                    gesture.state === 'detecting' ? 'var(--accent-primary)' : 'var(--text-subtle)'
+                  }
+                />
                 <p
                   data-testid="detected-gesture"
                   className="translation-placeholder"
                   style={{ margin: 0 }}
                 >
-                  Esperando señas frente a la cámara…
+                  {emptyStateMessage}
                 </p>
+                {gesture.state === 'detecting' && gesture.details?.stabilityProgress > 0 && (
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      width: '140px',
+                      height: '4px',
+                      borderRadius: 'var(--radius-full)',
+                      background: 'var(--border-color)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${Math.round(gesture.details.stabilityProgress * 100)}%`,
+                        height: '100%',
+                        background: 'var(--accent-primary)',
+                        transition: 'width 80ms linear',
+                      }}
+                    />
+                  </div>
+                )}
                 <span
-                  style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', maxWidth: '320px' }}
+                  style={{ fontSize: '0.78rem', color: 'var(--text-subtle)', maxWidth: '320px' }}
                 >
-                  Realiza números (0–10), letras del alfabeto LSM (A–Z, Ñ, LL, RR) o señas base
+                  Mantén cada seña firme ~0.3 s para agregarla a la oración.
                 </span>
               </div>
             )}
           </div>
 
-          {/* Estado Geométrico de los 5 Dedos en Tiempo Real */}
+          {/* Accumulated Sentence / History Box (WCAG 2.2 AA polite incremental announcements) */}
+          <div
+            style={{
+              marginTop: '0.75rem',
+              padding: '0.85rem 1rem',
+              background: 'var(--panel-bg)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--panel-border)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.5rem',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '0.5rem',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                Oración acumulada ({history.length})
+              </span>
+              {!ttsSupported && (
+                <span style={{ fontSize: '0.7rem', color: 'var(--warning-color)' }}>
+                  TTS no disponible en este navegador
+                </span>
+              )}
+            </div>
+            <div
+              data-testid="sentence-history"
+              role="status"
+              aria-live="polite"
+              aria-atomic="false"
+              style={{
+                minHeight: '44px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontSize: '0.92rem',
+                color: 'var(--text-color)',
+              }}
+            >
+              {history.length > 0 ? (
+                history.map((item) => (
+                  <span
+                    key={item.id}
+                    className="chip"
+                    style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      background: 'var(--accent-primary-bg)',
+                      color: 'var(--text-color)',
+                      border: '1px solid var(--accent-primary-border)',
+                    }}
+                  >
+                    {item.label}
+                  </span>
+                ))
+              ) : (
+                <span style={{ fontSize: '0.82rem', color: 'var(--text-subtle)' }}>
+                  Las señas confirmadas aparecerán aquí formando tu oración…
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Live geometric finger state */}
           <div
             style={{
               marginTop: '0.75rem',
@@ -1140,8 +1141,9 @@ const Translator = () => {
             </div>
           </div>
 
-          {/* Quick Guide Card */}
+          {/* Unified Quick Guide Card (Single Source of Truth: SIGN_CATALOG) */}
           <div
+            data-testid="sign-catalog-guide"
             style={{
               marginTop: '0.85rem',
               padding: '0.9rem 1rem',
@@ -1162,36 +1164,37 @@ const Translator = () => {
                 letterSpacing: '0.04em',
               }}
             >
-              Vocabulario LSM soportado (Números 0–10 + Alfabeto A–Z, Ñ, LL, RR):
+              Catálogo verificado ({SIGN_CATALOG.length} señas — Modo Demo Local):
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-              {[
-                'Números: 0 al 10',
-                'Estáticas: A B C D E F G H I L M N O P R S T U V W Y',
-                'Dinámicas: J K LL Ñ Q RR X Z',
-                'Básicas: Mano Abierta, Puño, OK, Bien, Te Quiero, Lunes, Hola',
-              ].map((sign) => (
-                <span
-                  key={sign}
-                  style={{
-                    fontSize: '0.74rem',
-                    padding: '0.2rem 0.6rem',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'var(--input-bg)',
-                    color: 'var(--text-muted)',
-                    border: '1px solid var(--panel-border)',
-                  }}
-                >
-                  {sign}
-                </span>
-              ))}
+              {SIGN_CATALOG.map((sign) => {
+                const isActive = translation === sign.label;
+                return (
+                  <span
+                    key={sign.id}
+                    title={sign.hint}
+                    style={{
+                      fontSize: '0.74rem',
+                      padding: '0.2rem 0.6rem',
+                      borderRadius: 'var(--radius-sm)',
+                      fontWeight: isActive ? 700 : 500,
+                      background: isActive ? 'var(--success-bg)' : 'var(--input-bg)',
+                      color: isActive ? 'var(--success-color)' : 'var(--text-muted)',
+                      border: `1px solid ${
+                        isActive ? 'var(--success-color)' : 'var(--panel-border)'
+                      }`,
+                    }}
+                  >
+                    {sign.label}
+                  </span>
+                );
+              })}
             </div>
           </div>
         </section>
-        )}
       </div>
 
-      {/* Panel de Diagnóstico (Ctrl+Shift+D) */}
+      {/* Diagnostic panel (Ctrl+Shift+D) */}
       {debugVisible && (
         <section
           aria-label="Panel de diagnóstico"
@@ -1217,15 +1220,19 @@ const Translator = () => {
           <div>Configuración: {CONFIG.validation.summary}</div>
           <div>
             Motor: {engineStatus.state} | Backend: {engineStatus.backendInfo?.type || '—'} (
-            {engineStatus.backendInfo?.delegate || '—'})
+            {engineStatus.backendInfo?.delegate || '—'}) | Pose:{' '}
+            {String(Boolean(engineStatus.backendInfo?.poseEnabled))}
           </div>
-          <div>Razón clasificador: {gesture.details?.reason || '—'}</div>
+          <div>
+            Estado: {gesture.state} | Mano: {gesture.details?.handId || '—'} | Raw:{' '}
+            {gesture.details?.rawLabel || '—'} | Razón: {gesture.details?.reason || '—'}
+          </div>
         </section>
       )}
     </div>
   );
 
-  return devMode ? (
+  return import.meta.env.DEV ? (
     <Profiler id="translator" onRender={onDevProfilerRender}>
       {content}
     </Profiler>

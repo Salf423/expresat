@@ -1,9 +1,9 @@
 /**
- * src/config.js — Configuración centralizada y validada de ExpresaT Frontend
+ * Centralized, validated frontend configuration.
  *
- * ÚNICO punto de lectura de `import.meta.env.VITE_*`.
- * Valida las variables al arrancar, aplica valores por defecto seguros para el modo demo,
- * y expone qué variables opcionales faltan sin revelar secretos en consola ni UI.
+ * Single reader for `import.meta.env.VITE_*`. Validates variables at startup,
+ * applies safe defaults for demo mode, and surfaces missing optional keys
+ * without leaking secrets to logs or UI.
  */
 
 const rawEnv = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
@@ -35,7 +35,7 @@ function isPlaceholder(val) {
 }
 
 /**
- * Construye el objeto de configuración inmutable a partir de un entorno dado (útil para tests).
+ * Build an immutable configuration object from an environment map.
  * @param {Record<string, any>} env
  */
 export function buildConfig(env = rawEnv) {
@@ -122,7 +122,7 @@ export function buildConfig(env = rawEnv) {
 }
 
 /**
- * Valida la configuración actual o del entorno suministrado sin exponer secretos.
+ * Validate the active or provided environment configuration without exposing secrets.
  * @param {Record<string, any>} [env]
  */
 export function validateConfig(env = rawEnv) {
@@ -132,7 +132,7 @@ export function validateConfig(env = rawEnv) {
 export const CONFIG = buildConfig(rawEnv);
 
 /**
- * Obtiene las URLs activas de API y WebSocket según el selector de entorno ('Local' | 'Cloud').
+ * Resolve active API and WebSocket URLs for the selected environment ('Local' | 'Cloud').
  * @param {'Local'|'Cloud'} [selectedEnv]
  */
 export function getActiveEndpoints(selectedEnv) {
@@ -142,7 +142,7 @@ export function getActiveEndpoints(selectedEnv) {
       envMode =
         window.localStorage.getItem('apiEnv') || window.localStorage.getItem('expresat_env');
     } catch (storageErr) {
-      // Ignorar SecurityError si localStorage está bloqueado en navegación privada / iframe
+      // Ignore SecurityError when localStorage is blocked (e.g. private browsing / iframe)
       console.warn('[config] No se pudo leer localStorage para apiEnv:', storageErr);
       envMode = null;
     }

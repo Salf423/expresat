@@ -17,6 +17,8 @@ const BackgroundParticles = () => {
     let height = canvas.height = window.innerHeight;
 
     const isDark = theme === 'dark';
+    // With prefers-reduced-motion, render a single static frame with no animation loop
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const particles = [];
 
     // Reduce particle count to minimize O(N²) connection overhead
@@ -57,16 +59,18 @@ const BackgroundParticles = () => {
     }
 
     function animate() {
+      // Stop rAF completely when camera is active or tab is hidden (zero empty ticks)
       if (isPausedRef.current || document.hidden) {
         animationFrameIdRef.current = null;
         return;
       }
+
       ctx.clearRect(0, 0, width, height);
 
-      particles.forEach(p => {
-        p.update();
-        p.draw();
-      });
+      for (let i = 0; i < particles.length; i++) {
+        particles[i].update();
+        particles[i].draw();
+      }
 
       // Particle connections calculation O(N²)
       for (let i = 0; i < particles.length; i++) {
@@ -91,7 +95,7 @@ const BackgroundParticles = () => {
         }
       }
 
-      animationFrameIdRef.current = requestAnimationFrame(animate);
+      animationFrameIdRef.current = reducedMotion ? null : requestAnimationFrame(animate);
     }
 
     animate();
@@ -102,7 +106,7 @@ const BackgroundParticles = () => {
     };
     window.addEventListener('resize', handleResize);
 
-    // Cancelar rAF cuando la cámara está activa (cero ticks vacíos durante inferencia)
+    // Cancel rAF immediately when camera stream starts to eliminate idle ticks during inference
     const handleCameraActive = (e) => {
       const active = e.detail === true;
       isPausedRef.current = active;
@@ -111,26 +115,33 @@ const BackgroundParticles = () => {
           cancelAnimationFrame(animationFrameIdRef.current);
           animationFrameIdRef.current = null;
         }
-      } else if (!document.hidden && animationFrameIdRef.current === null) {
+      } else if (!reducedMotion && !document.hidden && animationFrameIdRef.current === null) {
         animate();
       }
     };
     window.addEventListener('camera-active', handleCameraActive);
 
-    // Pause animation when tab loses focus
+    // Cancel rAF when tab loses focus and resume cleanly on return (respecting reduced-motion)
     const handleVisibilityChange = () => {
       if (document.hidden && animationFrameIdRef.current !== null) {
         cancelAnimationFrame(animationFrameIdRef.current);
         animationFrameIdRef.current = null;
-      } else if (!document.hidden && !isPausedRef.current && animationFrameIdRef.current === null) {
+      } else if (
+        !reducedMotion &&
+        !document.hidden &&
+        !isPausedRef.current &&
+        animationFrameIdRef.current === null
+      ) {
         animate();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      cancelAnimationFrame(animationFrameIdRef.current);
-      animationFrameIdRef.current = null;
+      if (animationFrameIdRef.current !== null) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+        animationFrameIdRef.current = null;
+      }
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('camera-active', handleCameraActive);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -140,13 +151,14 @@ const BackgroundParticles = () => {
   return (
     <canvas
       id="bg"
+      aria-hidden="true"
       ref={canvasRef}
       style={{
         position: 'fixed',
         top: 0,
         left: 0,
-        width: '100vw',
-        height: '100vh',
+        width: '100%',
+        height: '100%',
         zIndex: -1,
         pointerEvents: 'none',
         backgroundColor: 'var(--bg-color)'

@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://expresat.local/schemas/recording_raw.schema.json",
+  "title": "ExpresaT Raw Development Recording (v1.4.0)",
+  "description": "Esquema canonico de grabaciones crudas generadas por DevRecorder (.raw.json, compatible con v1.3.x y sellado estricto v1.4.0) con manos como objetos {landmarks, categoryName, score}.",
+  "type": "object",
+  "required": [
+    "version",
+    "type",
+    "recorded_at",
+    "duration_ms",
+    "total_frames",
+    "videoWidth",
+    "videoHeight",
+    "frames"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "feature_spec_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "config_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "pose_cadence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "model_artifacts": {
+      "type": "object",
+      "required": ["hand_landmarker_sha256", "pose_landmarker_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "hand_landmarker_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pose_landmarker_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "type": {
+      "type": "string",
+      "const": "expresat_dev_recording_raw"
+    },
+    "recorded_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "delegate": {
+      "type": ["string", "null"],
+      "enum": ["GPU", "CPU", "WASM", null]
+    },
+    "track_settings": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "width": { "type": "number", "minimum": 0 },
+        "height": { "type": "number", "minimum": 0 },
+        "videoWidth": { "type": "integer", "minimum": 1 },
+        "videoHeight": { "type": "integer", "minimum": 1 },
+        "effective_resolution": { "type": "string", "minLength": 3 },
+        "frameRate": { "type": "number", "minimum": 0 },
+        "aspectRatio": { "type": "number", "minimum": 0 },
+        "facingMode": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "groupId": { "type": "string" },
+        "resizeMode": { "type": "string" }
+      }
+    },
+    "recording_metadata": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "subject_id": { "type": "string", "minLength": 1 },
+        "session_id": { "type": "string", "minLength": 1 },
+        "take_id": { "type": "string", "minLength": 1 },
+        "sign_label": { "type": ["string", "null"] },
+        "sign_type": { "type": ["string", "null"], "enum": ["static", "dynamic", "rest", "calibration", null] },
+        "rest_subregime": { "type": ["string", "null"] }
+      }
+    },
+    "duration_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "total_frames": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "avg_fps": {
+      "type": "number",
+      "minimum": 0
+    },
+    "min_fps_required": {
+      "type": "number",
+      "minimum": 0
+    },
+    "interval_metrics": {
+      "type": "object",
+      "required": ["p50_ms", "p95_ms", "max_ms", "max_allowed_ms", "gaps_over_100ms_count"],
+      "additionalProperties": false,
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "p50_ms": { "type": "number", "minimum": 0 },
+        "p95_ms": { "type": "number", "minimum": 0 },
+        "p99_ms": { "type": "number", "minimum": 0 },
+        "max_ms": { "type": "number", "minimum": 0 },
+        "max_allowed_ms": { "type": "number", "minimum": 0 },
+        "gaps_over_100ms": { "type": "integer", "minimum": 0 },
+        "gaps_over_100ms_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "edge_metrics": {
+      "type": "object",
+      "required": [
+        "border_margin",
+        "frames_checked",
+        "frames_with_hand_near_edge",
+        "edge_clip_ratio",
+        "pose_shoulders_oob_frames"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "border_margin": { "type": "number", "minimum": 0, "maximum": 0.5 },
+        "frames_checked": { "type": "integer", "minimum": 0 },
+        "frames_with_hand_near_edge": { "type": "integer", "minimum": 0 },
+        "edge_clip_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "pose_shoulders_oob_frames": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "hand_presence_metrics": {
+      "type": "object",
+      "required": [
+        "sign_label",
+        "is_active_sign",
+        "frames_with_hands",
+        "hand_presence_ratio",
+        "min_required_ratio",
+        "passed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sign_label": { "type": ["string", "null"] },
+        "is_active_sign": { "type": "boolean" },
+        "frames_with_hands": { "type": "integer", "minimum": 0 },
+        "hand_presence_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "min_required_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "valid": {
+      "type": "boolean"
+    },
+    "error": {
+      "type": ["string", "null"]
+    },
+    "prompt_timeline": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/promptSegment"
+      }
+    },
+    "videoWidth": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "videoHeight": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/rawFrame"
+      }
+    }
+  },
+  "$defs": {
+    "landmark3D": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" },
+        "visibility": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "poseLandmark": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" },
+        "visibility": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "handObject": {
+      "type": "object",
+      "required": ["landmarks", "categoryName", "score"],
+      "additionalProperties": false,
+      "properties": {
+        "landmarks": {
+          "type": "array",
+          "minItems": 21,
+          "maxItems": 21,
+          "items": { "$ref": "#/$defs/landmark3D" }
+        },
+        "categoryName": {
+          "type": "string",
+          "enum": ["Left", "Right", "Unknown"]
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "handednessEntry": {
+      "type": "object",
+      "properties": {
+        "categoryName": { "type": "string" },
+        "displayName": { "type": "string" },
+        "label": { "type": "string" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "index": { "type": "integer" }
+      }
+    },
+    "promptSegment": {
+      "type": "object",
+      "required": ["start_ms", "end_ms", "label", "instruction"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "start_ms": { "type": "number", "minimum": 0 },
+        "end_ms": { "type": "number", "minimum": 0 },
+        "actual_start_ms": { "type": ["number", "null"], "minimum": 0 },
+        "actual_end_ms": { "type": ["number", "null"], "minimum": 0 },
+        "actual_timestamp_iso": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "instruction": { "type": "string" },
+        "subText": { "type": "string" },
+        "toneFreq": { "type": "number" },
+        "toneDuration": { "type": "number" }
+      }
+    },
+    "rawFrame": {
+      "type": "object",
+      "required": ["t_ms", "hands", "pose"],
+      "additionalProperties": false,
+      "properties": {
+        "t_ms": { "type": "number", "minimum": 0 },
+        "videoWidth": { "type": "integer", "minimum": 1 },
+        "videoHeight": { "type": "integer", "minimum": 1 },
+        "hands": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/handObject" }
+        },
+        "handedness": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": { "$ref": "#/$defs/handednessEntry" }
+              },
+              { "$ref": "#/$defs/handednessEntry" }
+            ]
+          }
+        },
+        "pose": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "minItems": 33,
+              "maxItems": 33,
+              "items": { "$ref": "#/$defs/poseLandmark" }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

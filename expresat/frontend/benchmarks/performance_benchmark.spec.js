@@ -7,7 +7,6 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
     page,
   }) => {
     test.setTimeout(180000);
-    // Escuchar consola
     page.on('console', (msg) => {
       if (msg.type() === 'error') {
         console.error('[Browser Error]', msg.text());
@@ -16,7 +15,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
 
     await page.goto('/translator');
 
-    // Esperar a que WASM y los modelos de MediaPipe estén listos
+    // Wait for WASM and MediaPipe models to become ready
     const wasmBadge = page.getByTestId('wasm-status-badge');
     await expect(wasmBadge).toHaveText('WASM Activo', { timeout: 25000 });
 
@@ -24,8 +23,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
       const { FilesetResolver, HandLandmarker, PoseLandmarker } = window.__TasksVision__;
       const vision = await FilesetResolver.forVisionTasks('/wasm');
 
-      // Importar módulos de frontend para pruebas idénticas
-      // LandmarkEMAFilter y GeometricClassifier están disponibles o los instanciamos
+      // Load test stimulus image
       const img = new Image();
       img.src = '/test_hand.png';
       await img.decode();
@@ -43,7 +41,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
         ctx.drawImage(img, handX, handY, 260, 300);
       }
 
-      // Utilidad percentil (mean, p50, p95, p99, max)
+      // Percentile statistics helper (mean, p50, p95, p99, max)
       function calcStats(arr) {
         if (!arr || arr.length === 0) return { mean: 0, p50: 0, p95: 0, p99: 0, max: 0 };
         const sorted = [...arr].sort((a, b) => a - b);
@@ -64,7 +62,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
         };
       }
 
-      // Simuladores ligeros de EMA y Clasificador con idéntica complejidad computacional si no están en window
+      // Lightweight EMA helper matching runtime complexity for standalone benchmark runs
       class SimpleEMA {
         constructor(alpha = 0.5) {
           this.alpha = alpha;
@@ -193,7 +191,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
         const drawTimes = [];
         const totalTimes = [];
 
-        // Calentamiento (warmup) 3 frames
+        // Warmup for 3 frames
         for (let w = 0; w < 3; w++) {
           drawStimulus(w);
           const ts = w * 33;
@@ -208,13 +206,13 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
           const ts = (i + 10) * 33;
           const frameStart = performance.now();
 
-          // 1. Detección de manos
+          // 1. Hand detection
           const tHand0 = performance.now();
           const handRes = handDetector.detectForVideo(canvas, ts);
           const tHandMs = performance.now() - tHand0;
           handTimes.push(tHandMs);
 
-          // 2. Detección de pose (respetando cadencia)
+          // 2. Pose detection (according to configured cadence)
           let tPoseMs = 0;
           const shouldRunPose = cfg.enablePose && poseDetector && i % cfg.poseCadence === 0;
           if (shouldRunPose) {
@@ -225,19 +223,19 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
           }
           poseTimes.push(tPoseMs);
 
-          // 3. Suavizado EMA
+          // 3. EMA smoothing
           const tEma0 = performance.now();
           const smoothedHands = (handRes?.landmarks || []).map((h) => emaFilter.smooth(h));
           const tEmaMs = performance.now() - tEma0;
           emaTimes.push(tEmaMs);
 
-          // 4. Clasificador geométrico
+          // 4. Geometric classifier
           const tClf0 = performance.now();
           simulateGeometricClassification(smoothedHands, cachedPose);
           const tClfMs = performance.now() - tClf0;
           classifierTimes.push(tClfMs);
 
-          // 5. Dibujo en canvas
+          // 5. Canvas draw
           const tDraw0 = performance.now();
           simulateCanvasDraw(displayCtx, {
             hands: smoothedHands,
@@ -276,7 +274,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
       return report;
     });
 
-    // Guardar resultados en disco para auditoría
+    // Save results to disk for traceability
     const outPath = path.resolve(
       process.cwd(),
       '../../docs/dataset-generator/BENCHMARK_LATENCIAS_FIREFOX.json'
@@ -332,7 +330,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
       const { FilesetResolver, HandLandmarker, PoseLandmarker } = window.__TasksVision__;
       const vision = await FilesetResolver.forVisionTasks('/wasm');
 
-      // Diagnóstico de entorno WASM y navegador
+      // Browser and WASM runtime diagnostics
       const envDiag = {
         crossOriginIsolated: Boolean(window.crossOriginIsolated),
         hardwareConcurrency: navigator.hardwareConcurrency || 1,
@@ -347,7 +345,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
         userAgent: navigator.userAgent,
       };
 
-      // Cargar estímulo
+      // Load hand stimulus image
       const img = new Image();
       img.src = '/test_hand.png';
       await img.decode();
@@ -359,7 +357,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
       ctx.fillRect(0, 0, 640, 480);
       ctx.drawImage(img, 190, 100, 260, 300);
 
-      // 1. HandLandmarker CPU vs GPU
+      // HandLandmarker CPU vs GPU
       let handCpu = null;
       let handGpu = null;
       let handDivergence = null;
@@ -424,7 +422,7 @@ test.describe('ExpresaT — Benchmark Integral de Rendimiento por Etapa', () => 
           minTrackingConfidence: 0.1,
         });
 
-        // Cargar imagen con persona real para pose
+        // Load test person image for pose detection
         const imgPerson = new Image();
         imgPerson.src = '/test_person.png';
         await imgPerson.decode();

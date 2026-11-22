@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-main.py — ExpresaT: FastAPI Server with WebSocket
-================================================================================
-Production server that handles:
-  - WebSocket endpoint /ws/translate for receiving batches of landmarks
-  - Asynchronous inference pipeline (does not block the event loop)
-  - JWT Authentication via Supabase
-  - Health checks and latency metrics
+ExpresaT FastAPI server with real-time WebSocket inference endpoint (FEATURE_SPEC v1.4.0).
 
-Execution:
-    uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
+Documentation & Vault References:
+  - Backend Architecture: `Obsidian_exp/Explicacion del codigo/Backend/Python_FastAPI.md`
+  - WebSocket Protocol:   `Obsidian_exp/Websocket.md`
+  - Inference Engine:     `expresat/models/inference_engine.py` (Temperature Scaling + 3-Gate Rejection)
 
-    NOTE: --workers 1 because the ONNX model is loaded into memory only once.
-    To scale horizontally, use multiple instances behind a load balancer.
+Handles:
+  - `/ws/translate` WebSocket endpoint for 15-frame (or variable raw window >= 12 frames) landmark batches
+  - Offloaded CPU inference via `asyncio.to_thread` (non-blocking ASGI event loop)
+  - Supabase JWT authentication and strict Origin allowlist validation (closes with 1008 on violation)
+  - Calibrated 3-gate rejection filtering (`result.get("label") is not None` before emitting `translation`)
+  - Health checks and model metadata inspection (`/`, `/health`, `/labels`)
+
+Run with `--workers 1` so the quantized INT8 ONNX model (`DS-TCN 1D`, ~89.8 KB) is loaded once per instance.
 """
 
 import asyncio
@@ -27,9 +29,7 @@ from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-# ── Import canonical configuration ─────────────────────────────────────────
-# Import config y demo_rules de forma canónica, evitando fragilidad de sys.path.
-# Se prefiere import directo del paquete backend en lugar de relajo sys.path.
+# Prefer package-relative import; fall back when invoked directly from backend/
 try:
     from backend.config import DEMO_MODE, is_demo_mode_enabled
     from backend.demo_rules import predict_demo, DEMO_LABELS
@@ -38,8 +38,6 @@ except ImportError:
     from demo_rules import predict_demo, DEMO_LABELS
 
 
-# ── Environment Variables ────────────────────────────────────────────────────
-
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://your-project.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "your-service-role-key-or-anon")
 MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(
@@ -47,9 +45,7 @@ MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(
 ))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
 
-# CORS origins: whitelist segura por defecto, extensible vía variable de entorno
-# [FIX-MP-2] Ambos dominios Netlify (expresat y ecpresatt) incluidos.
-# En producción, se puede sobreescribir con la env var CORS_ORIGINS.
+# Default CORS allowlist (override via CORS_ORIGINS env var in production)
 CORS_ORIGINS_DEFAULT = [
     "http://localhost:3000",
     "http://localhost:5173",
@@ -61,34 +57,25 @@ CORS_ORIGINS_DEFAULT = [
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", ",".join(CORS_ORIGINS_DEFAULT)).split(",")
 
 
-# ── Inference Engine — Singleton ────────────────────────────────────────────
-
-# Global reference to the inference engine
 _inference_engine = None
 
 
 def get_inference_engine():
-    """Getter to access the inference engine from any handler."""
+    """Return the singleton inference engine instance."""
     global _inference_engine
     return _inference_engine
 
 
-# ── LIFESPAN — Server initialization and cleanup ───────────────────────────
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Manages the server lifecycle.
-    Executes on startup and shutdown.
-
-    Decision: We use lifespan instead of @app.on_event because
-    on_event is deprecated since FastAPI 0.109+
+    Manage server startup and shutdown lifecycle.
+    Uses FastAPI lifespan instead of deprecated `@app.on_event`.
     """
     global _inference_engine
 
     print("\n" + "=" * 60)
     print("  ExpresaT Backend — Starting server...")
-    # [DEMO] Notificación visible de estado de modo demo en el arranque
     if DEMO_MODE:
         print("  [DEMO] MODO DEMO ACTIVO (demo_rules.py)")
         print("  Reglas deterministas para reconocimiento preliminar.")
@@ -97,7 +84,6 @@ async def lifespan(app: FastAPI):
         print("  [PROD] Modo IA Activo (InferenceEngine ONNX)")
     print("=" * 60)
 
-    # --- Load inference engine ---
     try:
         from models.inference_engine import InferenceEngine
 
@@ -125,15 +111,12 @@ async def lifespan(app: FastAPI):
         print(f"   Server will start in MOCK mode.\n")
         _inference_engine = None
 
-    yield  # Server is running here
+    yield
 
-    # --- Shutdown ---
     print("\n ExpresaT Backend — Shutting down...")
     _inference_engine = None
     print("  Resources released.\n")
 
-
-# ── FASTAPI APPLICATION ────────────────────────────────────────────────────
 
 app = FastAPI(
     title="ExpresaT API V2",
@@ -142,7 +125,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS — In production, restrict to Netlify domains with safe whitelist
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -152,18 +134,13 @@ app.add_middleware(
 )
 
 
-# ── CONNECTION MANAGER — Active WebSockets management ─────────────────────
-
 class ConnectionManager:
     """
-    Manages active WebSocket connections.
-    Uses collections.deque(maxlen=15) for frame buffer to prevent
-    memory accumulation and ensure fixed-size window.
+    Manage active WebSocket connections with a bounded 15-frame stream buffer.
     """
 
     def __init__(self):
         self.active_connections: list[WebSocket] = []
-        # Frame buffer for stream mode (frame-by-frame accumulation) — deque con límite automático
         self.frame_buffer: collections.deque = collections.deque(maxlen=15)
 
     async def connect(self, websocket: WebSocket):
@@ -177,44 +154,25 @@ class ConnectionManager:
         print(f"  Client disconnected. Total active: {len(self.active_connections)}")
 
     async def send_personal(self, message: dict, websocket: WebSocket):
-        """Sends a JSON message to a specific client."""
+        """Send a JSON message to a single client."""
         await websocket.send_json(message)
 
 
 manager = ConnectionManager()
 
 
-# ── THREAD POOL EXECUTOR — For synchronous inference offloading ────────────
-
 async def run_inference_async(frames: list[dict]) -> dict:
     """
-    Executes inference in a separate thread to avoid blocking the event loop.
-
-    Design decision: We use asyncio.to_thread() instead of
-    ProcessPoolExecutor because:
-      1. The ONNX model is already thread-safe internally
-      2. Avoids serialization/deserialization of data between processes
-      3. Lower memory overhead (doesn't duplicate the model)
-      4. Sufficient for ultra-light models (< 10ms inference)
-
-    For heavier models, consider ProcessPoolExecutor.
+    Run inference off the asyncio event loop via `asyncio.to_thread()`.
+    Thread offloading avoids process-boundary serialization and model duplication
+    since the ONNX Runtime session is thread-safe and inference is < 10 ms.
     """
-    # =========================================================================
-    # [DEMO] EJECUCIÓN CONDICIONAL SEGÚN DEMO_MODE
-    # =========================================================================
-    # [DEMO] Si DEMO_MODE es True, se ejecuta el motor determinista predict_demo()
-    # que calcula reglas geométricas (ángulos, distancias y extensión de dedos)
-    # sobre los landmarks de MediaPipe sin modificar su estructura.
-    # Esta implementación es temporal y será reemplazada por el modelo de IA.
     if is_demo_mode_enabled():
-        # [DEMO] Offload de reglas deterministas a hilo secundario para mantener async
         return await asyncio.to_thread(predict_demo, frames)
 
-    # --- FLUJO ORIGINAL CON MODELO DE IA ---
     engine = get_inference_engine()
 
     if engine is None:
-        # Mock mode when no model is loaded — return structured result with warning
         return {
             "label": None,
             "confidence": 0.0,
@@ -224,16 +182,12 @@ async def run_inference_async(frames: list[dict]) -> dict:
             "error": "Model not loaded"
         }
 
-    # Offload synchronous inference to a pool thread
     result = await asyncio.to_thread(engine.predict, frames)
     return result
 
 
 def _mock_inference(frames: list[dict]) -> dict:
-    """
-    Mock inference for development/testing when there is no trained model.
-    Simulates a prediction with realistic latency.
-    """
+    """Mock inference fallback for development when no trained model is available."""
     import random
 
     mock_labels = ["hola", "gracias", "por_favor", "adios", "si", "no"]
@@ -248,29 +202,24 @@ def _mock_inference(frames: list[dict]) -> dict:
     }
 
 
-# ── SUPABASE AUTH — JWT Verification ───────────────────────────────────────
-
 def verify_supabase_token(token: str) -> Optional[dict]:
     """
-    Verifies a Supabase JWT token.
-
-    In development (FASTAPI_ENV=development): accepts any non-empty token as fallback.
-    In production: requires valid token from Supabase (rejects mock/empty tokens).
+    Verify a Supabase JWT token.
+    Accepts any non-empty token when FASTAPI_ENV=development; requires valid
+    Supabase verification in production.
     """
     if not token:
         return None
 
     env = os.getenv("FASTAPI_ENV", "production")
 
-    # --- DEVELOPMENT: Conditional bypass only when explicitly in dev mode ---
     if env == "development":
         return {"id": "dev-user", "email": "dev@expresat.local"}
 
-    # --- PRODUCTION: Reject development fallback tokens ---
+    # Reject development fallback tokens in production
     if token in ("mock_token", "demo_fallback_token"):
         return None
 
-    # --- PRODUCTION: Require valid token from Supabase ---
     if SUPABASE_URL and SUPABASE_KEY and "your-project.supabase.co" not in SUPABASE_URL:
         try:
             from supabase import create_client
@@ -284,17 +233,13 @@ def verify_supabase_token(token: str) -> Optional[dict]:
             print(f"[WS REJECT] Supabase verification failed: {e}")
             return None
 
-    # In production without valid Supabase config, reject and log warning
     print(f"[WARN] verify_supabase_token: Supabase verification required in production. "
           f"Token provided: {token[:20]}... (truncated).")
     return None
 
 
 def is_origin_allowed(origin: Optional[str]) -> bool:
-    """
-    Valida la cabecera Origin en conexiones WebSocket cuando está presente.
-    Permite orígenes configurados en CORS_ORIGINS o '*'.
-    """
+    """Validate the WebSocket Origin header against CORS_ORIGINS when present."""
     if not origin:
         return True
     allowed = [o.strip() for o in os.getenv("CORS_ORIGINS", ",".join(CORS_ORIGINS_DEFAULT)).split(",") if o.strip()]
@@ -303,13 +248,9 @@ def is_origin_allowed(origin: Optional[str]) -> bool:
     return origin in allowed
 
 
-# ── WEBSOCKET ENDPOINT — /ws/translate ────────────────────────────────────
-
 @app.websocket("/ws/translate")
 async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
-    """
-    Main WebSocket endpoint for real-time sign language translation.
-    """
+    """Main WebSocket endpoint for real-time sign language translation."""
     origin = websocket.headers.get("origin")
     demo_active = is_demo_mode_enabled()
 
@@ -319,10 +260,9 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
         await websocket.close(code=1008, reason=reason)
         return
 
-    # --- Verify authentication ---
     user = verify_supabase_token(token)
     if not user and demo_active:
-        # En modo DEMO_MODE, permitir acceso de demostración sin autenticación estricta
+        # Demo mode allows unauthenticated demo sessions
         user = {"id": "demo-user", "email": "demo@expresat.local", "demo": True}
         print(f"[WS AUTH] DEMO_MODE=true: sesión de demostración pública iniciada (Origin={origin or 'none'})")
 
@@ -334,27 +274,21 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
         await websocket.close(code=1008, reason=reason)
         return
 
-    # --- Accept connection ---
     await manager.connect(websocket)
 
-    # Frame buffer for stream mode (frame-by-frame accumulation) — deque con maxlen=15
     frame_buffer: collections.deque = collections.deque(maxlen=15)
 
     try:
         while True:
-            # Receive JSON message from client
             data = await websocket.receive_json()
             msg_type = data.get("type")
 
-            # ----- PING/PONG for latency -----
             if msg_type == "ping":
                 await manager.send_personal({"type": "pong"}, websocket)
 
-            # ----- AUTH (acknowledge auth message from client) -----
             elif msg_type == "auth":
                 client_token = data.get("token")
-                # Token already validated at handshake if Query param provided;
-                # otherwise validate here if needed
+                # Token already validated at handshake when provided in query string
                 token_user = verify_supabase_token(client_token) if client_token else user
                 if token_user:
                     await manager.send_personal({
@@ -367,7 +301,6 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                         "payload": "Authentication failed"
                     }, websocket)
 
-            # ----- INFERENCE -----
             elif msg_type == "inference":
                 payload = data.get("payload")
 
@@ -378,26 +311,16 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                     }, websocket)
                     continue
 
-                # Detect mode: batch (list of frames) vs stream (single frame)
                 if isinstance(payload, list):
-                    # ===== BATCH MODE =====
-                    # The frontend sent a full batch of 15 frames
                     frames_to_process = payload
 
                 elif isinstance(payload, dict):
-                    # ===== STREAM MODE (backward compatible) =====
-                    # The frontend sends one frame at a time
+                    # Stream mode (legacy single-frame input)
                     frame_buffer.append(payload)
-
-                    # Since deque has maxlen=15, it automatically keeps only last 15
-
-                    # Only infer when we have a full buffer
                     if len(frame_buffer) < 15:
                         continue
 
                     frames_to_process = list(frame_buffer)
-                    # deque automatically clears after maxlen is reached, but we explicitly copy
-                    # and create a fresh reference for the next batch
                     frame_buffer.clear()
 
                 else:
@@ -407,25 +330,28 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                     }, websocket)
                     continue
 
-                # --- Execute asynchronous inference ---
                 try:
+                    # Offload CPU-bound FEATURE_SPEC v1.4.0 ExtractWindow + ONNX Runtime inference
+                    # to a worker thread so the ASGI event loop never blocks concurrent sockets.
                     result = await run_inference_async(frames_to_process)
 
-                    # Only send translation if confidence exceeds label is not None
+                    # InferenceEngine applies Temperature Scaling (softmax(logits / T)) and
+                    # evaluates the 3 rejection gates (min_confidence, min_margin, max_entropy).
+                    # Rejected frames return `label=None` and `safe_label="reposo"`, preventing
+                    # false-positive translation events from being broadcast to the client UI.
                     if result.get("label") is not None:
                         await manager.send_personal({
                             "type": "translation",
                             "payload": result
                         }, websocket)
                     elif result.get("debug") and DEMO_MODE:
-                        # [DEMO] Telemetría diagnóstica en tiempo real (mano quieta / reposo)
+                        # Real-time diagnostic telemetry in demo mode
                         await manager.send_personal({
                             "type": "telemetry",
                             "payload": result
                         }, websocket)
 
                 except Exception as e:
-                    # Mask sensitive token info in logs - truncate token reference
                     token_safe = token[:20] + "..." if token and len(token) > 20 else (token or "None")
                     print(f"  Inference error (token: {token_safe}): {e}")
                     await manager.send_personal({
@@ -433,7 +359,6 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
                         "payload": f"Inference error: {str(e)}"
                     }, websocket)
 
-            # ----- UNKNOWN MESSAGE -----
             else:
                 await manager.send_personal({
                     "type": "error",
@@ -443,25 +368,16 @@ async def websocket_translate(websocket: WebSocket, token: str = Query(None)):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
-        # Mask sensitive token info in logs
         token_safe = token[:20] + "..." if token and len(token) > 20 else (token or "None")
         print(f"  WebSocket error (token: {token_safe}): {e}")
         manager.disconnect(websocket)
 
 
-# ── LEGACY ENDPOINT — /ws ────────────────────────────────────────────────
-
 @app.websocket("/ws")
 async def websocket_legacy(websocket: WebSocket, token: str = Query(None)):
-    """
-    Legacy endpoint that redirects to the new /ws/translate.
-    Maintains compatibility with existing frontend that uses /ws.
-    """
-    # Reuse the same logic from the main endpoint
+    """Legacy WebSocket alias forwarding to `/ws/translate`."""
     await websocket_translate(websocket, token)
 
-
-# ── REST ENDPOINTS — Health checks and utilities ─────────────────────────
 
 @app.head("/")
 @app.get("/")
@@ -508,7 +424,7 @@ async def detailed_health():
 
 @app.get("/labels")
 async def get_labels():
-    """Returns the labels/signs that the model can recognize."""
+    """Return the labels/signs the active backend can recognize."""
     if is_demo_mode_enabled():
         return {
             "labels": DEMO_LABELS,
@@ -523,8 +439,6 @@ async def get_labels():
     return {"labels": [], "count": 0, "message": "Model not loaded"}
 
 
-# ── DIRECT EXECUTION ──────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     import uvicorn
 
@@ -536,8 +450,8 @@ if __name__ == "__main__":
         "main:app",
         host=host,
         port=port,
-        reload=True,          # Hot-reload in development
+        reload=True,
         log_level="info",
-        ws_ping_interval=30,  # Automatic ping every 30s to keep connection alive
-        ws_ping_timeout=10,   # Pong timeout
+        ws_ping_interval=30,
+        ws_ping_timeout=10,
     )

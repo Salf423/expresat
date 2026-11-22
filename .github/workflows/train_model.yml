@@ -1,22 +1,39 @@
-name: Train & Export Model
+name: Train, Verify & Export Model (v1.4.0)
 
 on:
   push:
     paths:
-      - 'expresat-dataset-generator/dataset/**.json'
+      - 'expresat/models/feature_extractor.py'
       - 'expresat/models/train_and_export.py'
+      - 'expresat/models/inference_engine.py'
+      - 'expresat-dataset-generator/scripts/**'
+      - 'catalog/signs_catalog.json'
+      - '.github/workflows/train_model.yml'
+  pull_request:
+    paths:
+      - 'expresat/models/**'
+      - 'expresat-dataset-generator/scripts/**'
+      - 'tests/**'
       - '.github/workflows/train_model.yml'
   workflow_dispatch:
     inputs:
+      manifest_path:
+        description: 'Path to real Stage-2 manifest.json (leave empty for CI smoke-test only)'
+        required: false
+        default: ''
       epochs:
         description: 'Training epochs'
         required: false
-        default: '50'
+        default: '40'
+      min_macro_f1:
+        description: 'Minimum validation Macro-F1 gate for real datasets'
+        required: false
+        default: '0.85'
 
 jobs:
-  train-and-export:
+  verify-and-smoke-ablation:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -28,104 +45,147 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Python dependencies
+      - name: Install Python ML dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install onnx onnxruntime numpy
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install onnx onnxruntime numpy jsonschema
 
-      - name: Validate dataset JSON files
-        run: |
-          python - <<'EOF'
-          import json, pathlib, sys
-
-          dataset_dir = pathlib.Path("expresat-dataset-generator/dataset")
-          if not dataset_dir.exists():
-              print("No dataset directory found. Skipping training.")
-              sys.exit(0)
-
-          label_files = list(dataset_dir.glob("*.json"))
-          if not label_files:
-              print("No label JSON files found. Skipping training.")
-              sys.exit(0)
-
-          errors = []
-          labels = []
-          for f in label_files:
-              if f.name == "dataset.json":
-                  continue
-              try:
-                  data = json.loads(f.read_text())
-                  assert "label" in data and "data" in data, "Missing required fields"
-                  assert len(data["data"]) > 0, "Empty data array"
-                  assert data["feature_dim"] in (178, 52, 63, 126), f"Unexpected feature_dim: {data['feature_dim']}"
-                  labels.append(data["label"])
-                  print(f"  ✓ {f.name}: {data['num_samples']} samples, {data['feature_dim']}D, {data['sequence_length']} frames")
-              except Exception as e:
-                  errors.append(f"{f}: {e}")
-
-          if errors:
-              print("\nValidation errors:")
-              for e in errors:
-                  print(f"  ✗ {e}")
-              sys.exit(1)
-
-          print(f"\nLabels found: {labels}")
-          # Write labels list for next step
-          with open("/tmp/labels.txt", "w") as f:
-              f.write("\n".join(labels))
-          EOF
-
-      - name: Train and export model
-        run: |
-          LABELS=$(cat /tmp/labels.txt | tr '\n' ' ')
-          EPOCHS="${{ github.event.inputs.epochs || '50' }}"
-
-          echo "Training with labels: $LABELS"
-          echo "Epochs: $EPOCHS"
-
-          # The training script reads from the dataset directory
-          python expresat/models/train_and_export.py \
-            --epochs "$EPOCHS" \
-            --output ./exported_model \
-            --labels $LABELS
+      - name: Run full v1.4.0 contract and training unit test suite
         env:
           PYTHONPATH: expresat
-
-      - name: Verify exported artifacts
         run: |
-          echo "=== Exported model files ==="
-          ls -lh exported_model/
-          python - <<'EOF'
-          import onnxruntime as ort
-          import numpy as np
+          python -m unittest discover -s tests -p "test_*.py" -v
 
-          session = ort.InferenceSession(
-              "exported_model/expresat_gru_int8.onnx",
-              providers=["CPUExecutionProvider"]
-          )
-          input_name = session.get_inputs()[0].name
-          dummy = np.random.randn(1, 15, 178).astype(np.float32)
-          outputs = session.run(None, {input_name: dummy})
-          print(f"✓ ONNX inference OK — output shape: {outputs[0].shape}")
+      - name: Run A/B smoke-test ablation in temporary directory (never committed)
+        env:
+          PYTHONPATH: expresat
+        run: |
+          SMOKE_DIR="${{ runner.temp }}/expresat_ci_smoke"
+          rm -rf "$SMOKE_DIR"
+          python expresat/models/train_and_export.py \
+            --allow-synthetic-smoke-test \
+            --ablation \
+            --epochs 18 \
+            --benchmark-runs 100 \
+            --output "$SMOKE_DIR"
+
+      - name: Enforce CI quality gates on smoke-test A/B report and InferenceEngine guards
+        env:
+          PYTHONPATH: expresat
+          SMOKE_DIR: ${{ runner.temp }}/expresat_ci_smoke
+        run: |
+          python - <<'EOF'
+          import json
+          import os
+          from pathlib import Path
+          from models.inference_engine import IncompatibleFeatureSpecError, InferenceEngine
+
+          smoke_dir = Path(os.environ["SMOKE_DIR"])
+          report = json.loads((smoke_dir / "ablation_report.json").read_text(encoding="utf-8"))
+          meta = json.loads((smoke_dir / "model_metadata.json").read_text(encoding="utf-8"))
+
+          assert report["is_smoke_test"] is True
+          assert report["production_ready"] is False
+          assert meta["is_smoke_test"] is True
+          assert meta["production_ready"] is False
+
+          # Zero external .onnx.data sidecars
+          sidecars = list(smoke_dir.rglob("*.onnx.data"))
+          assert not sidecars, f"Forbidden .onnx.data sidecars found: {sidecars}"
+
+          ds = report["models"]["ds_tcn"]
+          assert ds["val_macro_f1"] >= 0.90, f"Smoke Macro-F1 gate failed: {ds['val_macro_f1']}"
+          assert ds["quantization"]["quantized_pct"] >= 85.0, f"INT8 quantized_pct gate failed: {ds['quantization']['quantized_pct']}"
+          assert ds["parity"]["fp32_logit_linf"] <= 1e-5, f"FP32 parity gate failed: {ds['parity']['fp32_logit_linf']}"
+          assert ds["parity"]["int8_prob_linf"] <= 1e-2, f"INT8 parity gate failed: {ds['parity']['int8_prob_linf']}"
+          assert ds["latency_cpu"]["p99_ms"] < 3.0, f"CPU latency p99 gate failed: {ds['latency_cpu']['p99_ms']}"
+          assert ds["calibration"]["ece_after"] < 0.03, f"Calibration ECE gate failed: {ds['calibration']['ece_after']}"
+
+          # Verify InferenceEngine refuses smoke-test artifact by default
+          try:
+              InferenceEngine(str(smoke_dir))
+              raise AssertionError("InferenceEngine failed to block smoke-test model by default")
+          except IncompatibleFeatureSpecError:
+              pass
+
+          # Verify InferenceEngine loads with explicit allow_smoke_test=True
+          engine = InferenceEngine(str(smoke_dir), allow_smoke_test=True)
+          info = engine.get_info()
+          assert info["feature_spec_version"] == "1.4.0"
+          assert info["production_ready"] is False
+          print("[OK] All v1.4.0 CI smoke gates passed:", json.dumps(ds["quantization"]), json.dumps(ds["latency_cpu"]))
           EOF
 
-      - name: Upload model artifacts
+  train-production-model:
+    needs: verify-and-smoke-ablation
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.manifest_path != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python ML dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install onnx onnxruntime numpy jsonschema
+
+      - name: Train A/B ablation and export production model to expresat/models/exported_model
+        env:
+          PYTHONPATH: expresat
+          MANIFEST_PATH: ${{ github.event.inputs.manifest_path }}
+          EPOCHS: ${{ github.event.inputs.epochs || '40' }}
+        run: |
+          python expresat/models/train_and_export.py \
+            --manifest "$MANIFEST_PATH" \
+            --ablation \
+            --epochs "$EPOCHS" \
+            --benchmark-runs 200 \
+            --output expresat/models/exported_model
+
+      - name: Enforce production quality gates before artifact publication
+        env:
+          PYTHONPATH: expresat
+          MIN_MACRO_F1: ${{ github.event.inputs.min_macro_f1 || '0.85' }}
+        run: |
+          python - <<'EOF'
+          import json
+          import os
+          from pathlib import Path
+          from models.inference_engine import InferenceEngine
+
+          out_dir = Path("expresat/models/exported_model")
+          meta = json.loads((out_dir / "model_metadata.json").read_text(encoding="utf-8"))
+          min_f1 = float(os.environ["MIN_MACRO_F1"])
+
+          assert meta["is_smoke_test"] is False, "Smoke artifacts forbidden in production directory"
+          assert meta["production_ready"] is True, "production_ready must be true"
+          assert not list(out_dir.glob("*.onnx.data")), "External .onnx.data sidecars are forbidden"
+          assert meta["metrics"]["val_macro_f1"] >= min_f1, f"Val Macro-F1 below gate: {meta['metrics']['val_macro_f1']} < {min_f1}"
+          assert meta["parity"]["fp32_logit_linf"] <= 1e-5, f"FP32 parity failed: {meta['parity']['fp32_logit_linf']}"
+          assert meta["parity"]["int8_prob_linf"] <= 1e-2, f"INT8 parity failed: {meta['parity']['int8_prob_linf']}"
+          assert meta["latency_cpu"]["p99_ms"] < 3.0, f"CPU latency p99 failed: {meta['latency_cpu']['p99_ms']}"
+          assert meta["calibration"]["ece_after"] < 0.03, f"Calibration ECE failed: {meta['calibration']['ece_after']}"
+
+          engine = InferenceEngine(str(out_dir))
+          print("[OK] Production InferenceEngine gate verified:", json.dumps(engine.get_info(), indent=2))
+          EOF
+
+      - name: Upload canonical production model artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: expresat-model-${{ github.sha }}
+          name: expresat-model-v140-${{ github.sha }}
           path: |
-            exported_model/expresat_gru_int8.onnx
-            exported_model/model_metadata.json
+            expresat/models/exported_model/expresat_*_int8.onnx
+            expresat/models/exported_model/model_metadata.json
+            expresat/models/exported_model/ablation_report.json
           retention-days: 30
-
-      - name: Commit model back to repository
-        if: github.ref == 'refs/heads/main'
-        run: |
-          git config user.name  "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add exported_model/expresat_gru_int8.onnx \
-                  exported_model/model_metadata.json
-          git diff --cached --quiet || \
-            git commit -m "ci: update trained model [skip ci]" && \
-            git push

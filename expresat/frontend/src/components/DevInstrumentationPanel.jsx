@@ -38,13 +38,12 @@ export const DevInstrumentationPanel = React.memo(function DevInstrumentationPan
   engineRef,
   devSnapshot,
   onRefreshSnapshot,
-  enabled = true,
 }) {
   const [expanded, setExpanded] = useState(true);
   const [copyStatus, setCopyStatus] = useState('');
   const [manualSnapshot, setManualSnapshot] = useState(null);
 
-  if (!enabled) {
+  if (!import.meta.env.DEV) {
     return null;
   }
 
@@ -296,7 +295,7 @@ export const DevInstrumentationPanel = React.memo(function DevInstrumentationPan
 
       {expanded && (
         <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-          {/* Resumen separado Cámara Real vs Loop vs Inferencia */}
+          {/* Separate summaries: real camera vs loop vs inference */}
           <div
             style={{
               display: 'grid',
@@ -352,7 +351,7 @@ export const DevInstrumentationPanel = React.memo(function DevInstrumentationPan
             </div>
           </div>
 
-          {/* Negociación getUserMedia & Config */}
+          {/* getUserMedia negotiation & runtime config */}
           <div
             style={{
               background: 'rgba(0, 0, 0, 0.3)',
@@ -393,7 +392,7 @@ export const DevInstrumentationPanel = React.memo(function DevInstrumentationPan
             )}
           </div>
 
-          {/* Tabla comparativa Reposo vs Grabando (ms: p50 / p95 / p99 / máx) */}
+          {/* Idle vs recording latency breakdown (ms: p50 / p95 / p99 / max) */}
           <div style={{ overflowX: 'auto' }}>
             <table
               style={{

@@ -1,108 +1,234 @@
 """
-inference_engine.py — ExpresaT: Motor de Inferencia ONNX Runtime (CPU-Only)
-===========================================================================
-Clase de producción que carga el modelo GRU cuantizado a INT8 en formato ONNX
-y ejecuta inferencia sobre lotes de 15 frames de landmarks de MediaPipe.
+Production CPU-only ONNX Runtime inference engine (FEATURE_SPEC v1.4.0).
 
-Características clave:
-    - ONNX Runtime como motor de inferencia (NO PyTorch/TensorFlow en prod)
-    - Preprocesamiento vectorizado con NumPy (zero-copy cuando es posible)
-    - Normalización relativa a los hombros para invariancia de posición
-    - Thread-safe: usa un lock para serializar acceso a la sesión ONNX
-    - Latencia objetivo: < 100ms por batch en CPU
+Documentation & Vault References:
+  - Inference Engine Note: `Obsidian_exp/Explicacion del codigo/Funciones_Modelo/INFERENCIA.md`
+  - Agent Playbook #4:     `Obsidian_exp/Agentes/02_PLAYBOOKS_POR_TAREA.md`
+  - Contract Graph:        `Obsidian_exp/Agentes/03_GRAFO_DEPENDENCIAS_Y_CONTRATOS.md`
 
-Uso:
-    engine = InferenceEngine("./exported_model")
-    result = engine.predict(batch_15_frames)
-    print(result)  # {"label": "hola", "confidence": 0.95, "latency_ms": 3.2}
+Loads a validated self-contained INT8 (or FP32 fallback) ONNX model (`DS-TCN 1D`
+or `BiGRU`), enforces `FEATURE_SPEC v1.4.0` + `config_hash` + production readiness,
+configures 1-thread ORT execution for lightweight models (< 2 MB, achieving p50=0.319 ms,
+p99=0.625 ms), applies post-hoc Temperature Scaling, and evaluates the 3-gate rejection
+policy (calibrated confidence >= 0.65, top-1/top-2 margin >= 0.20, and normalized
+entropy <= 0.55 -> safe fallback to `reposo` / indeterminate).
 """
 
+from __future__ import annotations
+
 import json
+import math
 import os
-import time
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 
 try:
-    from models.feature_extractor import extract_window, FEATURE_SPEC_VERSION
+    from models.feature_extractor import (
+        FEATURE_SPEC_VERSION,
+        SEQUENCE_LENGTH,
+        TOTAL_FEATURES,
+        compute_config_hash,
+        extract_window,
+    )
 except ImportError:
     try:
-        from feature_extractor import extract_window, FEATURE_SPEC_VERSION
+        from feature_extractor import (
+            FEATURE_SPEC_VERSION,
+            SEQUENCE_LENGTH,
+            TOTAL_FEATURES,
+            compute_config_hash,
+            extract_window,
+        )
     except ImportError:
-        from expresat.models.feature_extractor import extract_window, FEATURE_SPEC_VERSION
+        from expresat.models.feature_extractor import (
+            FEATURE_SPEC_VERSION,
+            SEQUENCE_LENGTH,
+            TOTAL_FEATURES,
+            compute_config_hash,
+            extract_window,
+        )
 
 
-# =============================================================================
-# CONSTANTES — Deben coincidir con train_and_export.py
-# =============================================================================
+NUM_FEATURES = TOTAL_FEATURES
+DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "exported_model"
+LIGHTWEIGHT_MODEL_MAX_BYTES = 2 * 1024 * 1024  # 2 MB -> 1-thread ORT avoids wakeup jitter
 
-SEQUENCE_LENGTH = 15
 
-# Pose superior: landmarks de MediaPipe que nos interesan
-# Índices de MediaPipe Pose (33 total) que corresponden al torso superior:
-#   0: nariz, 11-12: hombros, 13-14: codos, 15-16: muñecas,
-#   17-18: meñique, 19-20: índice, 21-22: pulgar, 23-24: caderas
-POSE_UPPER_INDICES = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-POSE_COORDS = 4       # x, y, z, visibility
-HAND_LANDMARKS = 21
-HAND_COORDS = 3       # x, y, z
+class IncompatibleFeatureSpecError(RuntimeError):
+    """Raised when `model_metadata.json` violates FEATURE_SPEC v1.4.0, `config_hash`, or production policy."""
 
-NUM_FEATURES = (len(POSE_UPPER_INDICES) * POSE_COORDS) + (HAND_LANDMARKS * HAND_COORDS * 2)
-# = 52 + 63 + 63 = 178
+
+def _major_minor(version_str: str) -> tuple[str, str]:
+    parts = str(version_str).strip().split(".")
+    if len(parts) < 2:
+        return ("", "")
+    return (parts[0], parts[1])
+
+
+def validate_metadata_feature_spec(
+    metadata: dict,
+    expected_delegate: Optional[str] = None,
+    expected_pose_cadence: Optional[int] = None,
+    allow_smoke_test: bool = False,
+) -> tuple[str, str]:
+    """
+    Strictly validate `model_metadata.json` against active `FEATURE_SPEC_VERSION`,
+    canonical `config_hash`, and production readiness (rejecting smoke-test artifacts
+    unless `allow_smoke_test=True`).
+    """
+    if not isinstance(metadata, dict):
+        raise IncompatibleFeatureSpecError("model_metadata.json inválido: se esperaba un objeto JSON.")
+
+    if not allow_smoke_test:
+        if bool(metadata.get("is_smoke_test", False)) or metadata.get("production_ready") is False:
+            raise IncompatibleFeatureSpecError(
+                "Artefacto de smoke-test sintético bloqueado en producción "
+                "(is_smoke_test=true / production_ready=false). Entrena con shards reales validados "
+                "o pasa allow_smoke_test=True solo en pruebas."
+            )
+
+    meta_version = metadata.get("feature_spec_version")
+    if not isinstance(meta_version, str) or not meta_version.strip():
+        raise IncompatibleFeatureSpecError(
+            f"model_metadata.json carece de 'feature_spec_version' obligatorio (esperado {FEATURE_SPEC_VERSION})."
+        )
+
+    if _major_minor(meta_version) != _major_minor(FEATURE_SPEC_VERSION):
+        raise IncompatibleFeatureSpecError(
+            f"Versión FEATURE_SPEC incompatible: modelo={meta_version}, runtime={FEATURE_SPEC_VERSION}. "
+            f"Re-entrena y exporta el modelo con FEATURE_SPEC {FEATURE_SPEC_VERSION}."
+        )
+
+    meta_seq_len = metadata.get("sequence_length")
+    if meta_seq_len is not None and int(meta_seq_len) != SEQUENCE_LENGTH:
+        raise IncompatibleFeatureSpecError(
+            f"sequence_length incompatible: modelo={meta_seq_len}, runtime={SEQUENCE_LENGTH}."
+        )
+
+    meta_num_features = metadata.get("num_features")
+    if meta_num_features is not None and int(meta_num_features) != TOTAL_FEATURES:
+        raise IncompatibleFeatureSpecError(
+            f"num_features incompatible: modelo={meta_num_features}, runtime={TOTAL_FEATURES}."
+        )
+
+    meta_delegate = str(metadata.get("delegate", "GPU"))
+    try:
+        meta_pose_cadence = int(metadata.get("pose_cadence", 1))
+    except (TypeError, ValueError) as exc:
+        raise IncompatibleFeatureSpecError(
+            f"pose_cadence inválido en model_metadata.json: {metadata.get('pose_cadence')!r}"
+        ) from exc
+
+    if expected_delegate is not None and meta_delegate != str(expected_delegate):
+        raise IncompatibleFeatureSpecError(
+            f"Delegado incompatible: modelo={meta_delegate}, esperado={expected_delegate}."
+        )
+
+    if expected_pose_cadence is not None and meta_pose_cadence != int(expected_pose_cadence):
+        raise IncompatibleFeatureSpecError(
+            f"pose_cadence incompatible: modelo={meta_pose_cadence}, esperado={expected_pose_cadence}."
+        )
+
+    meta_hash = metadata.get("config_hash")
+    if not isinstance(meta_hash, str) or len(meta_hash) != 64:
+        raise IncompatibleFeatureSpecError(
+            "model_metadata.json carece de 'config_hash' SHA-256 válido (64 hex)."
+        )
+
+    expected_hash = compute_config_hash(delegate=meta_delegate, pose_cadence=meta_pose_cadence)
+    if meta_hash != expected_hash:
+        raise IncompatibleFeatureSpecError(
+            f"config_hash incompatible (delegate={meta_delegate}, pose_cadence={meta_pose_cadence}): "
+            f"modelo={meta_hash[:12]}..., runtime={expected_hash[:12]}.... "
+            f"Verifica parámetros FEATURE_SPEC {FEATURE_SPEC_VERSION} y checksums .task."
+        )
+
+    return meta_version, meta_hash
 
 
 class InferenceEngine:
     """
-    Motor de inferencia de producción para ExpresaT.
-
-    Carga el modelo ONNX cuantizado y proporciona una interfaz limpia
-    para ejecutar predicciones sobre secuencias de landmarks.
-
-    Attributes:
-        session: Sesión de ONNX Runtime configurada para CPU
-        labels: Lista de etiquetas de señas
-        metadata: Metadatos del modelo (dimensiones, config, etc.)
-        confidence_threshold: Umbral mínimo de confianza para reportar
+    Thread-safe ONNX Runtime inference wrapper for ExpresaT sign classification
+    with post-hoc Temperature Scaling and a 3-gate rejection policy.
     """
 
-    def __init__(self, model_dir: str, confidence_threshold: float = 0.5):
+    def __init__(
+        self,
+        model_dir: str,
+        confidence_threshold: Optional[float] = None,
+        expected_delegate: Optional[str] = None,
+        expected_pose_cadence: Optional[int] = None,
+        *,
+        min_margin: Optional[float] = None,
+        max_normalized_entropy: Optional[float] = None,
+        fallback_label: Optional[str] = None,
+        allow_smoke_test: bool = False,
+    ):
         """
-        Inicializa el motor de inferencia.
-
-        Args:
-            model_dir: Directorio que contiene el modelo .onnx y model_metadata.json
-            confidence_threshold: Confianza mínima (0-1) para considerar una predicción válida
-
-        Raises:
-            FileNotFoundError: Si no se encuentra el modelo o los metadatos
-            RuntimeError: Si ONNX Runtime no puede cargar el modelo
+        Initialize the inference engine from `model_dir` containing the `.onnx`
+        artifact and `model_metadata.json`. Validates FEATURE_SPEC, `config_hash`,
+        and production readiness before creating the ONNX Runtime session.
         """
         self.model_dir = Path(model_dir)
-        self.confidence_threshold = confidence_threshold
         self._lock = threading.Lock()
+        self.allow_smoke_test = bool(allow_smoke_test)
 
-        # --- Cargar metadatos ---
         self.metadata = self._load_metadata()
-        self.labels = self.metadata["labels"]
-        self.num_classes = self.metadata["num_classes"]
+        self.feature_spec_version, self.config_hash = validate_metadata_feature_spec(
+            self.metadata,
+            expected_delegate=expected_delegate,
+            expected_pose_cadence=expected_pose_cadence,
+            allow_smoke_test=self.allow_smoke_test,
+        )
+        self.labels = list(self.metadata["labels"])
+        self.num_classes = int(self.metadata.get("num_classes", len(self.labels)))
+        self.architecture = str(self.metadata.get("architecture", "unknown"))
 
-        # --- Inicializar sesión ONNX Runtime ---
+        # Post-hoc Temperature Scaling scalar (defaults to 1.0 if omitted in legacy tests)
+        temp_raw = self.metadata.get("temperature", 1.0)
+        try:
+            self.temperature = float(temp_raw)
+        except (TypeError, ValueError) as exc:
+            raise IncompatibleFeatureSpecError(f"temperature inválido en model_metadata.json: {temp_raw!r}") from exc
+        if not math.isfinite(self.temperature) or self.temperature <= 0.0:
+            raise IncompatibleFeatureSpecError(f"temperature debe ser finito y > 0, encontrado: {self.temperature}")
+
+        # 3-gate rejection policy (caller overrides > metadata policy > safe defaults)
+        policy = self.metadata.get("rejection_policy")
+        policy_dict = policy if isinstance(policy, dict) else {}
+        self.confidence_threshold = float(
+            confidence_threshold
+            if confidence_threshold is not None
+            else policy_dict.get("min_confidence", 0.5)
+        )
+        self.min_margin = float(
+            min_margin if min_margin is not None else policy_dict.get("min_margin", 0.20)
+        )
+        self.max_normalized_entropy = float(
+            max_normalized_entropy
+            if max_normalized_entropy is not None
+            else policy_dict.get("max_normalized_entropy", 0.55)
+        )
+        self.fallback_label = str(
+            fallback_label if fallback_label is not None else policy_dict.get("fallback_label", "reposo")
+        )
+
         self.session = self._create_onnx_session()
-
-        # --- Cachear nombre del input para evitar lookups repetidos ---
         self._input_name = self.session.get_inputs()[0].name
 
-        print(f"    InferenceEngine inicializado")
-        print(f"    Modelo:     {self._get_model_path().name}")
+        print("    InferenceEngine inicializado")
+        print(f"    Modelo:     {self._get_model_path().name} ({self.architecture})")
+        print(f"    Spec:       {self.feature_spec_version} ({self.config_hash[:12]}...)")
         print(f"    Clases:     {self.num_classes}")
         print(f"    Features:   {NUM_FEATURES}")
-        print(f"    Threshold:  {self.confidence_threshold}")
+        print(f"    Temp / Gates: T={self.temperature:.4f} | conf>={self.confidence_threshold} | margin>={self.min_margin} | H<={self.max_normalized_entropy}")
 
     def _load_metadata(self) -> dict:
-        """Carga y valida el archivo de metadatos del modelo."""
+        """Load model metadata JSON from `model_dir`."""
         meta_path = self.model_dir / "model_metadata.json"
         if not meta_path.exists():
             raise FileNotFoundError(
@@ -113,369 +239,239 @@ class InferenceEngine:
             return json.load(f)
 
     def _get_model_path(self) -> Path:
-        """
-        Busca el mejor modelo disponible (prefiere INT8 cuantizado).
-        Orden de preferencia: int8.onnx > float32.onnx
-        """
-        int8_path = self.model_dir / "expresat_gru_int8.onnx"
-        float32_path = self.model_dir / "expresat_gru_float32.onnx"
+        """Prefer INT8 ONNX declared in `model_files` (then FP32), with canonical filename fallbacks."""
+        model_files = self.metadata.get("model_files")
+        if isinstance(model_files, dict):
+            for key in ("int8", "float32"):
+                fname = model_files.get(key)
+                if isinstance(fname, str) and fname.strip():
+                    candidate = self.model_dir / fname
+                    if candidate.exists():
+                        return candidate
 
-        if int8_path.exists():
-            return int8_path
-        elif float32_path.exists():
-            print("  Modelo INT8 no encontrado, usando float32.")
-            return float32_path
-        else:
-            raise FileNotFoundError(
-                f"No se encontró ningún modelo .onnx en {self.model_dir}. "
-                f"Ejecuta train_and_export.py primero."
-            )
+        candidates = [
+            "expresat_ds_tcn_int8.onnx",
+            "expresat_ds_tcn_float32.onnx",
+            "expresat_bigru_int8.onnx",
+            "expresat_bigru_float32.onnx",
+            "expresat_gru_int8.onnx",
+            "expresat_gru_float32.onnx",
+        ]
+        for fname in candidates:
+            candidate = self.model_dir / fname
+            if candidate.exists():
+                return candidate
+
+        raise FileNotFoundError(
+            f"No se encontró ningún modelo .onnx en {self.model_dir}. "
+            f"Ejecuta train_and_export.py primero."
+        )
 
     def _create_onnx_session(self):
-        """
-        Creates a CPU-optimized ONNX Runtime session.
-        - Dynamic thread allocation matching CPU cores (max 4)
-        - Arena allocator disabled for reduced RAM footprint (~40MB initial savings)
-        - Memory pattern reuse enabled
-        """
+        """Create a low-latency CPU ONNX Runtime session (single-threaded for lightweight edge models)."""
         import onnxruntime as ort
-        import os
 
-        model_path = str(self._get_model_path())
+        model_path = self._get_model_path()
+        model_size_bytes = model_path.stat().st_size if model_path.exists() else 0
 
-        cpu_count = os.cpu_count() or 2
-        intra_threads = min(cpu_count, 4)
+        # Lightweight models (< 2 MB) run dramatically faster & with lower p99 jitter
+        # on 1 intra-op thread (no thread-pool wakeup overhead).
+        if model_size_bytes <= LIGHTWEIGHT_MODEL_MAX_BYTES:
+            intra_threads = 1
+        else:
+            intra_threads = min(os.cpu_count() or 2, 4)
 
         session_options = ort.SessionOptions()
         session_options.inter_op_num_threads = 1
         session_options.intra_op_num_threads = intra_threads
         session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-
-        # Disable CPU memory arena to minimize RAM usage on constrained systems
         session_options.enable_cpu_mem_arena = False
-
-        # Reuse memory allocation patterns across runs
         session_options.enable_mem_pattern = True
-
         session_options.log_severity_level = 3  # ERROR only
 
-        session = ort.InferenceSession(
-            model_path,
+        return ort.InferenceSession(
+            str(model_path),
             sess_options=session_options,
-            providers=["CPUExecutionProvider"]
+            providers=["CPUExecutionProvider"],
         )
 
-        return session
-
-    # =========================================================================
-    # PREPROCESAMIENTO — Normalización vectorizada con NumPy
-    # =========================================================================
-
     def preprocess_batch(self, raw_frames: list[dict]) -> np.ndarray:
-        """
-        Preprocesa una secuencia de frames crudos usando ExtractWindow canónico v1.2.2.
-
-        Returns:
-            np.ndarray de forma (1, 15, 178) dtype float32
-        Raises:
-            ValueError: Si la validación falla (cero caídas silenciosas a coordenadas crudas).
-        """
+        """Preprocess raw frames via canonical `extract_window` into shape (1, 15, 178) float32."""
         tensor, valid, error = extract_window(raw_frames)
         if not valid or tensor is None:
             raise ValueError(f"Preprocesamiento de inferencia falló: {error} (prohibido caer a coordenadas crudas)")
         return tensor
 
-    def _extract_pose_upper(self, pose_landmarks: Optional[list]) -> np.ndarray:
+    @staticmethod
+    def _softmax(logits: np.ndarray, temperature: float = 1.0) -> np.ndarray:
+        """Numerically stable temperature-scaled softmax."""
+        scaled = np.asarray(logits, dtype=np.float64) / float(temperature)
+        exp_logits = np.exp(scaled - np.max(scaled))
+        return exp_logits / np.sum(exp_logits)
+
+    @staticmethod
+    def evaluate_rejection_gates(
+        probabilities: np.ndarray,
+        labels: list[str],
+        *,
+        min_confidence: float = 0.65,
+        min_margin: float = 0.20,
+        max_normalized_entropy: float = 0.55,
+        fallback_label: str = "reposo",
+    ) -> dict:
         """
-        Extrae los 13 landmarks del torso superior con visibility.
+        Evaluate the 3 calibrated rejection gates:
+          1. `top1_prob < min_confidence` -> `low_confidence`
+          2. `top1_prob - top2_prob < min_margin` -> `low_margin`
+          3. `H(p) / log(C) > max_normalized_entropy` -> `high_entropy`
 
-        Returns:
-            np.ndarray de forma (52,) → 13 landmarks × 4 coordenadas
+        Rejected predictions return `label=None` (preventing false WebSocket emissions)
+        and `safe_label="reposo"` (or `"indeterminado"` if `"reposo"` is not in `labels`).
         """
-        if not pose_landmarks:
-            return np.zeros(len(POSE_UPPER_INDICES) * POSE_COORDS, dtype=np.float32)
+        probs = np.asarray(probabilities, dtype=np.float64)
+        num_classes = int(probs.shape[0])
+        order = np.argsort(probs)[::-1]
+        top1_idx = int(order[0])
+        top1_prob = float(probs[top1_idx])
+        top2_prob = float(probs[int(order[1])]) if num_classes >= 2 else 0.0
+        margin = top1_prob - top2_prob
 
-        features = []
-        for idx in POSE_UPPER_INDICES:
-            if idx < len(pose_landmarks):
-                lm = pose_landmarks[idx]
-                features.extend([
-                    lm.get("x", 0.0),
-                    lm.get("y", 0.0),
-                    lm.get("z", 0.0),
-                    lm.get("visibility", 0.0)
-                ])
-            else:
-                features.extend([0.0, 0.0, 0.0, 0.0])
+        if num_classes >= 2:
+            clipped = np.clip(probs, 1e-12, 1.0)
+            entropy = float(-np.sum(clipped * np.log(clipped)))
+            normalized_entropy = entropy / math.log(num_classes)
+        else:
+            normalized_entropy = 0.0
 
-        return np.array(features, dtype=np.float32)
+        rejection_reason: Optional[str] = None
+        if top1_prob < min_confidence:
+            rejection_reason = "low_confidence"
+        elif margin < min_margin:
+            rejection_reason = "low_margin"
+        elif normalized_entropy > max_normalized_entropy:
+            rejection_reason = "high_entropy"
 
-    def _extract_hand(self, hand_landmarks: Optional[list]) -> np.ndarray:
-        """
-        Extrae los 21 landmarks de una mano.
+        rejected = rejection_reason is not None
+        raw_top1_label = labels[top1_idx]
+        safe_fallback = fallback_label if fallback_label in labels else "indeterminado"
 
-        Returns:
-            np.ndarray de forma (63,) → 21 landmarks × 3 coordenadas
-        """
-        if not hand_landmarks:
-            return np.zeros(HAND_LANDMARKS * HAND_COORDS, dtype=np.float32)
+        return {
+            "label": None if rejected else raw_top1_label,
+            "safe_label": safe_fallback if rejected else raw_top1_label,
+            "raw_top1_label": raw_top1_label,
+            "confidence": round(top1_prob, 4),
+            "margin": round(margin, 4),
+            "normalized_entropy": round(normalized_entropy, 4),
+            "rejected": rejected,
+            "rejection_reason": rejection_reason,
+        }
 
-        # Vectorización NumPy: convertir lista de dicts a array directamente
-        try:
-            hand_array = np.array(
-                [[lm.get("x", 0.0), lm.get("y", 0.0), lm.get("z", 0.0)]
-                 for lm in hand_landmarks[:HAND_LANDMARKS]],
-                dtype=np.float32
-            )
-            result = hand_array.flatten()
+    def predict_tensor(self, tensor: np.ndarray) -> dict:
+        """Run ONNX inference, Temperature Scaling, and 3-gate rejection on a `(1, 15, 178)` tensor."""
+        start_time = time.perf_counter()
+        x = np.asarray(tensor, dtype=np.float32)
+        if x.shape != (1, SEQUENCE_LENGTH, NUM_FEATURES):
+            raise ValueError(f"Forma de tensor inválida: {x.shape}, esperado (1, {SEQUENCE_LENGTH}, {NUM_FEATURES}).")
 
-            # Pad si hay menos de 21 landmarks
-            if result.shape[0] < HAND_LANDMARKS * HAND_COORDS:
-                result = np.pad(
-                    result,
-                    (0, HAND_LANDMARKS * HAND_COORDS - result.shape[0])
-                )
-            return result
+        with self._lock:
+            logits = self.session.run(None, {self._input_name: x})[0]
 
-        except (ValueError, TypeError):
-            return np.zeros(HAND_LANDMARKS * HAND_COORDS, dtype=np.float32)
+        probabilities = self._softmax(logits[0], temperature=self.temperature)
+        gate_res = self.evaluate_rejection_gates(
+            probabilities,
+            self.labels,
+            min_confidence=self.confidence_threshold,
+            min_margin=self.min_margin,
+            max_normalized_entropy=self.max_normalized_entropy,
+            fallback_label=self.fallback_label,
+        )
 
-    def _normalize_to_shoulders(self, features: np.ndarray,
-                                 pose_landmarks: list) -> np.ndarray:
-        """
-        Normaliza las coordenadas haciéndolas relativas al punto medio
-        entre los hombros (landmarks 11 y 12 de MediaPipe Pose) y
-        las escala por la distancia inter-humeral 3D.
+        top_indices = np.argsort(probabilities)[::-1][:5]
+        top_predictions = {
+            self.labels[int(idx)]: round(float(probabilities[int(idx)]), 4)
+            for idx in top_indices
+        }
 
-        Esto hace que el modelo sea invariante a la posición y escala aparente
-        de la persona en el frame. Replica exactamente la normalización del
-        generador C++ (mediapipe_extractor.cpp::normalizePose) y la del
-        entrenamiento (train_and_export.py).
-
-        Args:
-            features: Vector de features del frame (178,)
-            pose_landmarks: Lista completa de 33 landmarks de pose
-
-        Returns:
-            features normalizadas (178,)
-        """
-        try:
-            left_shoulder = pose_landmarks[11]
-            right_shoulder = pose_landmarks[12]
-
-            # Punto medio entre hombros como origen
-            center_x = (left_shoulder.get("x", 0) + right_shoulder.get("x", 0)) / 2.0
-            center_y = (left_shoulder.get("y", 0) + right_shoulder.get("y", 0)) / 2.0
-            center_z = (left_shoulder.get("z", 0) + right_shoulder.get("z", 0)) / 2.0
-
-            # Distancia 3D inter-humeral como factor de escala (invariancia de tamaño aparente)
-            # IMPORTANTE: usar distancia 3D completa (x,y,z), igual que el generador C++
-            dx = left_shoulder.get("x", 0) - right_shoulder.get("x", 0)
-            dy = left_shoulder.get("y", 0) - right_shoulder.get("y", 0)
-            dz = left_shoulder.get("z", 0) - right_shoulder.get("z", 0)
-            shoulder_dist = np.sqrt(dx*dx + dy*dy + dz*dz)
-
-            # Evitar división por cero
-            scale = max(shoulder_dist, 1e-6)
-
-            normalized = features.copy()
-
-            # --- Normalizar pose superior (13 landmarks × 4 coords) ---
-            pose_end = len(POSE_UPPER_INDICES) * POSE_COORDS  # 52
-            for j in range(0, pose_end, POSE_COORDS):
-                normalized[j]     = (features[j]     - center_x) / scale  # x
-                normalized[j + 1] = (features[j + 1] - center_y) / scale  # y
-                normalized[j + 2] = (features[j + 2] - center_z) / scale  # z
-                # visibility (j+3) se deja sin modificar
-
-            # --- Normalizar manos (21 landmarks × 3 coords cada una) ---
-            hand_start = pose_end  # 52
-            hand_total = HAND_LANDMARKS * HAND_COORDS * 2  # 126
-            for j in range(hand_start, hand_start + hand_total, HAND_COORDS):
-                normalized[j]     = (features[j]     - center_x) / scale  # x
-                normalized[j + 1] = (features[j + 1] - center_y) / scale  # y
-                normalized[j + 2] = (features[j + 2] - center_z) / scale  # z
-
-            return normalized
-
-        except (IndexError, KeyError, TypeError):
-            # Si falla la normalización, devolver features sin normalizar
-            return features
-
-    # =========================================================================
-    # INFERENCIA
-    # =========================================================================
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+        return {
+            **gate_res,
+            "temperature": round(self.temperature, 6),
+            "latency_ms": round(latency_ms, 2),
+            "all_probabilities": top_predictions,
+        }
 
     def predict(self, raw_frames: list[dict]) -> dict:
         """
-        Ejecuta el pipeline completo: preprocesamiento → inferencia → post-procesamiento.
-
-        Args:
-            raw_frames: Lista de hasta 15 frames de landmarks de MediaPipe.
-
-        Returns:
-            dict con:
-                - "label": str — Seña detectada (o None si bajo threshold)
-                - "confidence": float — Probabilidad de la predicción
-                - "latency_ms": float — Tiempo total del pipeline
-                - "all_probabilities": dict — Probabilidades por clase (top 5)
+        Run canonical FEATURE_SPEC v1.4.0 preprocessing, ONNX Runtime inference,
+        Temperature Scaling, and 3-gate rejection over raw MediaPipe frames.
         """
         start_time = time.perf_counter()
 
-        # 1. Preprocesar con extract_window canónico v1.2.2 (sin caídas silenciosas a crudo)
         tensor, valid, error = extract_window(raw_frames)
         if not valid or tensor is None:
+            safe_fb = self.fallback_label if self.fallback_label in self.labels else "indeterminado"
             return {
                 "label": None,
+                "safe_label": safe_fb,
                 "confidence": 0.0,
+                "margin": 0.0,
+                "normalized_entropy": 1.0,
+                "rejected": True,
+                "rejection_reason": "invalid_window",
                 "valid": False,
                 "error": error,
                 "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
                 "all_probabilities": {},
             }
 
-        # 2. Inferir (thread-safe)
-        with self._lock:
-            logits = self.session.run(
-                None,
-                {self._input_name: tensor}
-            )[0]  # Shape: (1, num_classes)
-
-        # 3. Post-procesar
-        probabilities = self._softmax(logits[0])
-        predicted_idx = int(np.argmax(probabilities))
-        predicted_confidence = float(probabilities[predicted_idx])
-
-        latency_ms = (time.perf_counter() - start_time) * 1000
-
-        # Top-5 predicciones para debugging/UI
-        top_indices = np.argsort(probabilities)[::-1][:5]
-        top_predictions = {
-            self.labels[idx]: round(float(probabilities[idx]), 4)
-            for idx in top_indices
-        }
-
-        # Aplicar threshold de confianza
-        if predicted_confidence < self.confidence_threshold:
-            return {
-                "label": None,
-                "confidence": predicted_confidence,
-                "latency_ms": round(latency_ms, 2),
-                "all_probabilities": top_predictions
-            }
-
-        return {
-            "label": self.labels[predicted_idx],
-            "confidence": round(predicted_confidence, 4),
-            "latency_ms": round(latency_ms, 2),
-            "all_probabilities": top_predictions
-        }
-
-    @staticmethod
-    def _softmax(logits: np.ndarray) -> np.ndarray:
-        """
-        Softmax numéricamente estable sobre logits.
-        Resta el máximo antes de exponenciar para evitar overflow.
-        """
-        exp_logits = np.exp(logits - np.max(logits))
-        return exp_logits / exp_logits.sum()
-
-    # =========================================================================
-    # UTILIDADES
-    # =========================================================================
+        res = self.predict_tensor(tensor)
+        res["latency_ms"] = round((time.perf_counter() - start_time) * 1000.0, 2)
+        return res
 
     def get_info(self) -> dict:
-        """Retorna información del motor de inferencia para health checks."""
+        """Return inference engine metadata for health checks and contract audits."""
         model_path = self._get_model_path()
         return {
             "engine": "ONNX Runtime",
+            "architecture": self.architecture,
             "model_file": model_path.name,
             "model_size_kb": round(model_path.stat().st_size / 1024, 1),
+            "feature_spec_version": self.feature_spec_version,
+            "config_hash": self.config_hash,
             "num_classes": self.num_classes,
             "labels": self.labels,
             "sequence_length": SEQUENCE_LENGTH,
             "num_features": NUM_FEATURES,
+            "temperature": self.temperature,
             "confidence_threshold": self.confidence_threshold,
+            "rejection_policy": {
+                "min_confidence": self.confidence_threshold,
+                "min_margin": self.min_margin,
+                "max_normalized_entropy": self.max_normalized_entropy,
+                "fallback_label": self.fallback_label,
+            },
+            "is_smoke_test": bool(self.metadata.get("is_smoke_test", False)),
+            "production_ready": bool(self.metadata.get("production_ready", True)),
             "providers": self.session.get_providers(),
         }
 
 
-# =============================================================================
-# MODO STANDALONE — pruebas rápidas
-# =============================================================================
-
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test InferenceEngine")
-    parser.add_argument("--model-dir", default="./exported_model",
-                        help="Directorio del modelo exportado")
-    parser.add_argument("--quantize", action="store_true",
-                        help="Cuantizar el modelo float32 a INT8 dinámico")
+    parser = argparse.ArgumentParser(description="Inspect/Test ExpresaT InferenceEngine v1.4.0")
+    parser.add_argument(
+        "--model-dir",
+        default=str(DEFAULT_MODEL_DIR),
+        help="Directory containing exported ONNX model and model_metadata.json",
+    )
+    parser.add_argument(
+        "--allow-smoke-test",
+        action="store_true",
+        help="Allow loading smoke-test model artifacts (for local verification only)",
+    )
     args = parser.parse_args()
 
-    # Dynamic INT8 Quantization CLI tool
-    if args.quantize:
-        try:
-            from onnxruntime.quantization import quantize_dynamic, QuantType
-            from pathlib import Path
-
-            model_dir = Path(args.model_dir)
-            float32_path = model_dir / "expresat_gru_float32.onnx"
-            int8_path    = model_dir / "expresat_gru_int8.onnx"
-
-            if not float32_path.exists():
-                print(f"\n  ERROR: {float32_path} not found.")
-                print("  Run train_and_export.py first to export FP32 model.")
-                exit(1)
-
-            print(f"\n Quantizing {float32_path.name} → Dynamic INT8...")
-
-            # Quantize MatMul and GEMM operations to INT8
-            quantize_dynamic(
-                model_input=str(float32_path),
-                model_output=str(int8_path),
-                weight_type=QuantType.QInt8,
-                per_channel=False,
-                reduce_range=False
-            )
-
-            size_fp32 = float32_path.stat().st_size / 1024
-            size_int8  = int8_path.stat().st_size  / 1024
-            reduction  = (1 - size_int8 / size_fp32) * 100
-
-            print(f"  FP32 Size: {size_fp32:.1f} KB")
-            print(f"  INT8 Size: {size_int8:.1f} KB")
-            print(f"  Reduction: {reduction:.1f}%")
-            print(f"\n  INT8 Model saved: {int8_path}")
-
-        except ImportError:
-            print("\n  ERROR: onnxruntime-tools package missing.")
-        exit(0)
-
-    # ==========================================================================
-    # PRUEBA NORMAL DEL MOTOR
-    # ==========================================================================
-    engine = InferenceEngine(args.model_dir, confidence_threshold=0.3)
-
-    # Generar batch sintético de 15 frames
-    dummy_frames = []
-    for _ in range(15):
-        dummy_frames.append({
-            "pose": [{"x": np.random.rand(), "y": np.random.rand(),
-                       "z": np.random.rand(), "visibility": 1.0}
-                      for _ in range(33)],
-            "leftHand": [{"x": np.random.rand(), "y": np.random.rand(),
-                           "z": np.random.rand()}
-                          for _ in range(21)],
-            "rightHand": [{"x": np.random.rand(), "y": np.random.rand(),
-                            "z": np.random.rand()}
-                           for _ in range(21)]
-        })
-
-    print("\nEjecutando inferencia de prueba...")
-    result = engine.predict(dummy_frames)
-    print(f"\nResultado: {json.dumps(result, indent=2, ensure_ascii=False)}")
-    print(f"\nInfo del motor: {json.dumps(engine.get_info(), indent=2)}")
-
+    engine = InferenceEngine(args.model_dir, allow_smoke_test=args.allow_smoke_test)
+    print(f"\nInfo del motor: {json.dumps(engine.get_info(), indent=2, ensure_ascii=False)}")

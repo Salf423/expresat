@@ -1,0 +1,53 @@
+# Environment files & secrets (keep templates only)
+.env*
+!.env.example
+ENV_VARIABLES_DEPLOY.txt
+
+# Local recordings, raw landmark streams, video fixtures & capture images
+recordings_local/
+raw_captures/
+captures/
+capturas/
+*.raw.json
+*.raw.bin
+*.raw.meta.json
+*.raw.jsonl
+*.webm
+
+# Capture PNGs and local test stimuli (preserve normal UI/doc PNGs)
+captura_detector_*.png
+captura_*.png
+capture_*.png
+snapshot_*.png
+frame_*.png
+webcam_*.png
+expresat/frontend/public/test_person.png
+
+# Python virtual environments & caches
+venv*/
+.venv*/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Node / Frontend builds & test outputs
+node_modules/
+dist/
+dist-ssr/
+test-results/
+playwright-report/
+logs/
+*.log
+
+# OS / Editors & Local Vaults
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.sw?
+.idea/
+Obsidian_exp/

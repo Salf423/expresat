@@ -1,145 +1,116 @@
-# MediaPipe Fix Plan — ExpresT
+# Plan de Corrección de MediaPipe — ExpresaT
 
-**Created:** 2026-11-08
-**Phase:** 0 — Audit Complete (no fixes applied yet)
-**Status:** Awaiting user approval before implementation
+- **Fecha de creación:** 2026-11-08
+- **Fase original:** 0 — Auditoría completada
+- **Estado:** **Histórico / Reemplazado** — Plan inicial de la rama `fix-mediapipe`, posteriormente superado por la eliminación de Workers en `rearquitectura-demo`
 
----
-
-## Overview
-
-This plan consolidates all audit findings across 4 components (Frontend, Backend, Dataset Generator, Native/Desktop) and prioritizes fixes to make the MediaPipe pipeline function end-to-end.
-
-The pipeline flow is:
-```
-Frontend (camera + MediaPipe Worker) → WebSocket /ws/translate → Backend (inference) → Translation result
-                                              ↑                                                          |
-                                           178-feature vector <─────── consistent across all components
-```
+> [!NOTE]
+> Este plan refleja el análisis previo a la migración hacia el hilo principal. Los archivos `mediapipe-worker.js`, `useMediaPipe.js` y `mediapipeEngine.js` aquí evaluados fueron eliminados en la rearquitectura posterior. Para el diseño vigente, consulta [ARQUITECTURA.md](../ARQUITECTURA.md) y el [índice general](../README.md).
 
 ---
 
-## 1. Prioritized Fix Queue
+## Resumen General
 
-### Priority 1 — Critical (blocks basic functionality)
+Este plan consolidó los hallazgos iniciales de auditoría en 4 componentes (Frontend, Backend, Generador de Datasets y Escritorio/Nativo) para hacer funcionar el pipeline de MediaPipe de extremo a extremo.
 
-| # | Component | Issue | Root Cause | Fix | Acceptance Criteria |
-|---|-----------|-------|------------|-----|---------------------|
-| 1 | Frontend (`Translator.jsx`) | `ReferenceError: isDemo is not defined` | Health-check effect may not set `isDemo` if `/health` response lacks `demo_mode`; ErrorBoundary catches ReferenceError during render | Ensure `isDemo` always has a defined value; add fallback default; make health-check robust to missing `demo_mode` | Translator renders without ErrorBoundary; `isDemo` state is always `true` or `false` (never undefined) |
-| 2 | Backend (`main.py`) | Token verification commented out | `verify_supabase_token()` returns `None` for all tokens in production (block commented out, lines 272-280) | Uncomment the production token verification block; add Supabase client initialization | WebSocket `/ws/translate` accepts connections with valid tokens; invalid tokens are rejected with clear error |
-| 3 | Backend (`main.py`) | CORS origin typo | `"https://ecpresatt.netlify.app"` should be `"https://expresat.netlify.app"` (line 51-58 comment confirms this causes 403) | Fix the typo in `CORS_ORIGINS_DEFAULT` | Requests from Netlify domain are accepted; no CORS 403 rejections |
-| 4 | Frontend (`useMediaPipe.js` + worker) | FPS = 0 — detection loop never starts | Worker fails to initialize (WASM 404, model CDN failure); `fpsWatchdogRef` forces FPS to 0 after 2s; no 'ready' message received | Fix WASM/CDN loading: ensure version match, add fallback, show user-visible error if models fail to load | FPS counter shows >0 when camera has signal; Worker 'ready' message received |
+El flujo objetivo evaluado en aquel momento era:
 
-### Priority 2 — High (severely degrades experience)
-
-| # | Component | Issue | Root Cause | Fix | Acceptance Criteria |
-|---|-----------|-------|------------|-----|---------------------|
-| 5 | Frontend (`apiService.js`) | WebSocket 403 — token/origin mismatch | Combined: (a) CORS typo blocks correct origin, (b) frontend sends no auth token in production (authToken=null), (c) backend rejects all tokens | Fix CORS typo (Priority 3) + implement proper auth flow: either (i) send valid Supabase token, or (ii) in production, connect without token and let server accept, or (iii) use `demo_fallback_token` only in dev mode | WebSocket connects successfully; status shows "Conectado" not "Desconectado" |
-| 6 | Frontend (`mediapipeEngine.js`) | No fallback if WASM/models fail to load | `initialize()` catches error but main thread only logs it; inference silently disabled | Add UI indication when MediaPipe is unavailable; retry logic or graceful degradation | User sees clear message if MediaPipe cannot load; camera feed still visible |
-| 7 | Dataset generator (`mediapipe_extractor.cpp`) | Real MediaPipe not linked; stub mode always runs | `EXPRESAT_USE_MEDIAPIPE` and `EXPRESAT_STUB_EXTRACTOR` macros not both defined in CMake build | Define the macros in CMakeLists.txt or build config; or confirm stub mode is intentional for now | Build compiles with real MediaPipe enabled OR stub mode is documented as the current state |
-| 8 | Native desktop (`inference_thread.cpp`) | `extract_landmarks()` is a stub | TODO comment; returns default-constructed LandmarkFrame without reading camera frame | Replace stub with MediaPipe Tasks C++ API or integrate frontend worker approach; ensure LandmarkFrame populated from camera frames | ONNX receives valid 178-dim feature vectors; inference produces meaningful predictions |
-
-### Priority 3 — Medium (improves robustness/compatibility)
-
-| # | Component | Issue | Root Cause | Fix | Acceptance Criteria |
-|---|-----------|-------|------------|-----|---------------------|
-| 9 | Frontend (`useMediaPipe.js`) | FPS watchdog forces 0 after 2s stale results | `fpsWatchdogRef` clears FPS and reports 0 if no results for 2s (lines 212-217) | Increase watchdog timeout or make FPS reporting conditional on valid session | FPS counter freezes at last valid value rather than snapping to 0 |
-| 10 | Frontend (`apiService.js`) | Health check only once on connect | Single `fetch(healthUrl)` with no retry (lines 78-85) | Add exponential backoff health check or make it periodic | Server cold-start detected; status updates accordingly |
-| 11 | All components | 178-feature pipeline drift | Frontend `buildPayload()`, backend `run_inference_async()`, dataset generator `extract()` must all agree on 52+63+63 feature layout | Add version constant or type validation; document the feature vector layout | All components agree on feature dimensions; integration tests pass |
-| 12 | Frontend (`mediapipe-worker.js`) | GPU delegate may not be available | Both landmarkers request `delegate: 'GPU'` (lines 87, 98) without CPU fallback | Add `try { GPU } catch { CPU }` or remove GPU delegate for broader compatibility | MediaPipe works on more devices (including those without GPU) |
-| 13 | Frontend (`Translator.jsx`) | Complex `usingDemoToken`/`authWarning` state logic | Multiple code paths set these states (lines 117-144); ambiguous interactions | Simplify to: if no token → connect without auth; show clear UI warning; remove `demo_fallback_token` sending | UI state is predictable; no unexpected "Modo demo activo" messages |
-
-### Priority 4 — Low (polish/minor improvements)
-
-| # | Component | Issue | Root Cause | Fix | Acceptance Criteria |
-|---|-----------|-------|------------|-----|---------------------|
-| 14 | Frontend (`landmarkTracker.js`) | `seq.empty` not standard Array method | `validateSequence()` line 383 uses `seq.empty` which is not a standard Array property | Change to `seq.length === 0` or add type guard | Validation works correctly for Array input |
-| 15 | Frontend (`worker/mediapipe-worker.js`) | Model version mismatch risk | `WASM_URL` hardcoded to `@mediapipe/tasks-vision@1.0.1`; must match `package.json` | Extract version from `package.json` or add build-time verification | WASM version always matches npm package version |
-| 16 | Dataset generator (`types.h`) | Landmark struct field names may not match MediaPipe C++ API | Need verification against actual MediaPipe C++ API headers | If replacing stub, verify struct field names match (x, y, z, visibility) | Struct compiles and works with real MediaPipe |
-| 17 | All components | No runtime mode switch (stub vs real MediaPipe) | Each component compiled/instantiated for one mode | Add feature flag / env var to toggle between stub and real MediaPipe at runtime | Operator can switch modes without rebuild |
-| 18 | Frontend (`useMediaPipe.js`) | `requestVideoFrameCallback` not supported on all browsers/devices | May fail on older browsers or devices; no fallback | Add detection of support; fallback to `setInterval`-based capture if rVFC unavailable | Camera works on all supported browsers |
-
----
-
-## 2. Dependencies Between Fixes
-
-Some fixes are prerequisites for others:
-
-```
-[Fix 3: CORS typo] → [Fix 5: WebSocket 403] → [Fix 1: isDemo renders correctly]
-         ↓
-[Fix 2: Token verification] → [Fix 5: WebSocket 403] → [Fix 1: isDemo renders correctly]
-         ↓
-[Fix 4: Worker WASM/models] → [Fix 6: No fallback if models fail] → [Fix 3: FPS > 0]
-         ↓
-[Fix 7: Dataset generator MediaPipe] → [Fix 8: Desktop extract_landmarks] → [Pipeline: 178 features consistent]
-         ↓
-[Fix 11: 178-feature invariant] → [All inference produces valid results]
+```text
+Frontend (cámara + Worker MediaPipe) -> WebSocket /ws/translate -> Backend (inferencia) -> Traducción
+                                              ^                                                |
+                                       Vector de 178 features <------ consistente en todo el pipeline
 ```
 
-**Key dependency chains:**
-- **Chain A (Auth → WS → Demo UI)**: Fix CORS typo (3) → Uncomment token verification (2) → WebSocket connects → Auth state correct → `isDemo` health check works → Demo UI displays properly
-- **Chain B (Worker → FPS → Translation)**: Fix worker WASM/CDN (4) → Worker initializes and sends 'ready' → FPS counter > 0 → Landmarks sent to backend → Inference produces results → Translation displayed
-- **Chain C (178-feature pipeline)**: Fix dataset generator (7) → Ensure `TOTAL_FEATURES` = 178 → Feature vectors match across all three platforms → ONNX receives valid input → Predictions correct
+---
+
+## 1. Cola Priorizada de Correcciones (Histórico)
+
+### Prioridad 1 — Crítica (bloqueaba funcionalidad básica)
+
+| # | Componente | Problema | Causa Raíz | Corrección Propuesta | Criterio de Aceptación |
+|---|---|---|---|---|---|
+| 1 | Frontend (`Translator.jsx`) | `ReferenceError: isDemo is not defined` | El efecto de `/health` no inicializaba `isDemo` si faltaba `demo_mode`; `ErrorBoundary` capturaba el error en render. | Asegurar valor inicial definido (`false`) para `isDemo` y manejar ausencia de `demo_mode`. | `Translator` renderiza sin `ErrorBoundary`; `isDemo` siempre es booleano. |
+| 2 | Backend (`main.py`) | Verificación de token comentada | `verify_supabase_token()` retornaba `None` para todo token en producción (bloque comentado). | Descomentar verificación en producción e inicializar cliente de Supabase. | `/ws/translate` acepta tokens válidos y rechaza inválidos con motivo claro. |
+| 3 | Backend (`main.py`) | Error tipográfico en origen CORS | `CORS_ORIGINS_DEFAULT` contenía `"https://ecpresatt.netlify.app"` en lugar de `"https://expresat.netlify.app"`. | Corregir origen permitido en `CORS_ORIGINS_DEFAULT`. | Solicitudes desde el dominio correcto en Netlify son aceptadas. |
+| 4 | Frontend (`useMediaPipe.js` + Worker) | `FPS = 0` — bucle de detección no iniciaba | El Worker fallaba al inicializar (WASM 404, fallo de CDN de modelos); el watchdog forzaba `FPS = 0` tras 2 s. | Alinear versiones WASM/CDN, agregar fallback y mostrar error visible si fallan los modelos. | El contador FPS muestra `> 0` con señal de cámara activa. |
+
+### Prioridad 2 — Alta (degradaba severamente la experiencia)
+
+| # | Componente | Problema | Causa Raíz | Corrección Propuesta | Criterio de Aceptación |
+|---|---|---|---|---|---|
+| 5 | Frontend (`apiService.js`) | WebSocket 403 / rechazo de token u origen | Combinación de CORS, ausencia de token válido en producción o rechazo total de tokens en backend. | Alinear flujo de auth: enviar token válido o permitir sesión demo pública cuando aplique. | WebSocket conecta mostrando `"Conectado"` en lugar de `"Desconectado"`. |
+| 6 | Frontend (`mediapipeEngine.js`) | Sin respaldo visible si fallaba WASM/modelos | `initialize()` solo registraba el error en consola dejando la inferencia deshabilitada en silencio. | Mostrar aviso claro en UI y lógica de respaldo/degradación. | El usuario ve un mensaje claro si MediaPipe falla y conserva el video. |
+| 7 | Dataset Generator (`mediapipe_extractor.cpp`) | MediaPipe real no enlazado; modo stub activo | Macros `EXPRESAT_USE_MEDIAPIPE` y `EXPRESAT_STUB_EXTRACTOR` no configuradas para modo real. | Configurar build con MediaPipe o documentar formalmente el modo stub. | Compila con MediaPipe real o documenta el estado stub vigente. |
+| 8 | Nativo / Desktop (`inference_thread.cpp`) | `extract_landmarks()` es un stub | Comentario `TODO`; retorna `LandmarkFrame` vacío sin leer frames reales. | Integrar MediaPipe Tasks C++ o puente equivalente con frames reales. | ONNX recibe tensores 178D válidos desde cámara real. |
+
+### Prioridad 3 — Media (robustez y compatibilidad)
+
+| # | Componente | Problema | Causa Raíz | Corrección Propuesta | Criterio de Aceptación |
+|---|---|---|---|---|---|
+| 9 | Frontend (`useMediaPipe.js`) | Watchdog de FPS reinicia a 0 tras 2 s | `fpsWatchdogRef` ponía FPS a 0 tras 2 s sin resultados. | Ampliar timeout o condicionar al estado de sesión activa. | No cae a 0 abruptamente ante jitters puntuales. |
+| 10 | Frontend (`apiService.js`) | `/health` consultado solo una vez al conectar | `fetch(healthUrl)` único sin reintentos. | Añadir backoff exponencial para cold-starts del backend. | Cold-starts detectados sin dejar estado offline permanente. |
+| 11 | Todos los componentes | Desalineación potencial del vector 178D | `buildPayload()`, `run_inference_async()` y `extract()` deben coincidir en `52 + 63 + 63`. | Fijar constantes de versión y validar el contrato 178D. | Todos los componentes producen/consumen la misma topología 178D. |
+| 12 | Frontend (`mediapipe-worker.js`) | Delegado GPU puede no estar disponible | Ambos landmarkers pedían `delegate: 'GPU'` sin fallback a CPU. | Envolver con fallback `GPU -> CPU`. | Funciona incluso en navegadores/GPUs sin WebGL estable. |
+| 13 | Frontend (`Translator.jsx`) | Lógica compleja de `usingDemoToken` / `authWarning` | Múltiples rutas de estado ambiguas y envío de `demo_fallback_token`. | Simplificar a conexión sin token falso y advertencia clara en UI. | Estado predecible sin tokens de prueba cableados. |
+
+### Prioridad 4 — Baja (pulido y mejoras menores)
+
+| # | Componente | Problema | Causa Raíz | Corrección Propuesta | Criterio de Aceptación |
+|---|---|---|---|---|---|
+| 14 | Frontend (`landmarkTracker.js`) | Uso de `seq.empty` no estándar en JS | `validateSequence()` usaba `seq.empty` (inexistente en `Array`). | Sustituir por `seq.length === 0`. | Validación de arreglos correcta. |
+| 15 | Frontend (`mediapipe-worker.js`) | Riesgo de desajuste de versión WASM | `WASM_URL` fijado manualmente a `@1.0.1`. | Mantener sincronizado con `package.json`. | Versión WASM coincidente con el paquete instalado. |
+| 16 | Dataset Generator (`types.h`) | Campos de landmark frente a API C++ | Pendiente verificar compatibilidad exacta de campos al enlazar MediaPipe C++. | Verificar `x, y, z, visibility` antes de quitar el stub. | Compila sin errores al enlazar API real. |
+| 17 | Todos los componentes | Sin selector en runtime entre stub y MediaPipe real | Selección solo por compilación/instanciación fija. | Añadir flag de configuración o entorno. | Cambio limpio de modo sin recompilar. |
+| 18 | Frontend (`useMediaPipe.js`) | `requestVideoFrameCallback` no universal | Ausencia de feature-detection y respaldo en navegadores sin soporte. | Implementar respaldo basado en `rAF`/`setInterval`. | Compatible en navegadores sin `rVFC`. |
 
 ---
 
-## 3. Measurable Acceptance Criteria
+## 2. Dependencias entre Correcciones
 
-The following criteria must be met for the MediaPipe pipeline to be considered "fully functional end-to-end":
+```text
+[Fix 3: Typo CORS] -> [Fix 5: WebSocket 403] -> [Fix 1: isDemo en UI]
+         |
+[Fix 2: Verificación JWT] -> [Fix 5: WebSocket 403] -> [Fix 1: isDemo en UI]
+         |
+[Fix 4: Worker WASM/modelos] -> [Fix 6: Respaldo sin modelos] -> [FPS > 0]
+         |
+[Fix 7: Generador MediaPipe] -> [Fix 8: extract_landmarks() desktop] -> [Pipeline 178D]
+         |
+[Fix 11: Invariante 178D] -> [Inferencia consistente de extremo a extremo]
+```
 
-| Criterion | Measurement | Component(s) |
-|-----------|-------------|------------|
-| **Camera streams** | `<video>` element has valid `srcObject` with user media; no black screen | Frontend (`useMediaPipe.js:startCamera()`) |
-| **Worker initializes** | Web Worker posts `{ type: 'ready' }` within 5s of mount; no "ModuleFactory not set" errors | Frontend (`mediapipe-worker.js:initialize()`) |
-| **FPS > 0** | FPS counter shows value ≥ 1 when camera has signal and worker is running | Frontend (`useMediaPipe.js:fpsWatchdogRef`, `mediapipeEngine.js:_fpsFrameCount`) |
-| **Landmarks sent to backend** | WebSocket sends `{ type: 'inference', payload: [15-frame batch] }` at ≥ 2/sec throttling | Frontend (`useMediaPipe:buildPayload()`, `apiService:sendLandmarks()`) |
-| **Backend accepts connection** | WS connection opens without 1008 close; auth token verified or connection allowed in production | Backend (`main.py:verify_supabase_token()`, CORS config) |
-| **Inference produces result** | Backend returns `{"type": "translation", "payload": {"label": "<sign>", "confidence": > 0}}` | Backend (`main.py:run_inference_async()`, ONNX model) |
-| **Translation displayed** | UI shows translation text; `isDemo` flag correctly reflects mode; no ReferenceError | Frontend (`Translator.jsx` render) |
-| **178-feature invariant** | All three components (frontend, backend, dataset generator) agree on 52+63+63 feature layout; feature vectors are consistent | All components |
-
----
-
-## 4. Implementation Phasing (for user approval)
-
-### Phase 1 — Critical fixes (1 week)
-1. Fix CORS origin typo in `backend/main.py`
-2. Uncomment production token verification in `backend/verify_supabase_token()`
-3. Fix `isDemo` initialization in `frontend/Translator.jsx` (ensure default + health-check robustness)
-4. Fix MediaPipe worker WASM/CDN version matching in `frontend/src/workers/mediapipe-worker.js`
-5. Add user-visible error if MediaPipe models fail to load
-
-### Phase 2 — High-priority fixes (1-2 weeks)
-6. Fix FPS watchdog to not snap to 0 immediately; freeze at last valid value
-7. Add retry/backoff for health check in `frontend/apiService.js`
-8. Enable real MediaPipe in dataset generator CMake build (or document stub mode)
-9. Replace desktop `extract_landmarks()` stub with real MediaPipe C++ API or frontend worker integration
-10. Ensure 178-feature dimension consistency across all components (add constant/check)
-
-### Phase 3 — Medium-priority fixes (2-3 weeks)
-11. Add mode switch (stub vs real MediaPipe) at runtime
-12. Improve `usingDemoToken`/`authWarning` state logic simplicity
-13. Add GPU/CPU delegate fallback in worker
-14. Add type guards for `validateSequence()` `seq.empty` check
-15. Add browser/devices detection for `requestVideoFrameCallback` fallback
-
-### Phase 4 — Low-priority polish (optional)
-16. Minor UI/UX improvements, documentation, type fixes
+**Cadenas críticas:**
+- **Cadena A (Auth -> WS -> UI Demo):** Typo CORS (3) -> Verificación de token (2) -> Conexión WS -> Estado `isDemo` consistente.
+- **Cadena B (Motor -> FPS -> Traducción):** Carga WASM/modelos (4) -> Inicialización limpia -> `FPS > 0` -> Envío e inferencia.
+- **Cadena C (Pipeline 178D):** Generador + extractores (7, 11) -> Consistencia matemática `52 + 63 + 63` -> Inferencia ONNX válida.
 
 ---
 
-## 5. Rollout Strategy
+## 3. Criterios Medibles de Aceptación (Originales)
 
-- **Branch**: All fixes on branch `fix-mediapipe` with small, atomic commits
-- **Each commit**: Single fix with message citing the audit finding that resolves it
-- **Testing**: Manual end-to-end test: open Translator, grant camera access, verify:
-  - Camera feed visible
-  - FPS counter > 0
-  - Landmarks drawn on canvas
-  - WebSocket connection established (status "Conectado")
-  - Translation result appears when signs are made
-  - `isDemo` chip displays correctly
-- **Rollback**: Each fix is revertible independently; no breaking changes expected since fixes either enable previously-broken functionality or correct typos
+| Criterio | Medición | Componentes |
+|---|---|---|
+| **Flujo de cámara** | `<video>` con `srcObject` activo y señal visible. | Frontend (`startCamera()`) |
+| **Inicialización del motor** | El detector inicializa en `< 5 s` sin errores `ModuleFactory not set`. | Frontend |
+| **FPS > 0** | Contador muestra `>= 1` con cámara activa. | Frontend |
+| **Envío de landmarks** | WebSocket transmite lotes `{ type: 'inference', payload: [15 frames] }`. | Frontend -> Backend |
+| **Aceptación WebSocket** | Handshake sin cierre `1008` en modo demo o con JWT válido. | Backend (`main.py`) |
+| **Inferencia activa** | Backend retorna `{"type": "translation", "payload": {"label": "...", "confidence": > 0}}`. | Backend (`run_inference_async()`) |
+| **Render en UI** | UI muestra traducción e indicador `isDemo` sin `ReferenceError`. | Frontend (`Translator.jsx`) |
+| **Invariante 178D** | Consistencia `52 + 63 + 63` en toda la arquitectura. | Todos |
 
 ---
+
+## 4. Fases Planeadas (Histórico de Ejecución)
+
+1. **Fase 1 (Crítica):** Typo CORS en `backend/main.py`, verificación de token, estado `isDemo` en `Translator.jsx`, alineación WASM/CDN y errores visibles en UI.
+2. **Fase 2 (Alta prioridad):** Estabilidad de contador FPS, reintentos de `/health`, estado stub/MediaPipe en C++ y verificación de invariante 178D.
+3. **Fase 3 (Prioridad media):** Simplificación de estados `usingDemoToken`/`authWarning`, respaldo `GPU -> CPU`, guardas de `validateSequence` y fallback `rVFC`.
+4. **Fase 4 (Pulido):** Limpieza de documentación, tipos y mejoras menores de UX.
+
+---
+
+## 5. Estrategia de Despliegue Original (`fix-mediapipe`)
+
+- **Rama inicial:** `fix-mediapipe` con commits atómicos verificados por pruebas manuales de extremo a extremo.
+- **Evolución posterior:** Las correcciones de `mediapipe-fix/` resolvieron los fallos inmediatos (ver [REPORTE.md](./REPORTE.md)); posteriormente `rearquitectura-demo` eliminó los Workers ESM por completo y consolidó la arquitectura actual en 4 capas ([ARQUITECTURA.md](../ARQUITECTURA.md)).

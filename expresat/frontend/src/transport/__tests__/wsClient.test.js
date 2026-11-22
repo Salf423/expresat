@@ -84,11 +84,11 @@ describe('transport/WSClient — Máquina de estados explícita y no-reintento e
     await client.connect({ token: 'invalid_jwt' });
     expect(MockWebSocket.instances.length).toBe(1);
 
-    // Simular rechazo 1008 del servidor
+    // Simulate 1008 server rejection
     MockWebSocket.instances[0].simulateClose(1008, 'Token inválido o expirado');
     expect(client.state).toBe(WS_STATES.AUTH_ERROR);
 
-    // Esperar más que baseDelayMs para confirmar que NO hubo reintentos
+    // Wait longer than baseDelayMs to confirm zero reconnect attempts
     await new Promise((r) => setTimeout(r, 40));
     expect(MockWebSocket.instances.length).toBe(1);
     expect(client.state).toBe(WS_STATES.AUTH_ERROR);
@@ -110,18 +110,18 @@ describe('transport/WSClient — Máquina de estados explícita y no-reintento e
     await client.connect();
     expect(MockWebSocket.instances.length).toBe(1);
 
-    // Caída 1 -> reintento 1
+    // Drop 1 -> retry 1
     MockWebSocket.instances[0].simulateClose(1006, 'Abnormal closure');
     expect(client.state).toBe(WS_STATES.CONNECTING);
     await new Promise((r) => setTimeout(r, 20));
     expect(MockWebSocket.instances.length).toBe(2);
 
-    // Caída 2 -> reintento 2
+    // Drop 2 -> retry 2
     MockWebSocket.instances[1].simulateClose(1006, 'Abnormal closure');
     await new Promise((r) => setTimeout(r, 35));
     expect(MockWebSocket.instances.length).toBe(3);
 
-    // Caída 3 -> alcanza maxRetries (2), pasa a FAILED y se detiene
+    // Drop 3 -> exceeds maxRetries (2), transitions to FAILED and stops
     MockWebSocket.instances[2].simulateClose(1006, 'Abnormal closure');
     expect(client.state).toBe(WS_STATES.FAILED);
     await new Promise((r) => setTimeout(r, 50));
