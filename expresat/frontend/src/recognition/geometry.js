@@ -2,8 +2,9 @@
  * Pure geometric and mathematical helpers for 21-point MediaPipe hand landmarks.
  *
  * Zero DOM, camera, or React dependencies.
- * All functions operate on 3D `{ x, y, z }` coordinates with palm-scale
- * normalization and XY-plane rotational alignment.
+ * All functions operate on 3D `{ x, y, z }` coordinates with optional aspect-ratio
+ * isotropy correction (4:3 / 16:9), palm-scale normalization, 3D MCP/PIP/DIP
+ * articulation angles, and continuous geometric margins.
  */
 
 export const HAND_LANDMARKS = Object.freeze({
@@ -30,6 +31,66 @@ export const HAND_LANDMARKS = Object.freeze({
   PINKY_TIP: 20,
 });
 
+function clamp01(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function rampMargin(value, threshold, ideal) {
+  const span = ideal - threshold;
+  if (Math.abs(span) < 1e-6) return value >= threshold ? 1 : 0;
+  return clamp01((value - threshold) / span);
+}
+
+/**
+ * Resolves a positive image aspect ratio (width / height) from options or frame metadata.
+ * Defaults to `1.0` (isotropic) when dimensions are omitted.
+ */
+export function resolveAspectRatio(source = null) {
+  if (!source || typeof source !== 'object') return 1.0;
+  if (Number.isFinite(source.aspectRatio) && source.aspectRatio > 0) {
+    return source.aspectRatio;
+  }
+  if (
+    Number.isFinite(source.videoWidth) &&
+    Number.isFinite(source.videoHeight) &&
+    source.videoWidth > 0 &&
+    source.videoHeight > 0
+  ) {
+    return source.videoWidth / source.videoHeight;
+  }
+  return 1.0;
+}
+
+/**
+ * Projects normalized MediaPipe image landmarks into pixel-isotropic 3D space
+ * (all axes expressed in units of image width `W`: `x' = x`, `y' = y / aspectRatio`, `z' = z`).
+ *
+ * Eliminates the `(W/H)^2` directional distortion on 4:3 (640x480) and 16:9 cameras
+ * whenever a hand rotates in the XY plane.
+ */
+export function projectIsotropic(landmarks, aspectRatio = 1.0) {
+  if (!Array.isArray(landmarks)) return null;
+  const aspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1.0;
+  const invAspect = 1.0 / aspect;
+  const needsScale = Math.abs(aspect - 1.0) > 1e-6;
+  const len = Math.min(21, landmarks.length);
+  const out = new Array(len);
+  for (let i = 0; i < len; i++) {
+    const pt = landmarks[i];
+    if (!pt) {
+      out[i] = pt;
+    } else {
+      out[i] = {
+        x: pt.x,
+        y: needsScale ? pt.y * invAspect : pt.y,
+        z: pt.z ?? 0,
+      };
+    }
+  }
+  return out;
+}
+
 /**
  * Checks whether a point has finite numeric coordinates.
  * @param {any} pt
@@ -44,20 +105,27 @@ export function isValidPoint(pt) {
  * Checks that the hand landmark array has 21 valid points and is not
  * degenerate noise (collapsed points or implausible spatial spread).
  * @param {Array<{x:number, y:number, z?:number}>} landmarks
+ * @param {Object} [options]
+ * @param {number} [options.aspectRatio=1.0]
  * @returns {boolean}
  */
-export function isValidHandLandmarks(landmarks) {
+export function isValidHandLandmarks(landmarks, options = {}) {
   if (!Array.isArray(landmarks) || landmarks.length < 21) return false;
   for (let i = 0; i < 21; i++) {
     if (!isValidPoint(landmarks[i])) return false;
   }
-  const scale = palmScale(landmarks);
-  if (!Number.isFinite(scale) || scale < 0.015 || scale > 5.0) return false;
+
+  const aspect = resolveAspectRatio(options);
+  const pts = Math.abs(aspect - 1.0) > 1e-6 ? projectIsotropic(landmarks, aspect) : landmarks;
+  const scale = palmScale(pts);
+  // Keep 0.015 threshold in isotropic 1:1 space; allow proportional lower bound under 4:3 projection
+  const minScale = Math.abs(aspect - 1.0) > 1e-6 ? 0.015 / Math.max(1.0, aspect) : 0.015;
+  if (!Number.isFinite(scale) || scale < minScale || scale > 5.0) return false;
 
   // Verify anatomical coherence relative to wrist (rejects uniform noise or spikes)
-  const wrist = landmarks[HAND_LANDMARKS.WRIST];
+  const wrist = pts[HAND_LANDMARKS.WRIST];
   for (let i = 1; i < 21; i++) {
-    const d = distance3D(wrist, landmarks[i]) / scale;
+    const d = distance3D(wrist, pts[i]) / scale;
     if (d > 4.2 || d < 0.05) {
       return false;
     }
@@ -65,11 +133,11 @@ export function isValidHandLandmarks(landmarks) {
 
   // Ensure MCP knuckles (5, 9, 13, 17) stay within plausible anatomical spacing
   const dIndexMiddleMcp =
-    distance3D(landmarks[HAND_LANDMARKS.INDEX_MCP], landmarks[HAND_LANDMARKS.MIDDLE_MCP]) / scale;
+    distance3D(pts[HAND_LANDMARKS.INDEX_MCP], pts[HAND_LANDMARKS.MIDDLE_MCP]) / scale;
   const dMiddleRingMcp =
-    distance3D(landmarks[HAND_LANDMARKS.MIDDLE_MCP], landmarks[HAND_LANDMARKS.RING_MCP]) / scale;
+    distance3D(pts[HAND_LANDMARKS.MIDDLE_MCP], pts[HAND_LANDMARKS.RING_MCP]) / scale;
   const dRingPinkyMcp =
-    distance3D(landmarks[HAND_LANDMARKS.RING_MCP], landmarks[HAND_LANDMARKS.PINKY_MCP]) / scale;
+    distance3D(pts[HAND_LANDMARKS.RING_MCP], pts[HAND_LANDMARKS.PINKY_MCP]) / scale;
 
   if (dIndexMiddleMcp > 1.2 || dMiddleRingMcp > 1.2 || dRingPinkyMcp > 1.2) {
     return false;
@@ -98,13 +166,22 @@ export function distance2D(a, b) {
 }
 
 /**
- * Reference palm scale: 3D distance between WRIST (0) and MIDDLE_MCP (9).
+ * Reference palm scale: 3D distance between WRIST (0) and MIDDLE_MCP (9)
+ * in isotropic coordinates.
  */
-export function palmScale(landmarks) {
+export function palmScale(landmarks, options = {}) {
   if (!Array.isArray(landmarks) || landmarks.length <= HAND_LANDMARKS.MIDDLE_MCP) return 0;
   const w = landmarks[HAND_LANDMARKS.WRIST];
   const m = landmarks[HAND_LANDMARKS.MIDDLE_MCP];
   if (!isValidPoint(w) || !isValidPoint(m)) return 0;
+  const aspect = resolveAspectRatio(options);
+  if (Math.abs(aspect - 1.0) > 1e-6) {
+    const invAspect = 1.0 / aspect;
+    const dx = w.x - m.x;
+    const dy = (w.y - m.y) * invAspect;
+    const dz = (w.z ?? 0) - (m.z ?? 0);
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
   return distance3D(w, m);
 }
 
@@ -122,7 +199,7 @@ export function angleBetweenVectorsDeg(v1, v2) {
 
 /**
  * Joint angle in degrees at vertex B formed by segments BA and BC.
- * A straight finger approaches 180 degrees; a curled finger is below 130 degrees.
+ * A straight finger approaches 180 degrees; a curled finger is below 120 degrees.
  */
 export function jointAngleDeg(a, b, c) {
   const v1 = { x: a.x - b.x, y: a.y - b.y, z: (a.z ?? 0) - (b.z ?? 0) };
@@ -132,23 +209,32 @@ export function jointAngleDeg(a, b, c) {
 
 /**
  * Normalizes 21 hand landmarks:
- * 1. Translates the origin to WRIST (0).
- * 2. Scales coordinates by `palmScale` (WRIST -> MIDDLE_MCP = 1.0).
- * 3. Rotates in the XY plane so WRIST (0) -> MIDDLE_MCP (9) points toward (0, -1).
+ * 1. Projects into pixel-isotropic 3D space (when `aspectRatio` is provided).
+ * 2. Translates the origin to WRIST (0).
+ * 3. Scales coordinates by `palmScale` (WRIST -> MIDDLE_MCP = 1.0).
+ * 4. Rotates in the XY plane so WRIST (0) -> MIDDLE_MCP (9) points toward (0, -1).
  *
- * Ensures invariance to translation, scale (camera distance), and XY-plane rotation.
+ * Ensures invariance to translation, scale (camera distance), aspect ratio, and XY-plane rotation.
  *
  * @param {Array<{x:number, y:number, z?:number}>} landmarks
+ * @param {Object} [options]
+ * @param {number} [options.aspectRatio=1.0]
+ * @param {boolean} [options._skipValidation=false]
  * @returns {Array<{x:number, y:number, z:number}>|null}
  */
-export function normalizeHand(landmarks) {
-  if (!isValidHandLandmarks(landmarks)) return null;
+export function normalizeHand(landmarks, options = {}) {
+  const aspect = resolveAspectRatio(options);
+  if (!options._skipValidation && !isValidHandLandmarks(landmarks, { aspectRatio: aspect })) {
+    return null;
+  }
 
-  const wrist = landmarks[HAND_LANDMARKS.WRIST];
-  const scale = palmScale(landmarks);
+  const pts = Math.abs(aspect - 1.0) > 1e-6 ? projectIsotropic(landmarks, aspect) : landmarks;
+  const wrist = pts[HAND_LANDMARKS.WRIST];
+  const scale = palmScale(pts);
+  if (!Number.isFinite(scale) || scale < 1e-6) return null;
 
   // Translate and scale
-  const scaled = landmarks.slice(0, 21).map((lm) => ({
+  const scaled = pts.slice(0, 21).map((lm) => ({
     x: (lm.x - wrist.x) / scale,
     y: (lm.y - wrist.y) / scale,
     z: ((lm.z ?? 0) - (wrist.z ?? 0)) / scale,
@@ -170,11 +256,13 @@ export function normalizeHand(landmarks) {
 }
 
 /**
- * Evaluates whether a non-thumb finger is extended using radial distance ratios
- * from the wrist (`tipDist / pipDist` and `tipDist / mcpDist`) and joint angles
- * at PIP and DIP. Scale and 3D-rotation invariant.
+ * Evaluates a non-thumb finger into three mutually exclusive states:
+ * `extended`, `curled`, or ambiguous/neutral (`!extended && !curled`).
+ *
+ * Uses 3D MCP, PIP, and DIP joint angles plus wrist-radial distance ratios.
+ * Fully invariant to scale, translation, aspect ratio (after isotropic projection), and 3D rotation.
  */
-function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx) {
+function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx, { isPinky = false } = {}) {
   const wrist = normLandmarks[HAND_LANDMARKS.WRIST];
   const mcp = normLandmarks[mcpIdx];
   const pip = normLandmarks[pipIdx];
@@ -185,42 +273,89 @@ function evaluateFinger(normLandmarks, mcpIdx, pipIdx, dipIdx, tipIdx) {
   const distPip = distance3D(wrist, pip);
   const distTip = distance3D(wrist, tip);
 
+  const tipToPipRatio = distTip / Math.max(distPip, 1e-6);
+  const tipToMcpRatio = distTip / Math.max(distMcp, 1e-6);
+
+  const mcpAngle = jointAngleDeg(wrist, mcp, pip);
   const pipAngle = jointAngleDeg(mcp, pip, dip);
   const dipAngle = jointAngleDeg(pip, dip, tip);
 
-  // An extended finger has an open PIP joint (>= 135 deg) and its tip farther from wrist than PIP and MCP
-  const extended =
-    pipAngle >= 135 &&
-    dipAngle >= 130 &&
-    distTip > distPip * 1.08 &&
-    distTip > distMcp * 1.25;
+  const mcpExtMin = isPinky ? 115 : 120;
+  const pipExtMin = isPinky ? 132 : 135;
+  const dipExtMin = isPinky ? 122 : 130;
+  const tipPipExtMin = isPinky ? 1.05 : 1.08;
+  const tipMcpExtMin = isPinky ? 1.2 : 1.25;
 
-  const curled = pipAngle < 120 || distTip < distPip * 1.02;
+  const extended =
+    mcpAngle >= mcpExtMin &&
+    pipAngle >= pipExtMin &&
+    dipAngle >= dipExtMin &&
+    tipToPipRatio > tipPipExtMin &&
+    tipToMcpRatio > tipMcpExtMin;
+
+  const curled =
+    !extended &&
+    (pipAngle <= 118 ||
+      tipToPipRatio < 1.02 ||
+      tipToMcpRatio < 1.15 ||
+      (pipAngle <= 128 && dipAngle <= 120));
+
+  const extensionMargin = extended
+    ? Math.min(
+        rampMargin(mcpAngle, mcpExtMin, isPinky ? 148 : 158),
+        rampMargin(pipAngle, pipExtMin, 168),
+        rampMargin(dipAngle, dipExtMin, 168),
+        rampMargin(tipToPipRatio, tipPipExtMin, 1.3),
+        rampMargin(tipToMcpRatio, tipMcpExtMin, 1.8)
+      )
+    : 0;
+
+  const curlMargin = curled
+    ? Math.max(
+        rampMargin(118 - pipAngle, 0, 60),
+        rampMargin(1.02 - tipToPipRatio, 0, 0.26),
+        rampMargin(1.15 - tipToMcpRatio, 0, 0.25)
+      )
+    : 0;
 
   return {
     extended,
     curled,
+    ambiguous: !extended && !curled,
+    mcpAngle,
     pipAngle,
     dipAngle,
+    tipToPipRatio,
+    tipToMcpRatio,
     tipToWrist: distTip,
+    extensionMargin: Number(extensionMargin.toFixed(4)),
+    curlMargin: Number(curlMargin.toFixed(4)),
   };
 }
 
 /**
  * Computes detailed geometric states for all 5 fingers and inter-finger relations.
- * Invariant to scale, translation, and XY-plane rotation.
+ * Invariant to scale, translation, aspect ratio, XY-plane rotation, and left/right mirroring.
  *
  * @param {Array<{x:number, y:number, z?:number}>} landmarks
+ * @param {Object} [options]
+ * @param {number} [options.aspectRatio=1.0]
+ * @param {boolean} [options._skipValidation=false]
  * @returns {Object|null}
  */
-export function fingerStates(landmarks) {
-  const norm = normalizeHand(landmarks);
+export function fingerStates(landmarks, options = {}) {
+  const aspect = resolveAspectRatio(options);
+  const norm = normalizeHand(landmarks, {
+    aspectRatio: aspect,
+    _skipValidation: options._skipValidation,
+  });
   if (!norm) return null;
 
-  const scale = palmScale(landmarks);
+  const iso = Math.abs(aspect - 1.0) > 1e-6 ? projectIsotropic(landmarks, aspect) : landmarks;
+  const scale = palmScale(iso);
   const wrist = norm[HAND_LANDMARKS.WRIST];
 
-  // Evaluate the four long fingers in normalized coordinates
+  // Evaluate the four long fingers in normalized 3D coordinates
   const indexInfo = evaluateFinger(
     norm,
     HAND_LANDMARKS.INDEX_MCP,
@@ -247,10 +382,11 @@ export function fingerStates(landmarks) {
     HAND_LANDMARKS.PINKY_MCP,
     HAND_LANDMARKS.PINKY_PIP,
     HAND_LANDMARKS.PINKY_DIP,
-    HAND_LANDMARKS.PINKY_TIP
+    HAND_LANDMARKS.PINKY_TIP,
+    { isPinky: true }
   );
 
-  // Evaluate thumb extension: straight MCP/IP joints and thumb tip separated from pinky and middle MCPs
+  // Evaluate thumb 3D articulation and abduction distances
   const thumbCmc = norm[HAND_LANDMARKS.THUMB_CMC];
   const thumbMcp = norm[HAND_LANDMARKS.THUMB_MCP];
   const thumbIp = norm[HAND_LANDMARKS.THUMB_IP];
@@ -268,10 +404,9 @@ export function fingerStates(landmarks) {
 
   // Distance between thumb tip (4) and index tip (8) for OK / Pinch detection
   const thumbIndexTipDist = distance3D(thumbTip, norm[HAND_LANDMARKS.INDEX_TIP]);
-
-  // Pinching pulls the thumb toward the index finger rather than leaving it freely abducted
   const isPinching = thumbIndexTipDist < 0.36;
 
+  // Extended thumb: straight MCP/IP joints and abducted clear of the palm/index
   const thumbExtended =
     !isPinching &&
     thumbIpAngle >= 130 &&
@@ -279,9 +414,57 @@ export function fingerStates(landmarks) {
     thumbToPinkyMcp > 0.88 &&
     thumbToMiddleMcp > 0.62 &&
     thumbToIndexMcp > 0.45 &&
-    thumbToWrist > 0.75;
+    thumbToWrist > 0.78;
 
-  const thumbCurled = !thumbExtended && !isPinching;
+  // Straight upright thumb pressed against the side of the index finger ("Letra A"):
+  // neither abducted-extended ("Bien") nor folded across the palm ("Puño").
+  const isStraightAdductedThumb =
+    thumbToWrist > 1.02 &&
+    thumbToPinkyMcp > 0.92 &&
+    thumbMcpAngle >= 145 &&
+    thumbIpAngle >= 145;
+
+  // Curled thumb: tucked inward toward palm/middle/pinky or visibly bent.
+  // Allows natural fists where thumb tip rests near curled index tip, while
+  // keeping straight lateral "Letra A" thumb in the ambiguous zone.
+  const thumbCurled =
+    !thumbExtended &&
+    !isStraightAdductedThumb &&
+    (thumbToPinkyMcp < 0.82 ||
+      thumbToMiddleMcp < 0.56 ||
+      thumbToWrist < 0.7 ||
+      thumbMcpAngle < 118 ||
+      thumbIpAngle < 118);
+
+  const thumbExtensionMargin = thumbExtended
+    ? Math.min(
+        rampMargin(thumbIpAngle, 130, 168),
+        rampMargin(thumbMcpAngle, 125, 162),
+        rampMargin(thumbToPinkyMcp, 0.88, 1.32),
+        rampMargin(thumbToMiddleMcp, 0.62, 0.92),
+        rampMargin(thumbToIndexMcp, 0.45, 0.68),
+        rampMargin(thumbToWrist, 0.78, 1.2)
+      )
+    : 0;
+
+  const thumbCurlMargin = thumbCurled
+    ? Math.max(
+        rampMargin(0.82 - thumbToPinkyMcp, 0, 0.25),
+        rampMargin(0.56 - thumbToMiddleMcp, 0, 0.2),
+        rampMargin(0.7 - thumbToWrist, 0, 0.2),
+        rampMargin(118 - thumbMcpAngle, 0, 30),
+        rampMargin(118 - thumbIpAngle, 0, 30)
+      )
+    : 0;
+
+  // Vertical direction of the thumb in raw isotropic camera frame: +1 = straight up (-Y), -1 = straight down (+Y)
+  const rawThumbDx = iso[HAND_LANDMARKS.THUMB_TIP].x - iso[HAND_LANDMARKS.THUMB_CMC].x;
+  const rawThumbDy = iso[HAND_LANDMARKS.THUMB_TIP].y - iso[HAND_LANDMARKS.THUMB_CMC].y;
+  const rawThumbDz = (iso[HAND_LANDMARKS.THUMB_TIP].z ?? 0) - (iso[HAND_LANDMARKS.THUMB_CMC].z ?? 0);
+  const rawThumbLen = Math.sqrt(
+    rawThumbDx * rawThumbDx + rawThumbDy * rawThumbDy + rawThumbDz * rawThumbDz
+  );
+  const thumbUpScore = rawThumbLen > 1e-6 ? -rawThumbDy / rawThumbLen : 0;
 
   // Angle between thumb vector (CMC -> TIP) and index vector (MCP -> TIP)
   const vThumb = {
@@ -320,8 +503,10 @@ export function fingerStates(landmarks) {
     isPinching,
     thumbIndexTipDist,
     thumbIndexAngleDeg,
+    thumbUpScore: Number(thumbUpScore.toFixed(4)),
     indexMiddleSpread,
     palmScale: scale,
+    aspectRatio: aspect,
     wristRaw: {
       x: landmarks[HAND_LANDMARKS.WRIST].x,
       y: landmarks[HAND_LANDMARKS.WRIST].y,
@@ -331,10 +516,16 @@ export function fingerStates(landmarks) {
       thumb: {
         extended: thumbExtended,
         curled: thumbCurled,
+        ambiguous: !thumbExtended && !thumbCurled && !isPinching,
         mcpAngle: thumbMcpAngle,
         ipAngle: thumbIpAngle,
         toPinkyMcp: thumbToPinkyMcp,
         toMiddleMcp: thumbToMiddleMcp,
+        toIndexMcp: thumbToIndexMcp,
+        toWrist: thumbToWrist,
+        upScore: Number(thumbUpScore.toFixed(4)),
+        extensionMargin: Number(thumbExtensionMargin.toFixed(4)),
+        curlMargin: Number(thumbCurlMargin.toFixed(4)),
       },
       index: indexInfo,
       middle: middleInfo,
