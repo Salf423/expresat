@@ -329,18 +329,24 @@
   justify-content: center;
 }
 
-/* Modal / dialog */
+/* Modal / dialog (always above fixed navbar, safe-area & mobile-friendly) */
 .modal-overlay {
   position: fixed;
   inset: 0;
   background: var(--scrim);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  z-index: var(--z-overlay);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-4);
+  padding:
+    max(var(--space-4), env(safe-area-inset-top))
+    max(var(--space-4), env(safe-area-inset-right))
+    max(var(--space-4), env(safe-area-inset-bottom))
+    max(var(--space-4), env(safe-area-inset-left));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   animation: fade-in 0.2s ease;
 }
 
@@ -353,7 +359,155 @@
   max-width: 560px;
   max-height: 90dvh;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: auto;
+  position: relative;
   animation: fade-up 0.25s ease;
+}
+
+.learn-modal-content--group {
+  max-width: 740px;
+  padding: 0;
+}
+
+.learn-modal-content--practice {
+  max-width: 980px;
+  padding: 0;
+}
+
+.learn-modal-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: clamp(0.85rem, 2.5vw, 1.25rem) clamp(1rem, 3vw, 1.75rem);
+  background: var(--panel-bg-solid);
+  border-bottom: 1px solid var(--border-color);
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+}
+
+.learn-modal-body {
+  padding: clamp(1rem, 3vw, 1.75rem);
+}
+
+.learn-categories-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: var(--space-6);
+}
+
+.learn-card-button {
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  border: 1px solid var(--panel-border);
+}
+
+.learn-signs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 175px), 1fr));
+  gap: 0.85rem;
+}
+
+.learn-practice-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: clamp(1rem, 2.5vw, 1.5rem);
+  align-items: start;
+}
+
+@media (min-width: 840px) {
+  .learn-practice-layout {
+    grid-template-columns: minmax(270px, 0.9fr) minmax(360px, 1.25fr);
+  }
+}
+
+.practice-video-stage {
+  position: relative;
+  width: 100%;
+  background: var(--video-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  max-height: min(50dvh, 400px);
+}
+
+.practice-video-canvas {
+  width: 100%;
+  height: 100%;
+  max-height: min(50dvh, 400px);
+  object-fit: contain;
+  display: block;
+}
+
+.hand-counter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.rep-dots {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.45rem;
+}
+
+.rep-dot {
+  flex: 1;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--border-color);
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.rep-dot--filled {
+  background: var(--success-color);
+}
+
+.learn-progress-track {
+  width: 100%;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.learn-progress-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, var(--accent-primary), var(--success-color));
+  transition: width 350ms ease;
+}
+
+@media (max-width: 480px) {
+  .modal-overlay {
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.5rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom))
+      max(0.5rem, env(safe-area-inset-left));
+  }
+
+  .modal-content {
+    border-radius: var(--radius-lg);
+    max-height: 92dvh;
+  }
+
+  .learn-modal-topbar {
+    border-top-left-radius: var(--radius-lg);
+    border-top-right-radius: var(--radius-lg);
+  }
 }
 
 /* Footer link */
