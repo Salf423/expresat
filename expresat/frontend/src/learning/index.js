@@ -20,3 +20,10 @@ export {
   normalizeHandSide,
   PracticeSessionMachine,
 } from './practiceSession.js';
+
+export {
+  normalizeSearchText,
+  extractSignBadgeText,
+  countCategorySignFilters,
+  filterCategorySigns,
+} from './catalogFilter.js';

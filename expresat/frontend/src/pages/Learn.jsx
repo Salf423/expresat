@@ -11,12 +11,16 @@ import {
   CheckCircle2,
   Hand,
   Trophy,
+  Search,
 } from 'lucide-react';
 import {
   LEARNING_CATEGORIES,
   ALL_LEARNING_SIGN_IDS,
   FINGER_ORDER,
   FINGER_LABELS_ES,
+  extractSignBadgeText,
+  countCategorySignFilters,
+  filterCategorySigns,
 } from '../learning/index.js';
 import {
   readCompletedSigns,
@@ -76,12 +80,21 @@ function describeExpectedPostureBadges(sign) {
 const Learn = () => {
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [selectedSign, setSelectedSign] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [signFilter, setSignFilter] = useState('all'); // 'all' | 'static' | 'dynamic' | 'pending'
   const [completedIds, setCompletedIds] = useState(() =>
     readCompletedSigns(ALL_LEARNING_SIGN_IDS)
   );
 
   const modalCloseBtnRef = useRef(null);
   const lastFocusedRef = useRef(null);
+
+  // Ensure page starts scrolled cleanly below the fixed navbar on route mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+  }, []);
 
   const completedSet = useMemo(() => new Set(completedIds), [completedIds]);
   const globalProgress = useMemo(
@@ -96,17 +109,40 @@ const Learn = () => {
 
   const openGroup = useCallback((category) => {
     lastFocusedRef.current = document.activeElement;
+    setSearchQuery('');
+    setSignFilter('all');
     setSelectedGroup(category);
   }, []);
 
   const closeAllModals = useCallback(() => {
     setSelectedSign(null);
     setSelectedGroup(null);
+    setSearchQuery('');
+    setSignFilter('all');
     const prev = lastFocusedRef.current;
     if (prev && typeof prev.focus === 'function') {
       requestAnimationFrame(() => prev.focus());
     }
   }, []);
+
+  const groupFilterCounts = useMemo(
+    () => (selectedGroup ? countCategorySignFilters(selectedGroup.signs, completedSet) : null),
+    [selectedGroup, completedSet]
+  );
+
+  const filteredGroupSigns = useMemo(() => {
+    if (!selectedGroup) return [];
+    return filterCategorySigns(selectedGroup.signs, {
+      query: searchQuery,
+      filter: signFilter,
+      completedSet,
+    });
+  }, [selectedGroup, searchQuery, signFilter, completedSet]);
+
+  const groupCompletedCount = useMemo(() => {
+    if (!selectedGroup) return 0;
+    return selectedGroup.signs.filter((s) => completedSet.has(s.id)).length;
+  }, [selectedGroup, completedSet]);
 
   // Lock background scroll and handle Escape while any modal is open
   useEffect(() => {
@@ -147,13 +183,17 @@ const Learn = () => {
   );
 
   return (
-    <div
-      className="container animate-fade-in"
-      style={{ padding: '2.5rem 1.5rem 6rem 1.5rem', flex: 1, position: 'relative' }}
-    >
+    <div className="container learn-page animate-fade-in">
       {/* Header */}
-      <header className="section-heading" style={{ marginBottom: '2.25rem' }}>
-        <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.15rem)', fontWeight: 800, marginBottom: '0.75rem' }}>
+      <header className="section-heading learn-header">
+        <h1
+          style={{
+            fontSize: 'clamp(1.85rem, 5vw, 3.15rem)',
+            fontWeight: 800,
+            lineHeight: 1.18,
+            marginBottom: '0.75rem',
+          }}
+        >
           Aprende Lengua de Señas Mexicana
         </h1>
         <p style={{ maxWidth: '640px', margin: '0 auto', fontSize: '1.05rem' }}>
@@ -396,12 +436,31 @@ const Learn = () => {
                     {CATEGORY_ICONS[selectedGroup.iconKey] || <BookOpen size={22} aria-hidden="true" />}
                   </div>
                   <div style={{ minWidth: 0 }}>
-                    <h2
-                      id="group-modal-title"
-                      style={{ fontSize: 'clamp(1.2rem, 3vw, 1.5rem)', margin: 0 }}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        flexWrap: 'wrap',
+                      }}
                     >
-                      {selectedGroup.title}
-                    </h2>
+                      <h2
+                        id="group-modal-title"
+                        style={{ fontSize: 'clamp(1.15rem, 3vw, 1.45rem)', margin: 0 }}
+                      >
+                        {selectedGroup.title}
+                      </h2>
+                      <span
+                        className="chip"
+                        style={{
+                          fontSize: '0.74rem',
+                          fontVariantNumeric: 'tabular-nums',
+                          color: 'var(--text-color)',
+                        }}
+                      >
+                        {groupCompletedCount}/{selectedGroup.signs.length} completadas
+                      </span>
+                    </div>
                     <p
                       style={{
                         color: 'var(--text-muted)',
@@ -431,104 +490,278 @@ const Learn = () => {
                 </button>
               </div>
 
-              <div className="learn-modal-body">
-                <div className="learn-signs-grid">
-                  {selectedGroup.signs.map((sign) => {
-                    const isDone = completedSet.has(sign.id);
-                    return (
-                      <button
-                        key={sign.id}
-                        type="button"
-                        className="glass-panel learn-card-button"
-                        aria-label={`Practicar ${sign.displayName}${isDone ? ', completada' : ''}`}
-                        style={{
-                          padding: '1.1rem 0.95rem',
-                          borderRadius: 'var(--radius-md)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '0.45rem',
-                          background: isDone ? 'var(--success-bg)' : 'var(--input-bg)',
-                          borderColor: isDone ? 'var(--success-color)' : 'var(--panel-border)',
-                          cursor: 'pointer',
-                        }}
-                        onClick={() => setSelectedSign(sign)}
-                      >
-                        <div
+              {/* Pinned Search & Quick Filter Toolbar */}
+              <div className="learn-modal-toolbar">
+                <div className="learn-search-wrap">
+                  <Search size={16} className="learn-search-icon" aria-hidden="true" />
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={`Buscar en ${selectedGroup.title}…`}
+                    aria-label={`Buscar seña en ${selectedGroup.title}`}
+                    className="learn-search-input"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      className="btn-icon learn-search-clear"
+                      onClick={() => setSearchQuery('')}
+                      aria-label="Limpiar búsqueda"
+                    >
+                      <X size={15} />
+                    </button>
+                  )}
+                </div>
+
+                {groupFilterCounts && (
+                  <div className="learn-filter-row">
+                    <div
+                      className="learn-filter-pills"
+                      role="group"
+                      aria-label="Filtrar señas por tipo o estado"
+                    >
+                      {[
+                        { key: 'all', label: 'Todas', count: groupFilterCounts.all },
+                        { key: 'static', label: 'Estáticas', count: groupFilterCounts.static },
+                        ...(groupFilterCounts.dynamic > 0
+                          ? [
+                              {
+                                key: 'dynamic',
+                                label: 'Movimiento',
+                                count: groupFilterCounts.dynamic,
+                              },
+                            ]
+                          : []),
+                        { key: 'pending', label: 'Pendientes', count: groupFilterCounts.pending },
+                      ].map((item) => {
+                        const isActive = signFilter === item.key;
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            aria-pressed={isActive}
+                            className={`learn-filter-pill ${
+                              isActive ? 'learn-filter-pill--active' : ''
+                            }`}
+                            onClick={() => setSignFilter(item.key)}
+                          >
+                            <span>{item.label}</span>
+                            <span
+                              style={{
+                                opacity: 0.8,
+                                fontVariantNumeric: 'tabular-nums',
+                              }}
+                            >
+                              ({item.count})
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <span
+                      style={{
+                        fontSize: '0.76rem',
+                        color: 'var(--text-muted)',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      Mostrando {filteredGroupSigns.length} de {selectedGroup.signs.length}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="learn-modal-body learn-modal-body--scroll">
+                {filteredGroupSigns.length === 0 ? (
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      padding: '2.5rem 1rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.85rem',
+                    }}
+                  >
+                    <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.95rem' }}>
+                      No encontramos señas que coincidan con tu búsqueda o filtro actual.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSignFilter('all');
+                      }}
+                      style={{ padding: '0.45rem 1rem', fontSize: '0.84rem' }}
+                    >
+                      Mostrar todas las señas
+                    </button>
+                  </div>
+                ) : selectedGroup.id === 'letras' ? (
+                  <div className="learn-signs-grid--alphabet">
+                    {filteredGroupSigns.map((sign) => {
+                      const isDone = completedSet.has(sign.id);
+                      const glyph = extractSignBadgeText(sign);
+                      return (
+                        <button
+                          key={sign.id}
+                          type="button"
+                          className="glass-panel learn-card-button learn-alpha-tile"
+                          aria-label={`Practicar ${sign.displayName}${
+                            sign.type === 'dynamic' ? ', con movimiento' : ''
+                          }${isDone ? ', completada' : ''}`}
                           style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: '0.4rem',
-                            width: '100%',
+                            background: isDone ? 'var(--success-bg)' : 'var(--input-bg)',
+                            borderColor: isDone ? 'var(--success-color)' : 'var(--panel-border)',
                           }}
+                          onClick={() => setSelectedSign(sign)}
                         >
+                          <div
+                            style={{
+                              width: '100%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              minHeight: '18px',
+                            }}
+                          >
+                            {sign.type === 'dynamic' ? (
+                              <span
+                                style={{
+                                  fontSize: '0.64rem',
+                                  padding: '0.08rem 0.4rem',
+                                  borderRadius: 'var(--radius-full)',
+                                  background: 'var(--accent-secondary-bg)',
+                                  color: 'var(--text-color)',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                Mov.
+                              </span>
+                            ) : (
+                              <span />
+                            )}
+                            {isDone && (
+                              <CheckCircle2
+                                size={16}
+                                color="var(--success-color)"
+                                aria-label="Seña completada"
+                              />
+                            )}
+                          </div>
+
+                          <span className="learn-alpha-glyph">{glyph}</span>
+
                           <span
                             style={{
-                              fontSize: '1.05rem',
-                              fontWeight: 700,
-                              color: 'var(--text-color)',
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                              color: 'var(--text-muted)',
                             }}
                           >
                             {sign.displayName}
                           </span>
-                          {isDone && (
-                            <CheckCircle2
-                              size={18}
-                              color="var(--success-color)"
-                              style={{ flexShrink: 0 }}
-                              aria-label="Seña completada"
-                            />
-                          )}
-                        </div>
-
-                        <span
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="learn-signs-grid">
+                    {filteredGroupSigns.map((sign) => {
+                      const isDone = completedSet.has(sign.id);
+                      return (
+                        <button
+                          key={sign.id}
+                          type="button"
+                          className="glass-panel learn-card-button"
+                          aria-label={`Practicar ${sign.displayName}${
+                            sign.type === 'dynamic' ? ', con movimiento' : ''
+                          }${isDone ? ', completada' : ''}`}
                           style={{
-                            fontSize: '0.78rem',
-                            color: 'var(--text-muted)',
-                            lineHeight: 1.4,
-                          }}
-                        >
-                          {sign.hint}
-                        </span>
-
-                        <div
-                          style={{
-                            marginTop: 'auto',
-                            paddingTop: '0.4rem',
+                            padding: '0.95rem 0.9rem',
+                            borderRadius: 'var(--radius-md)',
                             display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
+                            flexDirection: 'column',
                             gap: '0.4rem',
+                            background: isDone ? 'var(--success-bg)' : 'var(--input-bg)',
+                            borderColor: isDone ? 'var(--success-color)' : 'var(--panel-border)',
+                            cursor: 'pointer',
                           }}
+                          onClick={() => setSelectedSign(sign)}
                         >
-                          <span
+                          <div
                             style={{
-                              fontSize: '0.76rem',
-                              fontWeight: 600,
-                              color: 'var(--accent-primary)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '0.4rem',
+                              width: '100%',
                             }}
                           >
-                            {isDone ? 'Practicar otra vez' : 'Practicar ahora'}
-                          </span>
-                          {sign.type === 'dynamic' && (
                             <span
                               style={{
-                                fontSize: '0.68rem',
-                                padding: '0.1rem 0.45rem',
-                                borderRadius: 'var(--radius-full)',
-                                background: 'var(--accent-secondary-bg)',
+                                fontSize: '0.98rem',
+                                fontWeight: 700,
                                 color: 'var(--text-color)',
-                                fontWeight: 600,
                               }}
                             >
-                              Movimiento
+                              {sign.displayName}
                             </span>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                            {isDone && (
+                              <CheckCircle2
+                                size={17}
+                                color="var(--success-color)"
+                                style={{ flexShrink: 0 }}
+                                aria-label="Seña completada"
+                              />
+                            )}
+                          </div>
+
+                          <span className="learn-sign-hint">{sign.hint}</span>
+
+                          <div
+                            style={{
+                              marginTop: 'auto',
+                              paddingTop: '0.35rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '0.35rem',
+                              flexWrap: 'wrap',
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                color: 'var(--accent-primary)',
+                              }}
+                            >
+                              {isDone ? 'Practicar otra vez' : 'Practicar ahora'}
+                            </span>
+                            {sign.type === 'dynamic' && (
+                              <span
+                                style={{
+                                  fontSize: '0.68rem',
+                                  padding: '0.1rem 0.45rem',
+                                  borderRadius: 'var(--radius-full)',
+                                  background: 'var(--accent-secondary-bg)',
+                                  color: 'var(--text-color)',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                Movimiento
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           </div>,
