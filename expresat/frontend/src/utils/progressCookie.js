@@ -10,6 +10,14 @@ export const PROGRESS_COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60; // 1 year
 const MAX_STORED_SIGNS = 200;
 const VALID_SIGN_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
 
+/**
+ * Legacy ID aliases automatically mapped when validating against an expanded catalog
+ * so prior progress cookies remain intact when a sign ID is standardized (e.g. `lunes` -> `letra_l`).
+ */
+export const DEFAULT_LEGACY_SIGN_ID_ALIASES = Object.freeze({
+  lunes: 'letra_l',
+});
+
 function resolveDocument(docOverride) {
   if (docOverride !== undefined) return docOverride;
   return typeof document !== 'undefined' ? document : null;
@@ -36,7 +44,20 @@ export function sanitizeSignId(rawId) {
   return normalized;
 }
 
-function normalizeSignList(ids, validIds = null) {
+function resolveCanonicalId(cleanId, allowed, aliases = DEFAULT_LEGACY_SIGN_ID_ALIASES) {
+  if (!cleanId) return null;
+  if (!allowed) return cleanId;
+  if (allowed.has(cleanId)) return cleanId;
+  if (aliases && typeof aliases === 'object') {
+    const mapped = sanitizeSignId(aliases[cleanId]);
+    if (mapped && allowed.has(mapped)) {
+      return mapped;
+    }
+  }
+  return null;
+}
+
+function normalizeSignList(ids, validIds = null, aliases = DEFAULT_LEGACY_SIGN_ID_ALIASES) {
   if (!Array.isArray(ids)) return [];
   const allowed = toAllowedSet(validIds);
   const seen = new Set();
@@ -44,10 +65,11 @@ function normalizeSignList(ids, validIds = null) {
 
   for (let i = 0; i < ids.length && out.length < MAX_STORED_SIGNS; i++) {
     const clean = sanitizeSignId(ids[i]);
-    if (!clean || seen.has(clean)) continue;
-    if (allowed && !allowed.has(clean)) continue;
-    seen.add(clean);
-    out.push(clean);
+    if (!clean) continue;
+    const resolved = resolveCanonicalId(clean, allowed, aliases);
+    if (!resolved || seen.has(resolved)) continue;
+    seen.add(resolved);
+    out.push(resolved);
   }
 
   return out;
@@ -167,25 +189,45 @@ export function writeCompletedSigns(signIds, options = {}) {
 
 /**
  * Marks a single sign ID as completed in the browser progress cookie (idempotent).
+ * Preserves all previously saved cookie IDs even when the active catalog (`validIds`)
+ * expands or changes, avoiding accidental erasure of prior user progress.
  *
  * @param {string} signId
  * @param {Object} [options]
  * @param {Set<string>|Array<string>|null} [options.validIds]
+ * @param {Record<string, string>} [options.aliases]
  * @param {Date} [options.now]
  * @param {Document|null} [options.doc]
  * @returns {string[]}
  */
 export function markSignCompleted(signId, options = {}) {
-  const { validIds = null, now = new Date(), doc: docOverride = undefined } = options;
-  const current = readCompletedSigns(validIds, docOverride);
-  const clean = sanitizeSignId(signId);
-  if (!clean) return current;
-
+  const {
+    validIds = null,
+    aliases = DEFAULT_LEGACY_SIGN_ID_ALIASES,
+    now = new Date(),
+    doc: docOverride = undefined,
+  } = options;
   const allowed = toAllowedSet(validIds);
-  if (allowed && !allowed.has(clean)) return current;
+  const rawExisting = readCompletedSigns(null, docOverride);
+  const filteredExisting = normalizeSignList(rawExisting, allowed, aliases);
 
-  if (current.includes(clean)) return current;
-  return writeCompletedSigns([...current, clean], { validIds, now, doc: docOverride });
+  const clean = sanitizeSignId(signId);
+  if (!clean) return filteredExisting;
+
+  const resolvedNew = resolveCanonicalId(clean, allowed, aliases);
+  if (!resolvedNew) return filteredExisting;
+
+  if (filteredExisting.includes(resolvedNew)) {
+    return filteredExisting;
+  }
+
+  // Merge non-destructively so prior cookie entries are never wiped out on catalog expansion
+  const mergedRaw = rawExisting.includes(resolvedNew)
+    ? rawExisting
+    : [...rawExisting, resolvedNew];
+  writeCompletedSigns(mergedRaw, { validIds: null, now, doc: docOverride });
+
+  return normalizeSignList(mergedRaw, allowed, aliases);
 }
 
 /**

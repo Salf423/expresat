@@ -16,7 +16,8 @@ import {
   FINGER_LABELS_ES,
   REPS_PER_HAND,
   PracticeSessionMachine,
-  generateAnatomicalCorrection,
+  evaluateTargetSign,
+  TargetedPracticeEvaluator,
 } from '../learning/index.js';
 
 const TRACKING_CONFIG = Object.freeze({
@@ -58,7 +59,10 @@ function isSameFeedback(prev, next) {
     prev.status !== next.status ||
     prev.message !== next.message ||
     prev.orientationIssue !== next.orientationIssue ||
-    prev.motionIssue !== next.motionIssue
+    prev.directionIssue !== next.directionIssue ||
+    prev.motionIssue !== next.motionIssue ||
+    prev.distanceIssue !== next.distanceIssue ||
+    prev.detectedLabel !== next.detectedLabel
   ) {
     return false;
   }
@@ -154,48 +158,58 @@ function ActiveCameraPractice({ sign, onCompleted, onStopCamera, onRetryCamera }
         repsPerHand: REPS_PER_HAND,
       })
   );
+  const [targetEvaluator] = useState(
+    () => new TargetedPracticeEvaluator(sign, { staticMinStableMs: 220 })
+  );
   const completedNotifiedRef = useRef(false);
 
   const [sessionSnap, setSessionSnap] = useState(() => sessionMachine.getSnapshot());
-  const [feedback, setFeedback] = useState(() =>
-    generateAnatomicalCorrection({
-      targetLabel: sign.label,
-      detectedLabel: null,
-      states: null,
-    })
-  );
+  const [feedback, setFeedback] = useState(() => evaluateTargetSign(null, sign, []));
+  const [stabilityProgress, setStabilityProgress] = useState(0);
 
   const handlePrediction = useCallback(
     (prediction, frameData) => {
+      const timestampMs = frameData?.timestamp ?? performance.now();
+      const currentSnap = sessionMachine.getSnapshot();
+      const preferredHandId =
+        currentSnap.nextRecommendedHand === 'right'
+          ? 'rightHand'
+          : currentSnap.nextRecommendedHand === 'left'
+            ? 'leftHand'
+            : null;
+
+      const { confirmed, stabilityProgress: nextStability, evaluation } = targetEvaluator.evaluate(
+        frameData,
+        {
+          timestampMs,
+          preferredHandId,
+          detectedLabel: prediction?.label ?? null,
+        }
+      );
+
       const nextSnap = sessionMachine.update({
-        detectedLabel: prediction?.label ?? null,
-        handId: prediction?.details?.handId ?? null,
-        timestampMs: frameData?.timestamp ?? performance.now(),
+        detectedLabel: confirmed ? sign.label : null,
+        handId: evaluation.handId ?? prediction?.details?.handId ?? null,
+        timestampMs,
       });
 
       setSessionSnap((prev) => (isSameSessionSnap(prev, nextSnap) ? prev : nextSnap));
-
-      const nextFeedback = generateAnatomicalCorrection({
-        targetLabel: sign.label,
-        detectedLabel: prediction?.label || prediction?.details?.rawLabel || null,
-        states: prediction?.details?.states ?? null,
-        reason: prediction?.details?.reason ?? null,
-        wave: prediction?.details?.wave ?? null,
-        palmRotation: prediction?.details?.palmRotation ?? null,
+      setFeedback((prev) => (isSameFeedback(prev, evaluation) ? prev : evaluation));
+      setStabilityProgress((prev) => {
+        const rounded = Math.round(nextStability * 20) / 20;
+        return prev === rounded ? prev : rounded;
       });
-
-      setFeedback((prev) => (isSameFeedback(prev, nextFeedback) ? prev : nextFeedback));
 
       if (nextSnap.completed && !completedNotifiedRef.current) {
         completedNotifiedRef.current = true;
         onCompleted?.(nextSnap);
       }
     },
-    [sessionMachine, sign.label, onCompleted]
+    [sessionMachine, targetEvaluator, sign, onCompleted]
   );
 
   // 100% offline local mode: enablePose: false for maximum fluidity and portrait mobile camera support
-  const { engineStatus, engineError, gesture, clearGesture } = useSignEngine({
+  const { engineStatus, engineError, clearGesture } = useSignEngine({
     videoRef,
     canvasRef,
     trackingConfig: TRACKING_CONFIG,
@@ -207,15 +221,11 @@ function ActiveCameraPractice({ sign, onCompleted, onStopCamera, onRetryCamera }
   const handleResetSession = useCallback(() => {
     completedNotifiedRef.current = false;
     clearGesture();
+    targetEvaluator.reset(sign);
+    setStabilityProgress(0);
     setSessionSnap(sessionMachine.reset(sign.label));
-    setFeedback(
-      generateAnatomicalCorrection({
-        targetLabel: sign.label,
-        detectedLabel: null,
-        states: null,
-      })
-    );
-  }, [clearGesture, sessionMachine, sign.label]);
+    setFeedback(evaluateTargetSign(null, sign, []));
+  }, [clearGesture, targetEvaluator, sessionMachine, sign]);
 
   const activeHandLabel =
     sessionSnap.activeHand === 'right'
@@ -268,6 +278,13 @@ function ActiveCameraPractice({ sign, onCompleted, onStopCamera, onRetryCamera }
         body: feedback.message,
       };
     }
+    if (feedback.status === 'distance_adjust') {
+      return {
+        tone: 'info',
+        title: 'Ajusta la distancia',
+        body: feedback.message,
+      };
+    }
     if (feedback.status === 'wrong_sign') {
       return {
         tone: 'warning',
@@ -278,7 +295,7 @@ function ActiveCameraPractice({ sign, onCompleted, onStopCamera, onRetryCamera }
     if (feedback.status === 'adjust_posture') {
       return {
         tone: 'warning',
-        title: 'Casi lo logras',
+        title: feedback.motionIssue ? 'Falta el movimiento' : 'Casi lo logras',
         body: feedback.message,
       };
     }
@@ -312,10 +329,7 @@ function ActiveCameraPractice({ sign, onCompleted, onStopCamera, onRetryCamera }
     },
   }[bannerInfo.tone];
 
-  const isStabilizingTarget =
-    gesture.state === 'detecting' &&
-    gesture.details?.rawLabel === sign.label &&
-    (gesture.details?.stabilityProgress ?? 0) > 0;
+  const isStabilizingTarget = feedback.status === 'match' && stabilityProgress > 0 && stabilityProgress < 1;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
@@ -442,7 +456,7 @@ function ActiveCameraPractice({ sign, onCompleted, onStopCamera, onRetryCamera }
           >
             <div
               style={{
-                width: `${Math.round((gesture.details?.stabilityProgress ?? 0) * 100)}%`,
+                width: `${Math.round(stabilityProgress * 100)}%`,
                 height: '100%',
                 background: 'var(--success-color)',
                 transition: 'width 80ms linear',

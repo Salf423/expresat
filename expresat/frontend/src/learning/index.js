@@ -28,3 +28,12 @@ export {
   countCategorySignFilters,
   filterCategorySigns,
 } from './catalogFilter.js';
+
+export {
+  MIN_PRACTICE_PALM_SCALE,
+  MAX_PRACTICE_PALM_SCALE,
+  resolveTargetSign,
+  evaluateDynamicMotion,
+  evaluateTargetSign,
+  TargetedPracticeEvaluator,
+} from './targetEvaluator.js';

@@ -11,6 +11,7 @@ import {
   clearCompletedSigns,
   computeProgressStats,
 } from '../progressCookie.js';
+import { ALL_LEARNING_SIGN_IDS } from '../../learning/catalog.js';
 
 function createMockDocument(initialCookie = '') {
   const jar = new Map();
@@ -155,5 +156,48 @@ describe('utils/progressCookie — Persistencia segura de señas completadas en 
       totalCount: 0,
       percentage: 0,
     });
+  });
+
+  it('preserva progreso previo (incluyendo alias heredados como lunes -> letra_l) al expandirse el catálogo total Y', () => {
+    const mockDoc = createMockDocument('');
+    // Usuario completó 5 señas bajo el catálogo anterior de 20 señas (incluyendo 'lunes')
+    const previousCompleted = ['uno', 'dos', 'hola', 'bien', 'lunes'];
+    writeCompletedSigns(previousCompleted, { doc: mockDoc });
+
+    // Al leer con el catálogo expandido (~70 señas), se conservan las 5 señas (lunes -> letra_l)
+    const restored = readCompletedSigns(ALL_LEARNING_SIGN_IDS, mockDoc);
+    expect(restored).toEqual(['uno', 'dos', 'hola', 'bien', 'letra_l']);
+
+    const beforeNew = computeProgressStats(restored, ALL_LEARNING_SIGN_IDS);
+    expect(beforeNew.completedCount).toBe(5);
+    expect(beforeNew.totalCount).toBe(ALL_LEARNING_SIGN_IDS.length);
+    expect(beforeNew.totalCount).toBeGreaterThanOrEqual(64);
+    expect(beforeNew.percentage).toBe(Math.round((5 / ALL_LEARNING_SIGN_IDS.length) * 100));
+
+    // Completar una seña nueva del catálogo expandido (ej. letra_enie) conserva todo lo previo
+    const afterEnie = markSignCompleted('letra_enie', {
+      validIds: ALL_LEARNING_SIGN_IDS,
+      doc: mockDoc,
+    });
+    expect(afterEnie).toEqual(['uno', 'dos', 'hola', 'bien', 'letra_l', 'letra_enie']);
+    const afterStats = computeProgressStats(afterEnie, ALL_LEARNING_SIGN_IDS);
+    expect(afterStats.completedCount).toBe(6);
+    expect(afterStats.totalCount).toBe(ALL_LEARNING_SIGN_IDS.length);
+
+    // Incluso si existe una seña histórica externa en la cookie, markSignCompleted no la borra
+    const mockDocWithExtra = createMockDocument('');
+    writeCompletedSigns(['uno', 'seña_antigua_ok'.replace('ñ', 'n')], { doc: mockDocWithExtra });
+    markSignCompleted('letra_a', { validIds: ALL_LEARNING_SIGN_IDS, doc: mockDocWithExtra });
+    const rawAfter = readCompletedSigns(null, mockDocWithExtra);
+    expect(rawAfter).toContain('uno');
+    expect(rawAfter).toContain('sena_antigua_ok');
+    expect(rawAfter).toContain('letra_a');
+
+    // Serializar el 100% del catálogo completo cabe holgadamente bajo el límite de 4096 bytes
+    const fullCookie = serializeCompletedSignsCookie(ALL_LEARNING_SIGN_IDS);
+    expect(fullCookie.length).toBeLessThan(3500);
+    expect(parseCompletedSignsCookie(fullCookie, ALL_LEARNING_SIGN_IDS)).toHaveLength(
+      ALL_LEARNING_SIGN_IDS.length
+    );
   });
 });
