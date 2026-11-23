@@ -194,7 +194,7 @@ const About = () => {
             Nuestro equipo combina investigación avanzada en inteligencia artificial, desarrollo de interfaces intuitivas bajo estándares de accesibilidad universal y un profundo compromiso social para conectar a las personas de manera fluida y respetuosa.
           </p>
           <p style={{ margin: 0 }}>
-            Utilizamos las tecnologías más modernas en visión por computadora a través de cualquier cámara web estándar y modelos neuronales ligeros optimizados para interpretar los gestos de la Lengua de Señas Mexicana (LSM) en tiempo real, directamente en el navegador y sin costos de suscripción prohibitivos.
+            Aprovechamos la cámara de cualquier computadora o teléfono para interpretar la Lengua de Señas Mexicana (LSM) en tiempo real directamente desde el navegador, de forma gratuita, privada y accesible para todos.
           </p>
         </div>
       </section>

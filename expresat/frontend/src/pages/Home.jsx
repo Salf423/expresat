@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Zap, Shield, Sparkles, Cpu, BookOpen, Layers, CheckCircle2 } from 'lucide-react';
+import { Zap, Shield, Sparkles, Hand, BookOpen, Heart, CheckCircle2 } from 'lucide-react';
 
 const Home = () => {
   return (
@@ -12,7 +12,7 @@ const Home = () => {
         </h1>
 
         <p className="hero-subtitle">
-          ExpresaT traduce señas en tiempo real combinando visión por computadora de ultra-baja latencia y redes neuronales recurrentes directamente en tu navegador.
+          ExpresaT traduce y enseña Lengua de Señas Mexicana en tiempo real desde tu cámara, ayudando a personas sordas y oyentes a comunicarse con naturalidad e inclusión.
         </p>
 
         <div className="hero-actions">
@@ -25,7 +25,7 @@ const Home = () => {
           </Link>
         </div>
 
-        {/* Live Performance Metric Badges */}
+        {/* Value Highlights */}
         <div
           style={{
             display: 'flex',
@@ -47,7 +47,7 @@ const Home = () => {
           >
             <CheckCircle2 size={16} color="var(--success-color)" />
             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Latencia de Inferencia: <strong style={{ color: 'var(--text-color)' }}>~2.02 ms</strong>
+              Traducción al instante: <strong style={{ color: 'var(--text-color)' }}>Texto y Voz en Español</strong>
             </span>
           </div>
 
@@ -63,7 +63,7 @@ const Home = () => {
           >
             <CheckCircle2 size={16} color="var(--accent-primary)" />
             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Tracking Biomecánico: <strong style={{ color: 'var(--text-color)' }}>178 Puntos Clave</strong>
+              Práctica guiada: <strong style={{ color: 'var(--text-color)' }}>Corrección en Vivo</strong>
             </span>
           </div>
 
@@ -79,7 +79,7 @@ const Home = () => {
           >
             <CheckCircle2 size={16} color="var(--accent-secondary)" />
             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Arquitectura: <strong style={{ color: 'var(--text-color)' }}>ONNX INT8 Edge Ready</strong>
+              100% Privado: <strong style={{ color: 'var(--text-color)' }}>Directo en tu Dispositivo</strong>
             </span>
           </div>
         </div>
@@ -88,9 +88,9 @@ const Home = () => {
       {/* Feature Cards Grid */}
       <section className="container" style={{ paddingBottom: '6rem' }}>
         <div className="section-heading">
-          <h2>Diseñado para la comunicación sin fricciones</h2>
+          <h2>Diseñado para la comunicación sin barreras</h2>
           <p>
-            Cada componente de ExpresaT ha sido optimizado para ejecutarse fluidamente en cualquier dispositivo sin depender de servidores con GPU costosos.
+            Cada herramienta de ExpresaT está pensada para facilitar la conversación cotidiana y el aprendizaje práctico de la LSM desde cualquier computadora o teléfono.
           </p>
         </div>
 
@@ -100,20 +100,20 @@ const Home = () => {
             <div className="feature-card__icon">
               <Zap size={26} />
             </div>
-            <h3 className="feature-card__title">IA en Tiempo Real</h3>
+            <h3 className="feature-card__title">Traducción al Instante</h3>
             <p className="feature-card__desc">
-              Pipeline de alta frecuencia que procesa flujos continuos a 15 FPS con buffers circulares y cuantización INT8 para respuestas instantáneas.
+              Reconoce tus señas con naturalidad y las transforma en texto y voz en español al momento, sin instalaciones ni pasos complicados.
             </p>
           </div>
 
           {/* Card 2 */}
           <div className="glass-panel feature-card">
             <div className="feature-card__icon" style={{ background: 'var(--accent-secondary-bg)', color: 'var(--accent-secondary)' }}>
-              <Cpu size={26} />
+              <Hand size={26} />
             </div>
-            <h3 className="feature-card__title">Tracking Biomecánico</h3>
+            <h3 className="feature-card__title">Lectura Clara de Manos</h3>
             <p className="feature-card__desc">
-              MediaPipe Holistic extrae 178 coordenadas 3D de manos, rostro y torso, normalizadas geométricamente respecto al centro de los hombros.
+              Identifica con precisión la posición de cada dedo y el movimiento natural de tu mano derecha o izquierda, adaptándose a distintas distancias.
             </p>
           </div>
 
@@ -122,20 +122,20 @@ const Home = () => {
             <div className="feature-card__icon">
               <BookOpen size={26} />
             </div>
-            <h3 className="feature-card__title">Aprendizaje Interactivo</h3>
+            <h3 className="feature-card__title">Aprendizaje Guiado en Vivo</h3>
             <p className="feature-card__desc">
-              Módulos didácticos estructurados por categorías: abecedario, saludos, números y familia, diseñados para aprender de forma visual y guiada.
+              Practica números, letras, frases cortas y agradecimientos frente a tu cámara con indicaciones claras para perfeccionar cada postura.
             </p>
           </div>
 
           {/* Card 4 */}
           <div className="glass-panel feature-card">
             <div className="feature-card__icon" style={{ background: 'var(--accent-secondary-bg)', color: 'var(--accent-secondary)' }}>
-              <Layers size={26} />
+              <Heart size={26} />
             </div>
-            <h3 className="feature-card__title">Glassmorphism Accesible</h3>
+            <h3 className="feature-card__title">Diseño Accesible e Inclusivo</h3>
             <p className="feature-card__desc">
-              Interfaz fluida con desenfoque optimizado por hardware, contraste cromático validado WCAG 2.2 AA y soporte nativo para modo oscuro y claro.
+              Interfaz limpia pensada para todas las personas, con alto contraste legible, modo claro u oscuro y navegación cómoda por teclado.
             </p>
           </div>
 
@@ -144,9 +144,9 @@ const Home = () => {
             <div className="feature-card__icon">
               <Shield size={26} />
             </div>
-            <h3 className="feature-card__title">Privacidad por Diseño</h3>
+            <h3 className="feature-card__title">Privacidad Garantizada</h3>
             <p className="feature-card__desc">
-              El video de tu cámara nunca se graba ni se transmite en crudo; únicamente los vectores matemáticos de coordenadas viajan a través del WebSocket.
+              Tu cámara funciona localmente en tu navegador sin grabar ni subir video a internet. Tu imagen permanece siempre bajo tu control.
             </p>
           </div>
 
@@ -155,9 +155,9 @@ const Home = () => {
             <div className="feature-card__icon" style={{ background: 'var(--accent-secondary-bg)', color: 'var(--accent-secondary)' }}>
               <Sparkles size={26} />
             </div>
-            <h3 className="feature-card__title">Multi-Entorno Inteligente</h3>
+            <h3 className="feature-card__title">Listo en Cualquier Dispositivo</h3>
             <p className="feature-card__desc">
-              Cambia instantáneamente entre servidores de desarrollo local y clústeres en la nube directamente desde la barra de navegación.
+              Funciona sin conexión en computadora, tablet o teléfono móvil en posición vertical, ideal para escuelas, hogares y espacios comunitarios.
             </p>
           </div>
         </div>
@@ -179,17 +179,17 @@ const Home = () => {
           }}
         >
           <h2 style={{ fontSize: 'clamp(1.75rem, 3.5vw, 2.75rem)' }}>
-            ¿Listo para experimentar la traducción de LSM?
+            ¿Listo para comunicarte en Lengua de Señas Mexicana?
           </h2>
           <p style={{ maxWidth: '600px', fontSize: '1.1rem', margin: 0 }}>
-            Conecta tu cámara o explora nuestro catálogo interactivo para comenzar a tender puentes de comunicación hoy mismo.
+            Activa tu cámara para traducir al instante o entra al módulo de aprendizaje para practicar paso a paso a tu propio ritmo.
           </p>
           <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Link to="/translator" className="btn-primary" style={{ padding: '0.85rem 2rem', fontSize: '1rem' }}>
               <span>Abrir Traductor</span>
             </Link>
-            <Link to="/about" className="btn-outline" style={{ padding: '0.85rem 1.75rem', fontSize: '1rem' }}>
-              <span>Conoce al Equipo</span>
+            <Link to="/learn" className="btn-outline" style={{ padding: '0.85rem 1.75rem', fontSize: '1rem' }}>
+              <span>Empezar a Aprender</span>
             </Link>
           </div>
         </div>

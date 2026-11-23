@@ -149,6 +149,8 @@ const Translator = () => {
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
 
+  const showDiagnostics = import.meta.env.DEV || debugVisible;
+
   const translation = gesture.label || '';
   const confidencePct = gesture.confidence ? Math.round(gesture.confidence * 100) : 0;
   const fingerStates = gesture.details?.states || null;
@@ -250,110 +252,144 @@ const Translator = () => {
             <span className="chip" style={{ fontSize: '0.75rem' }}>
               En Vivo
             </span>
-            <span
-              data-testid="wasm-status-badge"
-              className="chip"
-              style={{
-                fontSize: '0.72rem',
-                background: engineStatus.wasmReady
-                  ? 'var(--success-bg)'
-                  : 'var(--warning-bg)',
-                color: engineStatus.wasmReady ? 'var(--success-color)' : 'var(--warning-color)',
-                borderColor: 'transparent',
-              }}
-            >
-              {engineStatus.wasmReady ? 'WASM Activo' : 'Cargando WASM…'}
-            </span>
+            {showDiagnostics ? (
+              <span
+                data-testid="wasm-status-badge"
+                className="chip"
+                style={{
+                  fontSize: '0.72rem',
+                  background: engineStatus.wasmReady
+                    ? 'var(--success-bg)'
+                    : 'var(--warning-bg)',
+                  color: engineStatus.wasmReady ? 'var(--success-color)' : 'var(--warning-color)',
+                  borderColor: 'transparent',
+                }}
+              >
+                {engineStatus.wasmReady ? 'WASM Activo' : 'Cargando WASM…'}
+              </span>
+            ) : (
+              <span
+                className="chip"
+                style={{
+                  fontSize: '0.72rem',
+                  background: engineStatus.wasmReady
+                    ? 'var(--success-bg)'
+                    : 'var(--warning-bg)',
+                  color: engineStatus.wasmReady ? 'var(--success-color)' : 'var(--warning-color)',
+                  borderColor: 'transparent',
+                }}
+              >
+                {engineStatus.wasmReady ? 'Cámara lista' : 'Preparando cámara…'}
+              </span>
+            )}
           </div>
           <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-            Posiciónate frente a la cámara con las manos visibles. Reconocimiento geométrico y voz
-            100% offline en tu navegador.
+            Colócate frente a la cámara con las manos visibles. Traduce tus señas a texto y voz en
+            español al instante, de forma privada y sin conexión.
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
-          {/* Telemetry Indicator (non-live region so 1 Hz FPS updates never spam screen readers) */}
-          <div
-            aria-label="Métricas de rendimiento y modo de operación"
-            className="glass-panel"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '1rem',
-              padding: '0.6rem 1.25rem',
-              borderRadius: 'var(--radius-full)',
-              flexWrap: 'wrap',
-            }}
-          >
-            {/* Camera FPS */}
+          {showDiagnostics ? (
+            /* Telemetry Indicator (dev / Ctrl+Shift+D only; non-live region so 1 Hz FPS updates never spam screen readers) */
             <div
-              data-testid="camera-fps"
-              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-              title="Fotogramas por segundo entregados por la cámara"
+              aria-label="Métricas de rendimiento y modo de operación"
+              className="glass-panel"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '1rem',
+                padding: '0.6rem 1.25rem',
+                borderRadius: 'var(--radius-full)',
+                flexWrap: 'wrap',
+              }}
             >
-              <Camera size={16} color="var(--accent-primary)" />
-              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Cámara:{' '}
-                <strong style={{ color: 'var(--text-color)', fontVariantNumeric: 'tabular-nums' }}>
-                  {fps.cameraFps}
-                </strong>{' '}
-                FPS
-              </span>
+              {/* Camera FPS */}
+              <div
+                data-testid="camera-fps"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                title="Fotogramas por segundo entregados por la cámara"
+              >
+                <Camera size={16} color="var(--accent-primary)" />
+                <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                  Cámara:{' '}
+                  <strong style={{ color: 'var(--text-color)', fontVariantNumeric: 'tabular-nums' }}>
+                    {fps.cameraFps}
+                  </strong>{' '}
+                  FPS
+                </span>
+              </div>
+
+              <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
+
+              {/* Real Inference FPS */}
+              <div
+                data-testid="inference-fps"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                title="Detecciones reales de MediaPipe procesadas por segundo"
+              >
+                <Activity size={16} color="var(--accent-secondary)" />
+                <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                  Inferencia:{' '}
+                  <strong style={{ color: 'var(--text-color)', fontVariantNumeric: 'tabular-nums' }}>
+                    {fps.inferenceFps}
+                  </strong>{' '}
+                  FPS
+                </span>
+              </div>
+
+              <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
+
+              {/* Explicit Local / WebSocket transport status */}
+              <div
+                data-testid="ws-status"
+                data-ws-state={wsSnapshot.state}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                title={wsSnapshot.detail}
+              >
+                <span
+                  className={`status-dot ${
+                    isWsOpen || wsSnapshot.state === WS_STATES.IDLE
+                      ? 'status-dot--online'
+                      : 'status-dot--offline'
+                  }`}
+                  aria-hidden="true"
+                />
+                <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  {wsStatusLabel}
+                </span>
+                {(wsSnapshot.state === WS_STATES.FAILED ||
+                  wsSnapshot.state === WS_STATES.AUTH_ERROR) && (
+                  <button
+                    type="button"
+                    onClick={reconnectTransport}
+                    className="btn-icon"
+                    title="Reintentar conexión con el servidor backend"
+                    aria-label="Reintentar conexión con servidor"
+                    style={{ width: '24px', height: '24px', padding: '2px' }}
+                  >
+                    <RefreshCw size={13} />
+                  </button>
+                )}
+              </div>
             </div>
-
-            <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
-
-            {/* Real Inference FPS */}
+          ) : (
             <div
-              data-testid="inference-fps"
-              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-              title="Detecciones reales de MediaPipe procesadas por segundo"
+              className="glass-panel"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.55rem',
+                padding: '0.55rem 1.15rem',
+                borderRadius: 'var(--radius-full)',
+              }}
             >
-              <Activity size={16} color="var(--accent-secondary)" />
-              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Inferencia:{' '}
-                <strong style={{ color: 'var(--text-color)', fontVariantNumeric: 'tabular-nums' }}>
-                  {fps.inferenceFps}
-                </strong>{' '}
-                FPS
-              </span>
-            </div>
-
-            <div style={{ width: '1px', height: '18px', background: 'var(--border-color)' }} />
-
-            {/* Explicit Local / WebSocket transport status */}
-            <div
-              data-testid="ws-status"
-              data-ws-state={wsSnapshot.state}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              title={wsSnapshot.detail}
-            >
-              <span
-                className={`status-dot ${
-                  isWsOpen || wsSnapshot.state === WS_STATES.IDLE
-                    ? 'status-dot--online'
-                    : 'status-dot--offline'
-                }`}
-                aria-hidden="true"
-              />
+              <span className="status-dot status-dot--online" aria-hidden="true" />
               <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                {wsStatusLabel}
+                Sin conexión · 100% privado
               </span>
-              {(wsSnapshot.state === WS_STATES.FAILED ||
-                wsSnapshot.state === WS_STATES.AUTH_ERROR) && (
-                <button
-                  type="button"
-                  onClick={reconnectTransport}
-                  className="btn-icon"
-                  title="Reintentar conexión con el servidor backend"
-                  aria-label="Reintentar conexión con servidor"
-                  style={{ width: '24px', height: '24px', padding: '2px' }}
-                >
-                  <RefreshCw size={13} />
-                </button>
-              )}
             </div>
-          </div>
+          )}
 
           {/* Separate DEV indicator: real camera rate (rVFC) decoupled from inference loop */}
           {import.meta.env.DEV && (
@@ -410,7 +446,7 @@ const Translator = () => {
           <AlertTriangle size={20} color="var(--error-color)" style={{ flexShrink: 0 }} />
           <div>
             <strong style={{ display: 'block', color: 'var(--text-color)' }}>
-              Error en el motor de visión ({engineError.code})
+              No pudimos iniciar la cámara{showDiagnostics ? ` (${engineError.code})` : ''}
             </strong>
             <span>{engineError.message}</span>
           </div>
@@ -453,7 +489,7 @@ const Translator = () => {
         <section className="glass-panel translator-panel" aria-label="Visualizador de Cámara">
           <div className="panel-header">
             <Camera size={20} color="var(--accent-primary)" />
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>Captura de Cámara</h2>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>Tu Cámara</h2>
             <div
               style={{
                 marginLeft: 'auto',
@@ -462,23 +498,26 @@ const Translator = () => {
                 gap: '0.5rem',
               }}
             >
-              <span
-                data-testid="landmarks-count"
-                className="chip"
-                style={{
-                  fontSize: '0.72rem',
-                  background: 'var(--accent-primary-bg)',
-                  color: 'var(--accent-primary)',
-                  borderColor: 'transparent',
-                }}
-              >
-                {landmarksCount} landmarks
-              </span>
+              {showDiagnostics && (
+                <span
+                  data-testid="landmarks-count"
+                  className="chip"
+                  style={{
+                    fontSize: '0.72rem',
+                    background: 'var(--accent-primary-bg)',
+                    color: 'var(--accent-primary)',
+                    borderColor: 'transparent',
+                  }}
+                >
+                  {landmarksCount} landmarks
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => setTrackingConfig((c) => ({ ...c, enabled: !c.enabled }))}
                 className="chip"
-                title="Alternar sistema de seguimiento de puntos (Ctrl+Shift+T)"
+                title="Mostrar u ocultar guía visual sobre tus manos"
+                aria-pressed={trackingConfig.enabled}
                 style={{
                   cursor: 'pointer',
                   border: `1px solid ${
@@ -496,7 +535,7 @@ const Translator = () => {
                 }}
               >
                 <Layers size={13} />
-                <span>{trackingConfig.enabled ? 'Tracker On' : 'Tracker Off'}</span>
+                <span>{trackingConfig.enabled ? 'Guía visual' : 'Sin guía'}</span>
               </button>
             </div>
           </div>
@@ -542,12 +581,12 @@ const Translator = () => {
                 objectFit: 'contain',
                 display: 'block',
               }}
-              aria-label="Feed de video con landmarks de MediaPipe trazados"
+              aria-label="Vista de cámara en vivo con guía visual de manos"
             />
           </div>
 
-          {/* Tracker controls */}
-          {trackingConfig.enabled && (
+          {/* Tracker diagnostic controls (visible only in dev / Ctrl+Shift+D) */}
+          {showDiagnostics && trackingConfig.enabled && (
             <div
               style={{
                 marginTop: '0.85rem',
@@ -814,7 +853,7 @@ const Translator = () => {
         <section className="glass-panel translator-panel" aria-label="Resultado de Traducción">
           <div className="panel-header" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
             <MessageSquare size={20} color="var(--accent-secondary)" />
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>Gesto Detectado</h2>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>Seña Detectada</h2>
             <div
               style={{
                 marginLeft: 'auto',
@@ -833,8 +872,8 @@ const Translator = () => {
                 className="chip"
                 title={
                   ttsSupported
-                    ? 'Activar o desactivar pronunciación automática en es-MX al confirmar cada seña'
-                    : 'Síntesis de voz no soportada en este navegador'
+                    ? 'Activar o desactivar lectura automática en voz alta al confirmar cada seña'
+                    : 'Lectura en voz alta no disponible en este navegador'
                 }
                 style={{
                   cursor: ttsSupported ? 'pointer' : 'not-allowed',
@@ -860,7 +899,7 @@ const Translator = () => {
                 onClick={handleSpeakSentence}
                 disabled={!ttsSupported || !speakPayload}
                 className="btn-icon"
-                title="Leer oración en voz alta (es-MX offline)"
+                title="Leer oración en voz alta"
                 aria-label="Leer oración en voz alta"
                 style={{
                   padding: '0.28rem 0.65rem',
@@ -953,7 +992,10 @@ const Translator = () => {
                     ...confidenceBadgeStyle,
                   }}
                 >
-                  Confianza: {confidencePct}% ({gesture.source === 'remote' ? 'Servidor' : 'Local'})
+                  Precisión: {confidencePct}%
+                  {showDiagnostics
+                    ? ` (${gesture.source === 'remote' ? 'Servidor' : 'Local'})`
+                    : ''}
                 </span>
                 <p
                   data-testid="detected-gesture"
@@ -1050,7 +1092,7 @@ const Translator = () => {
               </span>
               {!ttsSupported && (
                 <span style={{ fontSize: '0.7rem', color: 'var(--warning-color)' }}>
-                  TTS no disponible en este navegador
+                  Lectura en voz alta no disponible en este navegador
                 </span>
               )}
             </div>
@@ -1164,7 +1206,7 @@ const Translator = () => {
                 letterSpacing: '0.04em',
               }}
             >
-              Catálogo verificado ({SIGN_CATALOG.length} señas — Modo Demo Local):
+              Señas disponibles ({SIGN_CATALOG.length} señas en LSM):
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
               {SIGN_CATALOG.map((sign) => {

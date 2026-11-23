@@ -132,7 +132,7 @@ const Navbar = () => {
             gap: '0.85rem'
           }}
         >
-          <EnvironmentSelector />
+          {import.meta.env.DEV && <EnvironmentSelector />}
           <ThemeToggle />
 
           {isLoggedIn ? (

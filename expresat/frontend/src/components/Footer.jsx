@@ -161,7 +161,7 @@ const Footer = () => {
               Comunidad y Contacto
             </h4>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1rem' }}>
-              ¿Tienes sugerencias o deseas colaborar en el dataset?
+              ¿Tienes sugerencias o deseas colaborar con la comunidad de ExpresaT?
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
               <a
@@ -226,12 +226,12 @@ const Footer = () => {
           }}
         >
           <p style={{ margin: 0 }}>
-            &copy; {new Date().getFullYear()} ExpresaT. Proyecto de código abierto e investigación en IA.
+            &copy; {new Date().getFullYear()} ExpresaT. Plataforma abierta de accesibilidad e inclusión en LSM.
           </p>
-          <div style={{ display: 'flex', gap: '1.25rem' }}>
-            <span>WCAG 2.2 AA</span>
-            <span>React 19</span>
-            <span>MediaPipe ONNX</span>
+          <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
+            <span>Accesibilidad WCAG 2.2 AA</span>
+            <span>Lengua de Señas Mexicana</span>
+            <span>100% Privado</span>
           </div>
         </div>
       </div>
