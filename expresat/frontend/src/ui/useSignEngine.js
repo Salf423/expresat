@@ -141,6 +141,9 @@ function isSameRenderedGesture(prev, next) {
     prev.label !== next.label ||
     prev.source !== next.source ||
     prev.state !== next.state ||
+    prev.details?.handId !== next.details?.handId ||
+    prev.details?.rawLabel !== next.details?.rawLabel ||
+    prev.details?.reason !== next.details?.reason ||
     Math.round((prev.confidence || 0) * 20) !== Math.round((next.confidence || 0) * 20)
   ) {
     return false;
@@ -154,7 +157,9 @@ function isSameRenderedGesture(prev, next) {
       prevStates.index !== nextStates.index ||
       prevStates.middle !== nextStates.middle ||
       prevStates.ring !== nextStates.ring ||
-      prevStates.pinky !== nextStates.pinky
+      prevStates.pinky !== nextStates.pinky ||
+      prevStates.palmFacing !== nextStates.palmFacing ||
+      prevStates.isPinching !== nextStates.isPinching
     ) {
       return false;
     }
@@ -209,6 +214,7 @@ export function useSignEngine({
   telemetryDrawerOpen = false,
   showDiagnosticBadges = false,
   onSignCommitted = null,
+  onPrediction = null,
 } = {}) {
   const [fps, setFps] = useState({ cameraFps: 0, inferenceFps: 0 });
   const [engineStatus, setEngineStatus] = useState({
@@ -252,6 +258,7 @@ export function useSignEngine({
   const showDiagnosticBadgesRef = useRef(Boolean(showDiagnosticBadges));
   const enableRemoteTransportRef = useRef(Boolean(enableRemoteTransport));
   const onSignCommittedRef = useRef(onSignCommitted);
+  const onPredictionRef = useRef(onPrediction);
   const lastLandmarksCountRef = useRef(0);
   const lastTelemetryUiMsRef = useRef(0);
   const wsBatchBufferRef = useRef([]);
@@ -272,6 +279,10 @@ export function useSignEngine({
   useEffect(() => {
     onSignCommittedRef.current = onSignCommitted;
   }, [onSignCommitted]);
+
+  useEffect(() => {
+    onPredictionRef.current = onPrediction;
+  }, [onPrediction]);
 
   useEffect(() => {
     telemetryDrawerOpenRef.current = Boolean(telemetryDrawerOpen);
@@ -584,12 +595,22 @@ export function useSignEngine({
         const localPrediction = classifier.predict(frameData);
         setGesture((prev) => applyGesturePrediction(prev, localPrediction, 'local'));
 
+        if (typeof onPredictionRef.current === 'function') {
+          try {
+            onPredictionRef.current(localPrediction, frameData);
+          } catch (predErr) {
+            console.warn('[useSignEngine] Error en onPrediction:', predErr);
+          }
+        }
+
         if (localPrediction.committed && localPrediction.committedLabel) {
           const catalogEntry = getSignCatalogEntry(localPrediction.committedLabel);
           const committedPayload = {
             label: localPrediction.committedLabel,
             speakText: catalogEntry?.speakText || localPrediction.committedLabel,
             confidence: localPrediction.confidence ?? 0,
+            handId: localPrediction.details?.handId || null,
+            timestamp: frameData?.timestamp ?? performance.now(),
           };
           setHistory((prev) => appendCommittedSign(prev, localPrediction));
           if (typeof onSignCommittedRef.current === 'function') {

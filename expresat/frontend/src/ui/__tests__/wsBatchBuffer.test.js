@@ -165,4 +165,43 @@ describe('ui/useSignEngine — Lote WebSocket crudo + t_ms monotónico y enableP
     expect(fakeCanvas.width).toBe(480);
     expect(fakeCanvas.height).toBe(640);
   });
+
+  it('applyGesturePrediction actualiza estado al cambiar lateralidad (handId) u orientación palmar', () => {
+    const rightUno = {
+      label: 'Uno',
+      confidence: 0.94,
+      source: 'local',
+      state: 'confirmed',
+      details: {
+        handId: 'rightHand',
+        rawLabel: 'Uno',
+        reason: 'ok',
+        states: {
+          thumb: false,
+          index: true,
+          middle: false,
+          ring: false,
+          pinky: false,
+          palmFacing: 'FRONT',
+          isPinching: false,
+        },
+      },
+    };
+    const leftUno = useSignEngineMod.applyGesturePrediction(rightUno, {
+      ...rightUno,
+      details: { ...rightUno.details, handId: 'leftHand' },
+    });
+    expect(leftUno).not.toBe(rightUno);
+    expect(leftUno.details.handId).toBe('leftHand');
+
+    const backCuatro = useSignEngineMod.applyGesturePrediction(rightUno, {
+      ...rightUno,
+      details: {
+        ...rightUno.details,
+        states: { ...rightUno.details.states, palmFacing: 'BACK' },
+      },
+    });
+    expect(backCuatro).not.toBe(rightUno);
+    expect(backCuatro.details.states.palmFacing).toBe('BACK');
+  });
 });
