@@ -2,6 +2,7 @@ export {
   LEARNING_CATEGORIES,
   ALL_LEARNING_SIGNS,
   ALL_LEARNING_SIGN_IDS,
+  LEGACY_SIGN_ID_ALIASES,
   getLearningSignByLabel,
   getLearningSignById,
   getSignProfile,

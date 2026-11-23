@@ -41,10 +41,27 @@ function describeExpectedPostureBadges(sign) {
   const profile = sign?.profile;
   if (!profile) return badges;
 
-  if (profile.pinch) {
+  if (profile.fPinch) {
+    badges.push({ label: 'Índice y pulgar en pinza', highlight: true });
+    badges.push({ label: 'Medio, anular y meñique arriba', highlight: true });
+  } else if (profile.pinch) {
     badges.push({ label: 'Pulgar + Índice en círculo', highlight: true });
   } else if (profile.zeroOval) {
     badges.push({ label: 'Dedos en óvalo (forma O)', highlight: true });
+  } else if (profile.cArc) {
+    badges.push({ label: 'Dedos curvados en arco (forma C)', highlight: true });
+  } else if (profile.clawShape) {
+    badges.push({ label: '4 dedos doblados en garra', highlight: true });
+  } else if (profile.hookIndex) {
+    badges.push({ label: 'Índice doblado en gancho', highlight: true });
+  } else if (profile.dCircle) {
+    badges.push({ label: 'Índice arriba + círculo con pulgar', highlight: true });
+  } else if (profile.kpShape) {
+    badges.push({ label: 'Índice y medio arriba + pulgar al centro', highlight: true });
+  } else if (profile.fingers.thumb === 'adducted') {
+    badges.push({ label: 'Puño + pulgar recto al costado', highlight: true });
+  } else if (profile.fingers.thumb === 'tucked') {
+    badges.push({ label: 'Puño + pulgar entre índice y medio', highlight: true });
   } else {
     const extended = FINGER_ORDER.filter((key) => profile.fingers[key] === true);
     if (extended.length === 0) {
@@ -62,13 +79,31 @@ function describeExpectedPostureBadges(sign) {
     }
   }
 
+  if (profile.fingerSpread === 'together') {
+    badges.push({ label: 'Dedos juntos', highlight: false });
+  } else if (profile.fingerSpread === 'apart') {
+    badges.push({ label: 'Dedos separados', highlight: false });
+  } else if (profile.fingerSpread === 'crossed') {
+    badges.push({ label: 'Índice y medio cruzados', highlight: false });
+  }
+
   if (profile.orientation === 'FRONT') {
     badges.push({ label: 'Palma al frente', highlight: false });
   } else if (profile.orientation === 'BACK') {
     badges.push({ label: 'Dorso a la cámara', highlight: false });
   }
 
-  if (profile.dynamicMotion === 'wave') {
+  if (profile.handDirection === 'DOWN') {
+    badges.push({ label: 'Dedos hacia abajo', highlight: false });
+  } else if (profile.handDirection === 'HORIZONTAL') {
+    badges.push({ label: 'Dedos horizontales', highlight: false });
+  } else if (profile.handDirection === 'TILTED') {
+    badges.push({ label: 'Mano inclinada en diagonal', highlight: false });
+  }
+
+  if (profile.motionBadge) {
+    badges.push({ label: profile.motionBadge, highlight: false });
+  } else if (profile.dynamicMotion === 'wave') {
     badges.push({ label: 'Movimiento lateral (saludo)', highlight: false });
   } else if (profile.dynamicMotion === 'rotation') {
     badges.push({ label: 'Giro de muñeca palma ↔ dorso', highlight: false });
