@@ -1,0 +1,173 @@
+/**
+ * Canonical base catalog (`SIGN_LABELS` & `SIGN_CATALOG`) for the default collision-free
+ * `'general'` mode of `GeometricClassifier`.
+ *
+ * Kept in a zero-dependency leaf module so `modeCatalog.js`, `classifier.js`, and
+ * `learning/catalog.js` share a single source of truth with zero circular imports.
+ */
+
+export const SIGN_LABELS = Object.freeze({
+  CERO: 'Cero',
+  UNO: 'Uno',
+  DOS: 'Dos',
+  TRES: 'Tres',
+  CUATRO: 'Cuatro',
+  CINCO: 'Cinco',
+  SEIS: 'Seis',
+  SIETE: 'Siete',
+  OCHO: 'Ocho',
+  NUEVE: 'Nueve',
+  DIEZ: 'Diez',
+  PUNO: 'Puño',
+  OK: 'OK / Pinza',
+  BIEN: 'Bien',
+  TE_QUIERO: 'Te Quiero',
+  LUNES: 'Lunes',
+  HOLA: 'Hola',
+  LETRA_I: 'Letra I',
+  LETRA_Y: 'Letra Y',
+  CUERNOS: 'Cuernos',
+});
+
+export const SIGN_CATALOG = Object.freeze([
+  Object.freeze({
+    id: 'cero',
+    label: SIGN_LABELS.CERO,
+    type: 'static',
+    hint: 'Dedos en óvalo tocando el pulgar (0 LSM)',
+    speakText: 'Cero',
+  }),
+  Object.freeze({
+    id: 'uno',
+    label: SIGN_LABELS.UNO,
+    type: 'static',
+    hint: 'Solo índice extendido',
+    speakText: 'Uno',
+  }),
+  Object.freeze({
+    id: 'dos',
+    label: SIGN_LABELS.DOS,
+    type: 'static',
+    hint: 'Índice y medio extendidos',
+    speakText: 'Dos',
+  }),
+  Object.freeze({
+    id: 'tres',
+    label: SIGN_LABELS.TRES,
+    type: 'static',
+    hint: 'Índice, medio y anular extendidos',
+    speakText: 'Tres',
+  }),
+  Object.freeze({
+    id: 'cuatro',
+    label: SIGN_LABELS.CUATRO,
+    type: 'static',
+    hint: '4 dedos extendidos (palma al frente)',
+    speakText: 'Cuatro',
+  }),
+  Object.freeze({
+    id: 'cinco',
+    label: SIGN_LABELS.CINCO,
+    type: 'static',
+    hint: '5 dedos extendidos (mano abierta)',
+    speakText: 'Cinco',
+  }),
+  Object.freeze({
+    id: 'seis',
+    label: SIGN_LABELS.SEIS,
+    type: 'static',
+    hint: 'Pulgar arriba con dorso a la cámara (6 LSM)',
+    speakText: 'Seis',
+  }),
+  Object.freeze({
+    id: 'siete',
+    label: SIGN_LABELS.SIETE,
+    type: 'static',
+    hint: 'Pulgar e índice en L con dorso a la cámara (7 LSM)',
+    speakText: 'Siete',
+  }),
+  Object.freeze({
+    id: 'ocho',
+    label: SIGN_LABELS.OCHO,
+    type: 'static',
+    hint: 'Pulgar, índice y medio extendidos (8 LSM)',
+    speakText: 'Ocho',
+  }),
+  Object.freeze({
+    id: 'nueve',
+    label: SIGN_LABELS.NUEVE,
+    type: 'static',
+    hint: '4 dedos extendidos con dorso a la cámara (9 LSM)',
+    speakText: 'Nueve',
+  }),
+  Object.freeze({
+    id: 'diez',
+    label: SIGN_LABELS.DIEZ,
+    type: 'dynamic',
+    hint: 'Mano abierta (5) girando muñeca palma ↔ dorso (10 LSM)',
+    speakText: 'Diez',
+  }),
+  Object.freeze({
+    id: 'puno',
+    label: SIGN_LABELS.PUNO,
+    type: 'static',
+    hint: 'Puño cerrado (palma o dorso)',
+    speakText: 'Puño',
+  }),
+  Object.freeze({
+    id: 'ok',
+    label: SIGN_LABELS.OK,
+    type: 'static',
+    hint: 'Círculo pulgar-índice y 3 dedos arriba',
+    speakText: 'OK',
+  }),
+  Object.freeze({
+    id: 'bien',
+    label: SIGN_LABELS.BIEN,
+    type: 'static',
+    hint: 'Pulgar arriba (palma al frente o perfil)',
+    speakText: 'Bien',
+  }),
+  Object.freeze({
+    id: 'te_quiero',
+    label: SIGN_LABELS.TE_QUIERO,
+    type: 'static',
+    hint: 'Pulgar, índice y meñique extendidos',
+    speakText: 'Te quiero',
+  }),
+  Object.freeze({
+    id: 'lunes',
+    label: SIGN_LABELS.LUNES,
+    type: 'static',
+    hint: 'Pulgar e índice en L (palma al frente)',
+    speakText: 'Lunes',
+  }),
+  Object.freeze({
+    id: 'hola',
+    label: SIGN_LABELS.HOLA,
+    type: 'dynamic',
+    hint: 'Saludo lateral con mano abierta',
+    speakText: 'Hola',
+  }),
+  Object.freeze({
+    id: 'letra_i',
+    label: SIGN_LABELS.LETRA_I,
+    type: 'static',
+    hint: 'Solo meñique extendido',
+    speakText: 'Letra I',
+  }),
+  Object.freeze({
+    id: 'letra_y',
+    label: SIGN_LABELS.LETRA_Y,
+    type: 'static',
+    hint: 'Pulgar y meñique extendidos',
+    speakText: 'Letra Y',
+  }),
+  Object.freeze({
+    id: 'cuernos',
+    label: SIGN_LABELS.CUERNOS,
+    type: 'static',
+    hint: 'Índice y meñique extendidos',
+    speakText: 'Cuernos',
+  }),
+]);

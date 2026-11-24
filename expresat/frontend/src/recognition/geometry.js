@@ -635,3 +635,109 @@ export function fingerStates(landmarks, options = {}) {
     },
   };
 }
+
+function unitVec2Camera(ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (!Number.isFinite(len) || len < 1e-6) {
+    return { x: 0, y: 0, up: 0, len: 0 };
+  }
+  return {
+    x: dx / len,
+    y: dy / len,
+    up: -dy / len, // +1 = pointing UP (-Y in camera frame), -1 = pointing DOWN (+Y)
+    len,
+  };
+}
+
+/**
+ * Computes extended 3D hand anatomy in a single pass for full-catalog LSM recognition
+ * (shared between `Translator.jsx` context modes and `Learn.jsx` directed evaluator).
+ *
+ * Invariant to aspect ratio (4:3 desktop & 3:4 / 9:16 mobile portrait), camera distance,
+ * and left/right hand chirality.
+ *
+ * @param {Array<{x:number, y:number, z?:number}>} landmarks
+ * @param {Object} [options]
+ * @param {number} [options.aspectRatio=1.0]
+ * @param {string|null} [options.handId=null]
+ * @param {boolean} [options._skipValidation=false]
+ * @returns {Object|null}
+ */
+export function computeExtendedHandAnatomy(landmarks, options = {}) {
+  const aspect = resolveAspectRatio(options);
+  if (!options._skipValidation && !isValidHandLandmarks(landmarks, { aspectRatio: aspect })) {
+    return null;
+  }
+
+  const iso = Math.abs(aspect - 1.0) > 1e-6 ? projectIsotropic(landmarks, aspect) : landmarks;
+  const states = fingerStates(landmarks, {
+    aspectRatio: aspect,
+    handId: options.handId ?? null,
+    _skipValidation: true,
+  });
+  const norm = normalizeHand(landmarks, {
+    aspectRatio: aspect,
+    _skipValidation: true,
+  });
+  if (!states || !norm) return null;
+
+  const palmVec = unitVec2Camera(
+    iso[HAND_LANDMARKS.WRIST].x,
+    iso[HAND_LANDMARKS.WRIST].y,
+    iso[HAND_LANDMARKS.MIDDLE_MCP].x,
+    iso[HAND_LANDMARKS.MIDDLE_MCP].y
+  );
+  const indexVec = unitVec2Camera(
+    iso[HAND_LANDMARKS.INDEX_MCP].x,
+    iso[HAND_LANDMARKS.INDEX_MCP].y,
+    iso[HAND_LANDMARKS.INDEX_TIP].x,
+    iso[HAND_LANDMARKS.INDEX_TIP].y
+  );
+
+  // Chirality-invariant lateral axis across the knuckles: INDEX_MCP -> MIDDLE_MCP
+  const latDx = norm[HAND_LANDMARKS.MIDDLE_MCP].x - norm[HAND_LANDMARKS.INDEX_MCP].x;
+  const latDy = norm[HAND_LANDMARKS.MIDDLE_MCP].y - norm[HAND_LANDMARKS.INDEX_MCP].y;
+  const latDz = norm[HAND_LANDMARKS.MIDDLE_MCP].z - norm[HAND_LANDMARKS.INDEX_MCP].z;
+  const latLen = Math.sqrt(latDx * latDx + latDy * latDy + latDz * latDz) || 1;
+  const uLat = { x: latDx / latLen, y: latDy / latLen, z: latDz / latLen };
+
+  const tipDx = norm[HAND_LANDMARKS.MIDDLE_TIP].x - norm[HAND_LANDMARKS.INDEX_TIP].x;
+  const tipDy = norm[HAND_LANDMARKS.MIDDLE_TIP].y - norm[HAND_LANDMARKS.INDEX_TIP].y;
+  const tipDz = norm[HAND_LANDMARKS.MIDDLE_TIP].z - norm[HAND_LANDMARKS.INDEX_TIP].z;
+  const tipOrderProj = tipDx * uLat.x + tipDy * uLat.y + tipDz * uLat.z;
+
+  // Chirality-invariant lateral projection of thumb tip relative to INDEX_MCP:
+  // negative = outside thumb side of index (Letra A), positive = toward middle knuckle (Letra T / S)
+  const thumbTip = norm[HAND_LANDMARKS.THUMB_TIP];
+  const idxMcp = norm[HAND_LANDMARKS.INDEX_MCP];
+  const thumbLatProj =
+    (thumbTip.x - idxMcp.x) * uLat.x +
+    (thumbTip.y - idxMcp.y) * uLat.y +
+    (thumbTip.z - idxMcp.z) * uLat.z;
+
+  const thumbTipToIndexPip = distance3D(thumbTip, norm[HAND_LANDMARKS.INDEX_PIP]);
+  const thumbTipToIndexDip = distance3D(thumbTip, norm[HAND_LANDMARKS.INDEX_DIP]);
+  const thumbTipToMiddlePip = distance3D(thumbTip, norm[HAND_LANDMARKS.MIDDLE_PIP]);
+  const indexMiddleDipDist = distance3D(
+    norm[HAND_LANDMARKS.INDEX_DIP],
+    norm[HAND_LANDMARKS.MIDDLE_DIP]
+  );
+
+  return {
+    iso,
+    norm,
+    states,
+    palmDirX: palmVec.x,
+    palmDirY: palmVec.up,
+    indexDirX: indexVec.x,
+    indexDirY: indexVec.up,
+    tipOrderProj,
+    thumbLatProj,
+    thumbTipToIndexPip,
+    thumbTipToIndexDip,
+    thumbTipToMiddlePip,
+    indexMiddleDipDist,
+  };
+}

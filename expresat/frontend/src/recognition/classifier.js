@@ -15,190 +15,23 @@ import {
   resolveAspectRatio,
   computePalmNormal,
   computeSignedFrontZ,
+  computeExtendedHandAnatomy,
 } from './geometry.js';
+import { SIGN_LABELS, SIGN_CATALOG } from './signCatalog.js';
+import {
+  CONTEXT_MODES,
+  normalizeContextMode,
+  getModeCatalog,
+  getSignCatalogEntry,
+} from './modeCatalog.js';
+import {
+  DEFAULT_MIN_SCORE_MARGIN,
+  buildCompactMotionSample,
+  computeContextMotionSummary,
+  classifyModeCandidates,
+} from './contextClassifier.js';
 
-/**
- * Canonical sign labels recognized by the geometric classifier.
- * Aligned 1:1 with `SIGN_CATALOG` (numbers 0-10 LSM + base gestures + extra disjoint signs).
- */
-export const SIGN_LABELS = Object.freeze({
-  CERO: 'Cero',
-  UNO: 'Uno',
-  DOS: 'Dos',
-  TRES: 'Tres',
-  CUATRO: 'Cuatro',
-  CINCO: 'Cinco',
-  SEIS: 'Seis',
-  SIETE: 'Siete',
-  OCHO: 'Ocho',
-  NUEVE: 'Nueve',
-  DIEZ: 'Diez',
-  PUNO: 'Puño',
-  OK: 'OK / Pinza',
-  BIEN: 'Bien',
-  TE_QUIERO: 'Te Quiero',
-  LUNES: 'Lunes',
-  HOLA: 'Hola',
-  LETRA_I: 'Letra I',
-  LETRA_Y: 'Letra Y',
-  CUERNOS: 'Cuernos',
-});
-
-/**
- * Single source of truth for the verified geometric signs supported in local demo mode.
- * Consumed directly by `Translator.jsx` (Quick Guide + offline TTS) and `GeometricClassifier`.
- */
-export const SIGN_CATALOG = Object.freeze([
-  Object.freeze({
-    id: 'cero',
-    label: SIGN_LABELS.CERO,
-    type: 'static',
-    hint: 'Dedos en óvalo tocando el pulgar (0 LSM)',
-    speakText: 'Cero',
-  }),
-  Object.freeze({
-    id: 'uno',
-    label: SIGN_LABELS.UNO,
-    type: 'static',
-    hint: 'Solo índice extendido',
-    speakText: 'Uno',
-  }),
-  Object.freeze({
-    id: 'dos',
-    label: SIGN_LABELS.DOS,
-    type: 'static',
-    hint: 'Índice y medio extendidos',
-    speakText: 'Dos',
-  }),
-  Object.freeze({
-    id: 'tres',
-    label: SIGN_LABELS.TRES,
-    type: 'static',
-    hint: 'Índice, medio y anular extendidos',
-    speakText: 'Tres',
-  }),
-  Object.freeze({
-    id: 'cuatro',
-    label: SIGN_LABELS.CUATRO,
-    type: 'static',
-    hint: '4 dedos extendidos (palma al frente)',
-    speakText: 'Cuatro',
-  }),
-  Object.freeze({
-    id: 'cinco',
-    label: SIGN_LABELS.CINCO,
-    type: 'static',
-    hint: '5 dedos extendidos (mano abierta)',
-    speakText: 'Cinco',
-  }),
-  Object.freeze({
-    id: 'seis',
-    label: SIGN_LABELS.SEIS,
-    type: 'static',
-    hint: 'Pulgar arriba con dorso a la cámara (6 LSM)',
-    speakText: 'Seis',
-  }),
-  Object.freeze({
-    id: 'siete',
-    label: SIGN_LABELS.SIETE,
-    type: 'static',
-    hint: 'Pulgar e índice en L con dorso a la cámara (7 LSM)',
-    speakText: 'Siete',
-  }),
-  Object.freeze({
-    id: 'ocho',
-    label: SIGN_LABELS.OCHO,
-    type: 'static',
-    hint: 'Pulgar, índice y medio extendidos (8 LSM)',
-    speakText: 'Ocho',
-  }),
-  Object.freeze({
-    id: 'nueve',
-    label: SIGN_LABELS.NUEVE,
-    type: 'static',
-    hint: '4 dedos extendidos con dorso a la cámara (9 LSM)',
-    speakText: 'Nueve',
-  }),
-  Object.freeze({
-    id: 'diez',
-    label: SIGN_LABELS.DIEZ,
-    type: 'dynamic',
-    hint: 'Mano abierta (5) girando muñeca palma ↔ dorso (10 LSM)',
-    speakText: 'Diez',
-  }),
-  Object.freeze({
-    id: 'puno',
-    label: SIGN_LABELS.PUNO,
-    type: 'static',
-    hint: 'Puño cerrado (palma o dorso)',
-    speakText: 'Puño',
-  }),
-  Object.freeze({
-    id: 'ok',
-    label: SIGN_LABELS.OK,
-    type: 'static',
-    hint: 'Círculo pulgar-índice y 3 dedos arriba',
-    speakText: 'OK',
-  }),
-  Object.freeze({
-    id: 'bien',
-    label: SIGN_LABELS.BIEN,
-    type: 'static',
-    hint: 'Pulgar arriba (palma al frente o perfil)',
-    speakText: 'Bien',
-  }),
-  Object.freeze({
-    id: 'te_quiero',
-    label: SIGN_LABELS.TE_QUIERO,
-    type: 'static',
-    hint: 'Pulgar, índice y meñique extendidos',
-    speakText: 'Te quiero',
-  }),
-  Object.freeze({
-    id: 'lunes',
-    label: SIGN_LABELS.LUNES,
-    type: 'static',
-    hint: 'Pulgar e índice en L (palma al frente)',
-    speakText: 'Lunes',
-  }),
-  Object.freeze({
-    id: 'hola',
-    label: SIGN_LABELS.HOLA,
-    type: 'dynamic',
-    hint: 'Saludo lateral con mano abierta',
-    speakText: 'Hola',
-  }),
-  Object.freeze({
-    id: 'letra_i',
-    label: SIGN_LABELS.LETRA_I,
-    type: 'static',
-    hint: 'Solo meñique extendido',
-    speakText: 'Letra I',
-  }),
-  Object.freeze({
-    id: 'letra_y',
-    label: SIGN_LABELS.LETRA_Y,
-    type: 'static',
-    hint: 'Pulgar y meñique extendidos',
-    speakText: 'Letra Y',
-  }),
-  Object.freeze({
-    id: 'cuernos',
-    label: SIGN_LABELS.CUERNOS,
-    type: 'static',
-    hint: 'Índice y meñique extendidos',
-    speakText: 'Cuernos',
-  }),
-]);
-
-const CATALOG_BY_LABEL = new Map(SIGN_CATALOG.map((entry) => [entry.label, entry]));
-
-/**
- * Looks up catalog metadata (id, type, hint, speakText) by canonical sign label.
- */
-export function getSignCatalogEntry(label) {
-  return CATALOG_BY_LABEL.get(label) || null;
-}
+export { SIGN_LABELS, SIGN_CATALOG, CONTEXT_MODES, getModeCatalog, getSignCatalogEntry };
 
 export const DEFAULT_MIN_CONFIDENCE = 0.68;
 
@@ -1353,19 +1186,25 @@ export class GeometricClassifier extends Classifier {
    */
   constructor(options = {}) {
     super();
+    this.mode = normalizeContextMode(options.mode ?? CONTEXT_MODES.GENERAL);
     this.bufferSize = Math.max(15, options.bufferSize ?? 45);
+    this.modeMotionWindowMs = Math.max(1400, options.modeMotionWindowMs ?? 1500);
+    this.modeBufferSize = Math.max(45, options.modeBufferSize ?? 64);
     this.waveWindowMs = options.waveWindowMs ?? 900;
     this.waveGapResetMs = options.waveGapResetMs ?? 250;
     this.waveIdleTailMs = options.waveIdleTailMs ?? 280;
     this.rotationWindowMs = options.rotationWindowMs ?? 850;
     this.rotationIdleTailMs = options.rotationIdleTailMs ?? 360;
     this.minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+    this.minScoreMargin = options.minScoreMargin ?? DEFAULT_MIN_SCORE_MARGIN;
 
     this.sameSignCooldownMs = options.sameSignCooldownMs ?? 1200;
     this.switchCooldownMs = options.switchCooldownMs ?? 300;
     this.restResetMs = options.restResetMs ?? 400;
 
     this.frameBuffer = [];
+    this._modeMotionByHand = new Map();
+    this._modeLastHandMs = new Map();
     this.activeHandId = null;
     this._lastValidHandMs = null;
 
@@ -1388,6 +1227,30 @@ export class GeometricClassifier extends Classifier {
       exitRatio: options.exitRatio ?? 0.3,
       releaseMs: options.releaseMs ?? 360,
     });
+  }
+
+  /**
+   * Returns the active recognition context mode (`'general' | 'alphabet' | 'numbers' | 'phrases'`).
+   */
+  getMode() {
+    return this.mode;
+  }
+
+  /**
+   * Switches recognition context mode in hot path without restarting the camera.
+   * Cleanly resets `SmoothingVoter`, temporal motion buffers, and commitment state
+   * whenever the mode changes so zero residual signs leak across modes.
+   *
+   * @param {'general'|'alphabet'|'numbers'|'phrases'} nextMode
+   * @returns {string} Active normalized mode
+   */
+  setMode(nextMode) {
+    const normalized = normalizeContextMode(nextMode);
+    if (normalized !== this.mode) {
+      this.mode = normalized;
+      this.reset();
+    }
+    return this.mode;
   }
 
   /**
@@ -1416,6 +1279,10 @@ export class GeometricClassifier extends Classifier {
 
     if (Array.isArray(framesInput) && !isSingleHandArray) {
       return this._predictBatch(framesInput);
+    }
+
+    if (this.mode !== CONTEXT_MODES.GENERAL) {
+      return this._predictInContextMode(framesInput);
     }
 
     const tMs = extractFrameTimestampMs(framesInput);
@@ -1561,6 +1428,7 @@ export class GeometricClassifier extends Classifier {
       committedLabel: commitInfo.committedLabel,
       state,
       details: {
+        mode: this.mode,
         rawLabel,
         rawConfidence,
         smoothedLabel: voted.label,
@@ -1572,6 +1440,176 @@ export class GeometricClassifier extends Classifier {
         states: staticRes.states,
         wave,
         palmRotation,
+      },
+    };
+  }
+
+  /**
+   * Single-pass (< 1 ms/frame) streaming classifier for `'alphabet'`, `'numbers'`, and `'phrases'`
+   * modes with per-hand `t_ms` motion buffers and strict `top1 - top2` margin rejection.
+   */
+  _predictInContextMode(framesInput) {
+    const tMs = extractFrameTimestampMs(framesInput);
+    const aspectRatio = !Array.isArray(framesInput) ? resolveAspectRatio(framesInput) : 1.0;
+    const rawCandidates = extractHandsFromFrame(framesInput);
+
+    if (rawCandidates.length === 0) {
+      if (
+        tMs === null ||
+        (this._lastValidHandMs !== null && tMs - this._lastValidHandMs >= this.waveGapResetMs)
+      ) {
+        this._modeMotionByHand.clear();
+        this._modeLastHandMs.clear();
+        this.activeHandId = null;
+      }
+      const voted = this.voter.push({ label: null, confidence: 0 }, tMs);
+      const commitInfo = this._updateCommitment(voted.label, tMs);
+      return {
+        label: voted.label,
+        confidence: voted.confidence,
+        committed: commitInfo.committed,
+        committedLabel: commitInfo.committedLabel,
+        state: voted.label ? 'confirmed' : 'idle',
+        details: {
+          mode: this.mode,
+          rawLabel: null,
+          reason: 'INVALID_OR_NOISY_LANDMARKS',
+          states: null,
+          handId: null,
+          votes: voted.votes,
+          stableMs: voted.stableMs,
+          stabilityProgress: voted.stabilityProgress,
+        },
+      };
+    }
+
+    // Compute 3D anatomy ONCE per visible hand and append compact scalar sample to its `t_ms` buffer
+    const enrichedCandidates = [];
+    const motionSummaries = new Map();
+
+    for (let i = 0; i < rawCandidates.length; i++) {
+      const cand = rawCandidates[i];
+      const anatomy = computeExtendedHandAnatomy(cand.landmarks, {
+        aspectRatio,
+        handId: cand.handId,
+      });
+
+      if (anatomy) {
+        const lastSeen = this._modeLastHandMs.get(cand.handId) ?? null;
+        if (tMs !== null && lastSeen !== null && (tMs < lastSeen || tMs - lastSeen >= this.waveGapResetMs)) {
+          this._modeMotionByHand.delete(cand.handId);
+        }
+        let buf = this._modeMotionByHand.get(cand.handId);
+        if (!buf) {
+          buf = [];
+          this._modeMotionByHand.set(cand.handId, buf);
+        }
+        buf.push(
+          buildCompactMotionSample(anatomy, {
+            handId: cand.handId,
+            aspectRatio,
+            tMs,
+          })
+        );
+        if (tMs !== null) {
+          while (
+            buf.length > 1 &&
+            buf[0].tMs !== null &&
+            tMs - buf[0].tMs > this.modeMotionWindowMs
+          ) {
+            buf.shift();
+          }
+          this._modeLastHandMs.set(cand.handId, tMs);
+        }
+        if (buf.length > this.modeBufferSize) {
+          buf.shift();
+        }
+        motionSummaries.set(cand.handId, computeContextMotionSummary(buf));
+      }
+
+      enrichedCandidates.push({
+        handId: cand.handId,
+        landmarks: cand.landmarks,
+        anatomy,
+      });
+    }
+
+    const modeRes = classifyModeCandidates(enrichedCandidates, {
+      mode: this.mode,
+      aspectRatio,
+      minConfidence: this.minConfidence,
+      minScoreMargin: this.minScoreMargin,
+      preferredHandId: this.activeHandId,
+      getMotionSummaryForHand: (hid) => motionSummaries.get(hid) || null,
+    });
+
+    if (!modeRes.states) {
+      if (
+        tMs === null ||
+        (this._lastValidHandMs !== null && tMs - this._lastValidHandMs >= this.waveGapResetMs)
+      ) {
+        this._modeMotionByHand.clear();
+        this._modeLastHandMs.clear();
+        this.activeHandId = null;
+      }
+      const voted = this.voter.push({ label: null, confidence: 0 }, tMs);
+      const commitInfo = this._updateCommitment(voted.label, tMs);
+      return {
+        label: voted.label,
+        confidence: voted.confidence,
+        committed: commitInfo.committed,
+        committedLabel: commitInfo.committedLabel,
+        state: voted.label ? 'confirmed' : 'idle',
+        details: {
+          mode: this.mode,
+          rawLabel: null,
+          reason: modeRes.reason || 'INVALID_OR_NOISY_LANDMARKS',
+          states: null,
+          handId: null,
+          votes: voted.votes,
+          stableMs: voted.stableMs,
+          stabilityProgress: voted.stabilityProgress,
+        },
+      };
+    }
+
+    this.activeHandId = modeRes.handId;
+    if (tMs !== null) {
+      this._lastValidHandMs = tMs;
+    }
+
+    const rawLabel = modeRes.label;
+    const rawConfidence = modeRes.confidence;
+    const voted = this.voter.push({ label: rawLabel, confidence: rawConfidence }, tMs);
+    const commitInfo = this._updateCommitment(voted.label, tMs);
+
+    let state = 'rejected';
+    if (voted.label) {
+      state = 'confirmed';
+    } else if (rawLabel || voted.candidateLabel) {
+      state = 'detecting';
+    }
+
+    return {
+      label: voted.label,
+      confidence: voted.confidence,
+      committed: commitInfo.committed,
+      committedLabel: commitInfo.committedLabel,
+      state,
+      details: {
+        mode: this.mode,
+        rawLabel,
+        rawConfidence,
+        smoothedLabel: voted.label,
+        handId: modeRes.handId,
+        votes: voted.votes,
+        stableMs: voted.stableMs,
+        stabilityProgress: voted.stabilityProgress,
+        reason: modeRes.reason,
+        scoreMargin: modeRes.scoreMargin ?? null,
+        top1: modeRes.top1 ?? null,
+        top2: modeRes.top2 ?? null,
+        states: modeRes.states,
       },
     };
   }
@@ -1630,7 +1668,71 @@ export class GeometricClassifier extends Classifier {
         committed: false,
         committedLabel: null,
         state: 'idle',
-        details: { reason: 'EMPTY_BATCH', states: null },
+        details: { mode: this.mode, reason: 'EMPTY_BATCH', states: null },
+      };
+    }
+
+    if (this.mode !== CONTEXT_MODES.GENERAL) {
+      const tempClf = new GeometricClassifier({
+        mode: this.mode,
+        minConfidence: this.minConfidence,
+        minScoreMargin: this.minScoreMargin,
+        smoothingWindow: frames.length,
+        minVotes: Math.max(1, Math.ceil(frames.length * 0.45)),
+        minStableMs: 0,
+      });
+      let lastRes = null;
+      const counts = new Map();
+      const confSums = new Map();
+      for (let i = 0; i < frames.length; i++) {
+        const res = tempClf._predictInContextMode(frames[i]);
+        lastRes = res;
+        const lbl = res.details?.rawLabel;
+        if (lbl) {
+          counts.set(lbl, (counts.get(lbl) || 0) + 1);
+          confSums.set(lbl, (confSums.get(lbl) || 0) + (res.details?.rawConfidence ?? 0));
+        }
+      }
+      // Prefer the final dynamic sign if the last frame confirmed a dynamic trajectory
+      const lastRaw = lastRes?.details?.rawLabel || null;
+      let bestLabel = lastRaw;
+      let bestCount = lastRaw ? counts.get(lastRaw) || 1 : 0;
+      if (!bestLabel) {
+        for (const [lbl, cnt] of counts.entries()) {
+          if (cnt > bestCount) {
+            bestCount = cnt;
+            bestLabel = lbl;
+          }
+        }
+      }
+      if (!bestLabel) {
+        return {
+          label: null,
+          confidence: 0,
+          committed: false,
+          committedLabel: null,
+          state: 'rejected',
+          details: {
+            mode: this.mode,
+            reason: lastRes?.details?.reason || 'NO_MATCH_IN_MODE',
+            states: lastRes?.details?.states || null,
+          },
+        };
+      }
+      const avgConf = Number(((confSums.get(bestLabel) || 0.8) / Math.max(1, bestCount)).toFixed(4));
+      return {
+        label: bestLabel,
+        confidence: avgConf,
+        committed: true,
+        committedLabel: bestLabel,
+        state: 'confirmed',
+        details: {
+          mode: this.mode,
+          reason: lastRes?.details?.reason || `Modo ${this.mode}`,
+          states: lastRes?.details?.states || null,
+          votes: bestCount,
+          totalFrames: frames.length,
+        },
       };
     }
 
@@ -1759,6 +1861,8 @@ export class GeometricClassifier extends Classifier {
 
   reset() {
     this.frameBuffer = [];
+    this._modeMotionByHand.clear();
+    this._modeLastHandMs.clear();
     this.activeHandId = null;
     this._lastValidHandMs = null;
     this._lastCommittedLabel = null;

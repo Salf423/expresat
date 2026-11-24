@@ -15,12 +15,10 @@ import {
   projectIsotropic,
   isValidPoint,
   isValidHandLandmarks,
-  distance3D,
   palmScale,
-  normalizeHand,
-  fingerStates,
   computePalmNormal,
   computeSignedFrontZ,
+  computeExtendedHandAnatomy,
   extractHandsFromFrame,
   detectWaveMotion,
   detectPalmRotation,
@@ -125,79 +123,12 @@ function hasAllValidPoints(landmarks) {
   return true;
 }
 
-function unitVec2(ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len = Math.sqrt(dx * dx + dy * dy);
-  if (!Number.isFinite(len) || len < 1e-6) {
-    return { x: 0, y: 0, up: 0, len: 0 };
-  }
-  return {
-    x: dx / len,
-    y: dy / len,
-    up: -dy / len, // +1 = pointing UP (-Y in image space), -1 = pointing DOWN (+Y)
-    len,
-  };
-}
-
-/**
- * Computes extended 3D anatomical metrics from isotropic & palm-normalized landmarks
- * to cover all 27 LSM letters and 70 catalog signs cleanly.
- */
 function computeExtendedAnatomy(landmarks, aspectRatio, handId) {
-  const iso = Math.abs(aspectRatio - 1.0) > 1e-6 ? projectIsotropic(landmarks, aspectRatio) : landmarks;
-  const states = fingerStates(landmarks, { aspectRatio, handId, _skipValidation: true });
-  const norm = normalizeHand(landmarks, { aspectRatio, _skipValidation: true });
-  if (!states || !norm) return null;
-
-  const palmVec = unitVec2(
-    iso[HAND_LANDMARKS.WRIST].x,
-    iso[HAND_LANDMARKS.WRIST].y,
-    iso[HAND_LANDMARKS.MIDDLE_MCP].x,
-    iso[HAND_LANDMARKS.MIDDLE_MCP].y
-  );
-  const indexVec = unitVec2(
-    iso[HAND_LANDMARKS.INDEX_MCP].x,
-    iso[HAND_LANDMARKS.INDEX_MCP].y,
-    iso[HAND_LANDMARKS.INDEX_TIP].x,
-    iso[HAND_LANDMARKS.INDEX_TIP].y
-  );
-
-  // Chirality-invariant lateral axis across the knuckles: INDEX_MCP -> MIDDLE_MCP
-  const latDx = norm[HAND_LANDMARKS.MIDDLE_MCP].x - norm[HAND_LANDMARKS.INDEX_MCP].x;
-  const latDy = norm[HAND_LANDMARKS.MIDDLE_MCP].y - norm[HAND_LANDMARKS.INDEX_MCP].y;
-  const latDz = norm[HAND_LANDMARKS.MIDDLE_MCP].z - norm[HAND_LANDMARKS.INDEX_MCP].z;
-  const latLen = Math.sqrt(latDx * latDx + latDy * latDy + latDz * latDz) || 1;
-  const uLat = { x: latDx / latLen, y: latDy / latLen, z: latDz / latLen };
-
-  const tipDx = norm[HAND_LANDMARKS.MIDDLE_TIP].x - norm[HAND_LANDMARKS.INDEX_TIP].x;
-  const tipDy = norm[HAND_LANDMARKS.MIDDLE_TIP].y - norm[HAND_LANDMARKS.INDEX_TIP].y;
-  const tipDz = norm[HAND_LANDMARKS.MIDDLE_TIP].z - norm[HAND_LANDMARKS.INDEX_TIP].z;
-  const tipOrderProj = tipDx * uLat.x + tipDy * uLat.y + tipDz * uLat.z;
-
-  const thumbTip = norm[HAND_LANDMARKS.THUMB_TIP];
-  const thumbTipToIndexPip = distance3D(thumbTip, norm[HAND_LANDMARKS.INDEX_PIP]);
-  const thumbTipToIndexDip = distance3D(thumbTip, norm[HAND_LANDMARKS.INDEX_DIP]);
-  const thumbTipToMiddlePip = distance3D(thumbTip, norm[HAND_LANDMARKS.MIDDLE_PIP]);
-  const indexMiddleDipDist = distance3D(
-    norm[HAND_LANDMARKS.INDEX_DIP],
-    norm[HAND_LANDMARKS.MIDDLE_DIP]
-  );
-
-  return {
-    iso,
-    norm,
-    states,
-    palmDirX: palmVec.x,
-    palmDirY: palmVec.up,
-    indexDirX: indexVec.x,
-    indexDirY: indexVec.up,
-    tipOrderProj,
-    thumbTipToIndexPip,
-    thumbTipToIndexDip,
-    thumbTipToMiddlePip,
-    indexMiddleDipDist,
-  };
+  return computeExtendedHandAnatomy(landmarks, {
+    aspectRatio,
+    handId,
+    _skipValidation: true,
+  });
 }
 
 function isLongFingerExtendedRelaxed(states, key) {
