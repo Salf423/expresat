@@ -21,6 +21,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { SignEngine } from '../engine/index.js';
 import {
   GeometricClassifier,
+  ModelClassifier,
+  probeNeuralModelAvailability,
+  DEFAULT_MODEL_URL,
   getSignCatalogEntry,
   CONTEXT_MODES,
   normalizeContextMode,
@@ -38,6 +41,11 @@ const WS_MAX_BUFFER_FRAMES = 60;
 const TELEMETRY_UI_INTERVAL_MS = 250; // <= 4 Hz UI refresh when telemetry drawer is open
 const MAX_HISTORY_ITEMS = 40;
 
+export const CLASSIFIER_ENGINES = Object.freeze({
+  GEOMETRIC: 'geometric',
+  NEURAL_LOCAL: 'neural',
+});
+
 let _historyEntrySeq = 0;
 
 export function resolveEnablePose({
@@ -45,8 +53,15 @@ export function resolveEnablePose({
   enableRemoteTransport = false,
   devRecorderActive = false,
   configEnablePose = false,
+  classifierEngine = CLASSIFIER_ENGINES.GEOMETRIC,
 } = {}) {
-  return Boolean(enablePose || enableRemoteTransport || devRecorderActive || configEnablePose);
+  return Boolean(
+    enablePose ||
+      enableRemoteTransport ||
+      devRecorderActive ||
+      configEnablePose ||
+      classifierEngine === CLASSIFIER_ENGINES.NEURAL_LOCAL
+  );
 }
 
 /**
@@ -214,6 +229,8 @@ export function useSignEngine({
   canvasRef,
   trackingConfig = { enabled: true },
   classifierInstance = null,
+  classifierEngine = CLASSIFIER_ENGINES.GEOMETRIC,
+  probeNeuralModel = false,
   recognitionMode = CONTEXT_MODES.GENERAL,
   enableRemoteTransport = false,
   enablePose = false,
@@ -254,6 +271,16 @@ export function useSignEngine({
   const [landmarksCount, setLandmarksCount] = useState(0);
   const [telemetry, setTelemetry] = useState(null);
   const [devSnapshot, setDevSnapshot] = useState(null);
+  const [neuralStatus, setNeuralStatus] = useState({
+    available: false,
+    status: probeNeuralModel ? 'checking' : 'idle',
+    reason: null,
+    message: 'Modelo neuronal en preparación',
+    detail: null,
+    modelUrl: DEFAULT_MODEL_URL,
+    metadata: null,
+  });
+  const [neuralClassifierInstance, setNeuralClassifierInstance] = useState(null);
 
   const engineRef = useRef(null);
   const classifierRef = useRef(null);
@@ -427,12 +454,96 @@ export function useSignEngine({
     };
   }, [enableRemoteTransport]);
 
-  // 2. Initialize SignEngine (camera + main-thread MediaPipe) and GeometricClassifier
+  // Probe local browser ONNX model availability when requested (non-blocking, zero uncaught errors)
+  useEffect(() => {
+    if (!probeNeuralModel && classifierEngine !== CLASSIFIER_ENGINES.NEURAL_LOCAL) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    probeNeuralModelAvailability().then((res) => {
+      if (cancelled) return;
+      setNeuralStatus({
+        available: Boolean(res.available),
+        status: res.status || 'unavailable',
+        reason: res.reason || null,
+        message: res.message || 'Modelo neuronal en preparación',
+        detail: res.detail || null,
+        modelUrl: res.modelUrl || DEFAULT_MODEL_URL,
+        metadata: res.metadata || null,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [probeNeuralModel, classifierEngine]);
+
+  // Lazily load ModelClassifier (onnxruntime-web) only when user activates neural local engine
+  useEffect(() => {
+    if (
+      classifierEngine !== CLASSIFIER_ENGINES.NEURAL_LOCAL ||
+      !neuralStatus.available ||
+      classifierInstance
+    ) {
+      setNeuralClassifierInstance(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const modelClf = new ModelClassifier({ modelUrl: neuralStatus.modelUrl });
+    setNeuralStatus((prev) => ({
+      ...prev,
+      status: 'loading',
+      message: 'Cargando IA Neuronal local…',
+    }));
+
+    modelClf.load().then((loadRes) => {
+      if (cancelled) {
+        modelClf.dispose();
+        return;
+      }
+      if (loadRes.ready) {
+        setNeuralClassifierInstance(modelClf);
+        setNeuralStatus((prev) => ({
+          ...prev,
+          available: true,
+          status: 'ready',
+          reason: null,
+          message: 'IA Neuronal (Local) activa',
+          metadata: loadRes.metadata || prev.metadata,
+        }));
+      } else {
+        setNeuralClassifierInstance(null);
+        setNeuralStatus((prev) => ({
+          ...prev,
+          available: false,
+          status: loadRes.status || 'unavailable',
+          reason: loadRes.reason || 'MODEL_NOT_DEPLOYED',
+          message: 'Modelo neuronal en preparación',
+          detail: loadRes.message || null,
+        }));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      modelClf.dispose();
+    };
+  }, [classifierEngine, neuralStatus.available, neuralStatus.modelUrl, classifierInstance]);
+
+  // 2. Initialize SignEngine (camera + main-thread MediaPipe) and Classifier (Geometric or Neural Local)
+  const activeNeuralReady =
+    classifierEngine === CLASSIFIER_ENGINES.NEURAL_LOCAL && Boolean(neuralClassifierInstance);
+  const effectiveClassifierInstance = classifierInstance || (activeNeuralReady ? neuralClassifierInstance : null);
+  const predictionSource = activeNeuralReady ? 'neural-local' : 'local';
+
   const resolvedEnablePose = resolveEnablePose({
     enablePose,
     enableRemoteTransport,
     devRecorderActive,
     configEnablePose: CONFIG.enablePose,
+    classifierEngine: activeNeuralReady ? CLASSIFIER_ENGINES.NEURAL_LOCAL : CLASSIFIER_ENGINES.GEOMETRIC,
   });
 
   const resolvedStrictAspectRatio = resolveStrictAspectRatio({
@@ -448,7 +559,7 @@ export function useSignEngine({
 
     let isMounted = true;
     const classifier =
-      classifierInstance ||
+      effectiveClassifierInstance ||
       new GeometricClassifier({
         mode: recognitionModeRef.current,
         windowMs: 450,
@@ -463,8 +574,8 @@ export function useSignEngine({
         switchCooldownMs: 300,
         restResetMs: 400,
       });
-    if (classifierInstance && typeof classifierInstance.setMode === 'function') {
-      classifierInstance.setMode(recognitionModeRef.current);
+    if (effectiveClassifierInstance && typeof effectiveClassifierInstance.setMode === 'function') {
+      effectiveClassifierInstance.setMode(recognitionModeRef.current);
     }
     classifierRef.current = classifier;
 
@@ -624,7 +735,7 @@ export function useSignEngine({
       ) {
         if (import.meta.env.DEV) devTel?.mark('expresat:ui_gesture:start');
         const localPrediction = classifier.predict(frameData);
-        setGesture((prev) => applyGesturePrediction(prev, localPrediction, 'local'));
+        setGesture((prev) => applyGesturePrediction(prev, localPrediction, predictionSource));
 
         if (typeof onPredictionRef.current === 'function') {
           try {
@@ -697,7 +808,8 @@ export function useSignEngine({
   }, [
     videoRef,
     canvasRef,
-    classifierInstance,
+    effectiveClassifierInstance,
+    predictionSource,
     resolvedEnablePose,
     resolvedStrictAspectRatio,
     demoLocalTolerant,
@@ -742,6 +854,7 @@ export function useSignEngine({
     landmarksCount,
     telemetry,
     devSnapshot,
+    neuralStatus,
     refreshDevSnapshot,
     reconnectTransport,
     clearHistory,

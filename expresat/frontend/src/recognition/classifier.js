@@ -1876,28 +1876,6 @@ export class GeometricClassifier extends Classifier {
 }
 
 /**
- * Adapter stub for a future trained neural model classifier (ONNX / WebSocket).
- * Implements the same `Classifier { predict(frames) -> { label, confidence } }` interface.
- */
-export class ModelClassifier extends Classifier {
-  constructor(inferFn = null) {
-    super();
-    this.inferFn = inferFn;
-  }
-
-  predict(frames) {
-    if (typeof this.inferFn === 'function') {
-      return this.inferFn(frames);
-    }
-    return {
-      label: null,
-      confidence: 0,
-      details: { reason: 'MODEL_NOT_LOADED' },
-    };
-  }
-}
-
-/**
  * Convenience wrapper `classify(framesOrLandmarks)` for stateless functional usage.
  */
 export function classify(framesOrLandmarks, options = {}) {

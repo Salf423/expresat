@@ -18,8 +18,9 @@ import {
   RefreshCw,
   ArrowLeftRight,
   Hand,
+  Cpu,
 } from 'lucide-react';
-import { useSignEngine } from '../ui/index.js';
+import { useSignEngine, CLASSIFIER_ENGINES } from '../ui/index.js';
 import { onDevProfilerRender } from '../engine/index.js';
 import {
   CONTEXT_MODES,
@@ -153,6 +154,8 @@ const SignToTextTranslator = ({ direction, onDirectionChange }) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [debugVisible, setDebugVisible] = useState(false);
   const [recognitionMode, setRecognitionMode] = useState(CONTEXT_MODES.GENERAL);
+  const [classifierEngine, setClassifierEngine] = useState(CLASSIFIER_ENGINES.GEOMETRIC);
+  const [neuralInfoNotice, setNeuralInfoNotice] = useState(false);
   const [trackingConfig, setTrackingConfig] = useState({
     enabled: true,
     showTrails: true,
@@ -192,6 +195,7 @@ const SignToTextTranslator = ({ direction, onDirectionChange }) => {
     landmarksCount,
     telemetry,
     devSnapshot,
+    neuralStatus,
     refreshDevSnapshot,
     reconnectTransport,
     clearGesture,
@@ -200,6 +204,8 @@ const SignToTextTranslator = ({ direction, onDirectionChange }) => {
     videoRef,
     canvasRef,
     trackingConfig,
+    classifierEngine,
+    probeNeuralModel: true,
     recognitionMode,
     enableRemoteTransport: false,
     enablePose: false,
@@ -207,6 +213,26 @@ const SignToTextTranslator = ({ direction, onDirectionChange }) => {
     showDiagnosticBadges: debugVisible,
     onSignCommitted: handleSignCommitted,
   });
+
+  const isNeuralActive =
+    classifierEngine === CLASSIFIER_ENGINES.NEURAL_LOCAL && neuralStatus.available;
+
+  const handleSelectEngine = useCallback(
+    (nextEngine) => {
+      if (nextEngine === CLASSIFIER_ENGINES.NEURAL_LOCAL) {
+        if (!neuralStatus.available) {
+          setNeuralInfoNotice(true);
+          return;
+        }
+        setNeuralInfoNotice(false);
+        setClassifierEngine(CLASSIFIER_ENGINES.NEURAL_LOCAL);
+        return;
+      }
+      setNeuralInfoNotice(false);
+      setClassifierEngine(CLASSIFIER_ENGINES.GEOMETRIC);
+    },
+    [neuralStatus.available]
+  );
 
   const activeModeMeta = useMemo(() => getContextModeMeta(recognitionMode), [recognitionMode]);
   const modeSigns = activeModeMeta.signs;
@@ -640,6 +666,94 @@ const SignToTextTranslator = ({ direction, onDirectionChange }) => {
               );
             })}
           </div>
+        </div>
+
+        {/* Discreet Local Engine Selector: Geometric (default) vs Neural Local (in-browser) */}
+        <div
+          data-testid="classifier-engine-selector"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.5rem',
+            paddingTop: '0.55rem',
+            borderTop: '1px solid var(--border-color)',
+          }}
+        >
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+            <Cpu size={14} color="var(--text-muted)" aria-hidden="true" />
+            <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+              Motor local:
+            </span>
+            <div
+              role="group"
+              aria-label="Seleccionar motor de reconocimiento local"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}
+            >
+              <button
+                type="button"
+                data-testid="engine-btn-geometric"
+                aria-pressed={!isNeuralActive}
+                onClick={() => handleSelectEngine(CLASSIFIER_ENGINES.GEOMETRIC)}
+                className={`learn-filter-pill ${!isNeuralActive ? 'learn-filter-pill--active' : ''}`}
+                style={{ padding: '0.24rem 0.68rem', fontSize: '0.75rem' }}
+              >
+                Geométrico
+              </button>
+
+              <button
+                type="button"
+                data-testid="engine-btn-neural"
+                aria-pressed={isNeuralActive}
+                aria-disabled={!neuralStatus.available}
+                onClick={() => handleSelectEngine(CLASSIFIER_ENGINES.NEURAL_LOCAL)}
+                className={`learn-filter-pill ${isNeuralActive ? 'learn-filter-pill--active' : ''}`}
+                style={{
+                  padding: '0.24rem 0.68rem',
+                  fontSize: '0.75rem',
+                  opacity: neuralStatus.available ? 1 : 0.78,
+                }}
+                title={
+                  neuralStatus.available
+                    ? 'Activar inferencia neuronal local 100% en navegador'
+                    : 'Modelo neuronal en preparación'
+                }
+              >
+                <span>IA Neuronal (Local)</span>
+                {!neuralStatus.available && neuralStatus.status !== 'checking' && (
+                  <span
+                    data-testid="neural-status-badge"
+                    style={{
+                      fontSize: '0.68rem',
+                      opacity: 0.85,
+                      fontWeight: 500,
+                    }}
+                  >
+                    · Modelo neuronal en preparación
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {(isNeuralActive || neuralInfoNotice) && (
+            <span
+              role="status"
+              aria-live="polite"
+              style={{
+                fontSize: '0.75rem',
+                color: isNeuralActive ? 'var(--success-color)' : 'var(--text-muted)',
+                fontWeight: 500,
+              }}
+            >
+              {isNeuralActive
+                ? neuralStatus.status === 'loading'
+                  ? 'Cargando IA Neuronal local…'
+                  : 'IA Neuronal activa · 100% en navegador'
+                : 'Modelo neuronal en preparación. El modo Geométrico continúa activo sin conexión.'}
+            </span>
+          )}
         </div>
       </section>
 
@@ -1154,7 +1268,13 @@ const SignToTextTranslator = ({ direction, onDirectionChange }) => {
                 >
                   Precisión: {confidencePct}%
                   {showDiagnostics
-                    ? ` (${gesture.source === 'remote' ? 'Servidor' : 'Local'})`
+                    ? ` (${
+                        gesture.source === 'remote'
+                          ? 'Servidor'
+                          : gesture.source === 'neural-local'
+                            ? 'IA Neuronal'
+                            : 'Local'
+                      })`
                     : ''}
                 </span>
                 <p
@@ -1469,9 +1589,11 @@ const SignToTextTranslator = ({ direction, onDirectionChange }) => {
             {String(Boolean(engineStatus.backendInfo?.poseEnabled))}
           </div>
           <div>
-            Modo: {recognitionMode} | Estado: {gesture.state} | Mano:{' '}
-            {gesture.details?.handId || '—'} | Raw: {gesture.details?.rawLabel || '—'} | Razón:{' '}
-            {gesture.details?.reason || '—'}
+            Modo: {recognitionMode} | Clasificador: {isNeuralActive ? 'neural-local' : 'geometric'} (
+            {neuralStatus.status}
+            {neuralStatus.reason ? `/${neuralStatus.reason}` : ''}) | Estado: {gesture.state} |
+            Mano: {gesture.details?.handId || '—'} | Raw: {gesture.details?.rawLabel || '—'} |
+            Razón: {gesture.details?.reason || '—'}
           </div>
         </section>
       )}

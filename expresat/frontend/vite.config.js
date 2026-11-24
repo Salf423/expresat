@@ -94,7 +94,7 @@ export default defineConfig(({ mode }) => ({
         // and local ONNX neural models so ExpresaT operates 100% offline in Airplane Mode.
         maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
         globPatterns: [
-          '**/*.{js,css,html,ico,png,svg,webp}',
+          '**/*.{js,css,html,ico,png,svg,webp,wasm}',
           'wasm/*.{wasm,js}',
           'models/*.{task,onnx,json}',
         ],
@@ -119,6 +119,6 @@ export default defineConfig(({ mode }) => ({
   // Ensure WASM files from @mediapipe/tasks-vision are served with the correct
   // Content-Type and are not mangled by the bundler.
   optimizeDeps: {
-    exclude: ['@mediapipe/tasks-vision'],
+    exclude: ['@mediapipe/tasks-vision', 'onnxruntime-web'],
   },
 }));

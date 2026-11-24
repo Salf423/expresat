@@ -54,9 +54,23 @@ export {
   SmoothingVoter,
   Classifier,
   GeometricClassifier,
-  ModelClassifier,
   classify,
 } from './classifier.js';
+
+export {
+  DEFAULT_MODEL_URL,
+  DEFAULT_METADATA_URL,
+  DEFAULT_WASM_PATHS,
+  DEFAULT_NEURAL_MIN_CONFIDENCE,
+  DEFAULT_NEURAL_MIN_MARGIN,
+  DEFAULT_NEURAL_MAX_ENTROPY,
+  DEFAULT_NEURAL_FALLBACK_LABEL,
+  validateModelMetadata,
+  softmaxWithTemperature,
+  evaluateRejectionGates,
+  probeNeuralModelAvailability,
+  ModelClassifier,
+} from './modelClassifier.js';
 
 export { buildSyntheticHand, SYNTHETIC_PRESETS } from './syntheticHand.js';
 
