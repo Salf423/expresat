@@ -19,7 +19,12 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { SignEngine } from '../engine/index.js';
-import { GeometricClassifier, getSignCatalogEntry } from '../recognition/index.js';
+import {
+  GeometricClassifier,
+  getSignCatalogEntry,
+  CONTEXT_MODES,
+  normalizeContextMode,
+} from '../recognition/index.js';
 import { WSClient, WS_STATES } from '../transport/index.js';
 import { AuthService } from '../services/authService.js';
 import { LandmarkTracker } from '../services/landmarkTracker.js';
@@ -141,6 +146,7 @@ function isSameRenderedGesture(prev, next) {
     prev.label !== next.label ||
     prev.source !== next.source ||
     prev.state !== next.state ||
+    prev.details?.mode !== next.details?.mode ||
     prev.details?.handId !== next.details?.handId ||
     prev.details?.rawLabel !== next.details?.rawLabel ||
     prev.details?.reason !== next.details?.reason ||
@@ -208,6 +214,7 @@ export function useSignEngine({
   canvasRef,
   trackingConfig = { enabled: true },
   classifierInstance = null,
+  recognitionMode = CONTEXT_MODES.GENERAL,
   enableRemoteTransport = false,
   enablePose = false,
   devRecorderActive = false,
@@ -254,6 +261,7 @@ export function useSignEngine({
   const trackerRef = useRef(null);
   const latestFrameRef = useRef(null);
   const trackingConfigRef = useRef(trackingConfig);
+  const recognitionModeRef = useRef(normalizeContextMode(recognitionMode));
   const telemetryDrawerOpenRef = useRef(Boolean(telemetryDrawerOpen));
   const showDiagnosticBadgesRef = useRef(Boolean(showDiagnosticBadges));
   const enableRemoteTransportRef = useRef(Boolean(enableRemoteTransport));
@@ -267,6 +275,25 @@ export function useSignEngine({
   useEffect(() => {
     trackingConfigRef.current = trackingConfig;
   }, [trackingConfig]);
+
+  // Hot-switch recognition context mode without restarting camera or clearing accumulated history
+  useEffect(() => {
+    const normalized = normalizeContextMode(recognitionMode);
+    const changed = recognitionModeRef.current !== normalized;
+    recognitionModeRef.current = normalized;
+    if (classifierRef.current && typeof classifierRef.current.setMode === 'function') {
+      classifierRef.current.setMode(normalized);
+    }
+    if (changed) {
+      setGesture({
+        label: null,
+        confidence: 0,
+        source: 'local',
+        state: 'idle',
+        details: null,
+      });
+    }
+  }, [recognitionMode]);
 
   useEffect(() => {
     showDiagnosticBadgesRef.current = Boolean(showDiagnosticBadges);
@@ -423,6 +450,7 @@ export function useSignEngine({
     const classifier =
       classifierInstance ||
       new GeometricClassifier({
+        mode: recognitionModeRef.current,
         windowMs: 450,
         minStableMs: 260,
         enterRatio: 0.55,
@@ -435,6 +463,9 @@ export function useSignEngine({
         switchCooldownMs: 300,
         restResetMs: 400,
       });
+    if (classifierInstance && typeof classifierInstance.setMode === 'function') {
+      classifierInstance.setMode(recognitionModeRef.current);
+    }
     classifierRef.current = classifier;
 
     const tracker = new LandmarkTracker();

@@ -252,6 +252,103 @@
   text-align: center;
 }
 
+/* Translator Context Mode Selector & Dynamic Quick Guide */
+.translator-mode-bar {
+  padding: 0.85rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.translator-mode-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.translator-mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.translator-mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.46rem 0.95rem;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--panel-border);
+  background: var(--input-bg);
+  color: var(--text-color);
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast), transform var(--transition-fast);
+}
+
+.translator-mode-tab:hover {
+  border-color: var(--accent-primary-border);
+  background: var(--accent-primary-bg);
+}
+
+.translator-mode-tab--active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-accent);
+  box-shadow: 0 2px 10px var(--accent-primary-shadow);
+}
+
+.translator-mode-tab--active:hover {
+  background: var(--accent-primary-hover);
+  border-color: var(--accent-primary-hover);
+  color: var(--text-on-accent);
+}
+
+.translator-mode-tab__count {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.08rem 0.42rem;
+  border-radius: var(--radius-full);
+  background: rgba(127, 127, 127, 0.16);
+  font-variant-numeric: tabular-nums;
+}
+
+.translator-mode-tab--active .translator-mode-tab__count {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--text-on-accent);
+}
+
+.translator-guide-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.translator-guide-list--scrollable {
+  max-height: 152px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 0.25rem;
+}
+
+@media (max-width: 600px) {
+  .translator-mode-bar {
+    padding: 0.75rem 0.9rem;
+  }
+
+  .translator-mode-tab {
+    padding: 0.4rem 0.78rem;
+    font-size: 0.8rem;
+  }
+}
+
 /* Auth form */
 .auth-card {
   width: 100%;

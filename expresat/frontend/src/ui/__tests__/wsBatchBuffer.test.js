@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as useSignEngineMod from '../useSignEngine.js';
 import { extractWindow } from '../../engine/featureExtractor.js';
+import { CONTEXT_MODES, CONTEXT_MODE_LIST, getModeCatalog } from '../../recognition/index.js';
 
 const makePose = () => {
   const pose = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0.0, visibility: 0.95 }));
@@ -203,5 +204,54 @@ describe('ui/useSignEngine — Lote WebSocket crudo + t_ms monotónico y enableP
     });
     expect(backCuatro).not.toBe(rightUno);
     expect(backCuatro.details.states.palmFacing).toBe('BACK');
+  });
+
+  it('conserva la oración acumulada al combinar señas de distintos modos y resuelve speakText TTS para todo el catálogo', () => {
+    expect(CONTEXT_MODE_LIST.map((m) => m.title)).toEqual([
+      'General',
+      'Abecedario',
+      'Números',
+      'Frases y Modales',
+    ]);
+    expect(getModeCatalog(CONTEXT_MODES.GENERAL)).toHaveLength(20);
+    expect(getModeCatalog(CONTEXT_MODES.ALPHABET)).toHaveLength(27);
+    expect(getModeCatalog(CONTEXT_MODES.NUMBERS)).toHaveLength(11);
+    expect(getModeCatalog(CONTEXT_MODES.PHRASES)).toHaveLength(32);
+
+    // Deletrear en Abecedario, cambiar a Frases y Modales y continuar la misma oración
+    let sentence = [];
+    sentence = useSignEngineMod.appendCommittedSign(sentence, {
+      committed: true,
+      committedLabel: 'Letra A',
+      confidence: 0.92,
+    });
+    sentence = useSignEngineMod.appendCommittedSign(sentence, {
+      committed: true,
+      committedLabel: 'Letra Ñ',
+      confidence: 0.89,
+    });
+    sentence = useSignEngineMod.appendCommittedSign(sentence, {
+      committed: true,
+      committedLabel: 'Gracias',
+      confidence: 0.91,
+    });
+    sentence = useSignEngineMod.appendCommittedSign(sentence, {
+      committed: true,
+      committedLabel: 'Buenos días',
+      confidence: 0.88,
+    });
+
+    expect(sentence.map((item) => item.label)).toEqual([
+      'Letra A',
+      'Letra Ñ',
+      'Gracias',
+      'Buenos días',
+    ]);
+    expect(sentence.map((item) => item.speakText)).toEqual([
+      'Letra A',
+      'Letra eñe',
+      'Gracias',
+      'Buenos días',
+    ]);
   });
 });

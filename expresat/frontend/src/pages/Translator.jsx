@@ -19,7 +19,12 @@ import {
 } from 'lucide-react';
 import { useSignEngine } from '../ui/index.js';
 import { onDevProfilerRender } from '../engine/index.js';
-import { SIGN_CATALOG, getSignCatalogEntry } from '../recognition/index.js';
+import {
+  CONTEXT_MODES,
+  CONTEXT_MODE_LIST,
+  getContextModeMeta,
+  getSignCatalogEntry,
+} from '../recognition/index.js';
 import { WS_STATES } from '../transport/index.js';
 import { COLOR_LEGEND_ITEMS } from '../services/landmarkTracker.js';
 import { CONFIG } from '../config.js';
@@ -71,6 +76,7 @@ const Translator = () => {
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [debugVisible, setDebugVisible] = useState(false);
+  const [recognitionMode, setRecognitionMode] = useState(CONTEXT_MODES.GENERAL);
   const [trackingConfig, setTrackingConfig] = useState({
     enabled: true,
     showTrails: true,
@@ -118,12 +124,33 @@ const Translator = () => {
     videoRef,
     canvasRef,
     trackingConfig,
+    recognitionMode,
     enableRemoteTransport: false,
     enablePose: false,
     telemetryDrawerOpen: showTelemetryDrawer,
     showDiagnosticBadges: debugVisible,
     onSignCommitted: handleSignCommitted,
   });
+
+  const activeModeMeta = useMemo(() => getContextModeMeta(recognitionMode), [recognitionMode]);
+  const modeSigns = activeModeMeta.signs;
+
+  const handleModeKeyDown = useCallback(
+    (e, currentIdx) => {
+      const count = CONTEXT_MODE_LIST.length;
+      let nextIdx = null;
+      if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % count;
+      else if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + count) % count;
+      else if (e.key === 'Home') nextIdx = 0;
+      else if (e.key === 'End') nextIdx = count - 1;
+
+      if (nextIdx !== null) {
+        e.preventDefault();
+        setRecognitionMode(CONTEXT_MODE_LIST[nextIdx].id);
+      }
+    },
+    []
+  );
 
   // Cancel any active speech synthesis on unmount
   useEffect(() => {
@@ -482,6 +509,61 @@ const Translator = () => {
             </span>
           </div>
         )}
+
+      {/* Context Mode Selector (hot-switches classifier without restarting camera or clearing sentence) */}
+      <section
+        aria-label="Modo de traducción en LSM"
+        className="glass-panel--static translator-mode-bar"
+        data-testid="translator-mode-selector"
+      >
+        <div className="translator-mode-header">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+            <span
+              style={{
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                color: 'var(--text-color)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+              }}
+            >
+              Modo de contexto
+            </span>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              {activeModeMeta.description}
+              {history.length > 0 ? ' · Tu oración acumulada se conserva al cambiar.' : ''}
+            </span>
+          </div>
+
+          <div
+            role="tablist"
+            aria-label="Seleccionar modo de reconocimiento de señas"
+            className="translator-mode-tabs"
+          >
+            {CONTEXT_MODE_LIST.map((modeItem, idx) => {
+              const isSelected = recognitionMode === modeItem.id;
+              return (
+                <button
+                  key={modeItem.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSelected}
+                  tabIndex={isSelected ? 0 : -1}
+                  data-testid={`mode-tab-${modeItem.id}`}
+                  className={`translator-mode-tab ${
+                    isSelected ? 'translator-mode-tab--active' : ''
+                  }`}
+                  onClick={() => setRecognitionMode(modeItem.id)}
+                  onKeyDown={(e) => handleModeKeyDown(e, idx)}
+                >
+                  <span>{modeItem.title}</span>
+                  <span className="translator-mode-tab__count">{modeItem.signs.length}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
 
       {/* Main Dual Grid: Camera Feed & Output */}
       <div className="translator-grid" style={{ flex: 1 }}>
@@ -1183,9 +1265,10 @@ const Translator = () => {
             </div>
           </div>
 
-          {/* Unified Quick Guide Card (Single Source of Truth: SIGN_CATALOG) */}
+          {/* Dynamic Quick Guide Card synchronized with active recognition mode */}
           <div
             data-testid="sign-catalog-guide"
+            data-mode={recognitionMode}
             style={{
               marginTop: '0.85rem',
               padding: '0.9rem 1rem',
@@ -1194,40 +1277,82 @@ const Translator = () => {
               border: '1px solid var(--panel-border)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '0.5rem',
+              gap: '0.55rem',
             }}
           >
-            <span
+            <div
               style={{
-                fontSize: '0.78rem',
-                fontWeight: 600,
-                color: 'var(--text-color)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.04em',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
               }}
             >
-              Señas disponibles ({SIGN_CATALOG.length} señas en LSM):
-            </span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-              {SIGN_CATALOG.map((sign) => {
+              <span
+                style={{
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  color: 'var(--text-color)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                Guía rápida · {activeModeMeta.title} ({modeSigns.length} señas)
+              </span>
+              {modeSigns.some((s) => s.type === 'dynamic') && (
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  Las marcas con «Mov.» requieren movimiento
+                </span>
+              )}
+            </div>
+            <div
+              className={`translator-guide-list ${
+                modeSigns.length > 20 ? 'translator-guide-list--scrollable' : ''
+              }`}
+            >
+              {modeSigns.map((sign) => {
                 const isActive = translation === sign.label;
+                const displayBadge =
+                  recognitionMode === CONTEXT_MODES.ALPHABET && sign.shortLabel
+                    ? sign.shortLabel
+                    : sign.label;
                 return (
                   <span
                     key={sign.id}
-                    title={sign.hint}
+                    title={`${sign.displayName || sign.label}: ${sign.hint}`}
                     style={{
-                      fontSize: '0.74rem',
-                      padding: '0.2rem 0.6rem',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.28rem',
+                      fontSize:
+                        recognitionMode === CONTEXT_MODES.ALPHABET ? '0.8rem' : '0.74rem',
+                      padding:
+                        recognitionMode === CONTEXT_MODES.ALPHABET
+                          ? '0.24rem 0.65rem'
+                          : '0.2rem 0.6rem',
                       borderRadius: 'var(--radius-sm)',
-                      fontWeight: isActive ? 700 : 500,
+                      fontWeight:
+                        isActive || recognitionMode === CONTEXT_MODES.ALPHABET ? 700 : 500,
                       background: isActive ? 'var(--success-bg)' : 'var(--input-bg)',
-                      color: isActive ? 'var(--success-color)' : 'var(--text-muted)',
+                      color: isActive ? 'var(--success-color)' : 'var(--text-color)',
                       border: `1px solid ${
                         isActive ? 'var(--success-color)' : 'var(--panel-border)'
                       }`,
                     }}
                   >
-                    {sign.label}
+                    <span>{displayBadge}</span>
+                    {sign.type === 'dynamic' && (
+                      <span
+                        style={{
+                          fontSize: '0.62rem',
+                          fontWeight: 600,
+                          opacity: 0.78,
+                        }}
+                      >
+                        · Mov.
+                      </span>
+                    )}
                   </span>
                 );
               })}
@@ -1266,8 +1391,9 @@ const Translator = () => {
             {String(Boolean(engineStatus.backendInfo?.poseEnabled))}
           </div>
           <div>
-            Estado: {gesture.state} | Mano: {gesture.details?.handId || '—'} | Raw:{' '}
-            {gesture.details?.rawLabel || '—'} | Razón: {gesture.details?.reason || '—'}
+            Modo: {recognitionMode} | Estado: {gesture.state} | Mano:{' '}
+            {gesture.details?.handId || '—'} | Raw: {gesture.details?.rawLabel || '—'} | Razón:{' '}
+            {gesture.details?.reason || '—'}
           </div>
         </section>
       )}
