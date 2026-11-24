@@ -9,6 +9,7 @@ import About from './pages/About';
 import Auth from './pages/Auth';
 import BackgroundParticles from './components/BackgroundParticles';
 import ErrorBoundary from './components/ErrorBoundary';
+import InstallAppBanner from './components/InstallAppBanner';
 import { ThemeProvider } from './context/ThemeContext';
 
 function App() {
@@ -38,6 +39,7 @@ function App() {
             </Routes>
           </main>
           <Footer />
+          <InstallAppBanner />
         </div>
       </Router>
     </ThemeProvider>

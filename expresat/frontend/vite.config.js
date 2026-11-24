@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,6 +35,7 @@ function servePublicWasmAndModelsPlugin() {
             let mimeType = 'application/octet-stream';
             if (ext === '.wasm') mimeType = 'application/wasm';
             else if (ext === '.js') mimeType = 'application/javascript';
+            else if (ext === '.json') mimeType = 'application/json';
             res.setHeader('Content-Type', mimeType);
             res.setHeader('Cache-Control', 'no-cache');
             return fs.createReadStream(filePath).pipe(res);
@@ -47,7 +49,64 @@ function servePublicWasmAndModelsPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), servePublicWasmAndModelsPlugin()],
+  plugins: [
+    react(),
+    servePublicWasmAndModelsPlugin(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
+      manifest: {
+        name: 'ExpresaT — Traductor LSM',
+        short_name: 'ExpresaT',
+        description:
+          'Traductor bidireccional de Lengua de Señas Mexicana (LSM) en tiempo real, 100% privado y sin conexión.',
+        lang: 'es-MX',
+        start_url: '/',
+        scope: '/',
+        display: 'standalone',
+        orientation: 'any',
+        theme_color: '#07090f',
+        background_color: '#07090f',
+        categories: ['accessibility', 'education', 'utilities'],
+        icons: [
+          {
+            src: '/pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: '/pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: '/pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        // Allow precaching local MediaPipe WASM runtimes (~12 MB), .task bundles (~7.5 MB),
+        // and local ONNX neural models so ExpresaT operates 100% offline in Airplane Mode.
+        maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
+        globPatterns: [
+          '**/*.{js,css,html,ico,png,svg,webp}',
+          'wasm/*.{wasm,js}',
+          'models/*.{task,onnx,json}',
+        ],
+        globIgnores: ['**/test_hand.png', '**/test_person.png'],
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//, /^\/ws\//],
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
+      },
+    }),
+  ],
 
   ...(mode !== 'production'
     ? {
