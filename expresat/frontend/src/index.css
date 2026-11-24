@@ -689,6 +689,108 @@
   gap: var(--space-6);
 }
 
+/* Featured "Reto: Deletrea tu nombre" card & letter progress tiles */
+.learn-challenge-card {
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  padding: clamp(1.15rem, 3vw, 1.65rem);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1.15rem;
+  cursor: pointer;
+  border: 1.5px solid var(--accent-primary-border);
+  background: linear-gradient(
+    135deg,
+    var(--accent-primary-bg) 0%,
+    var(--panel-bg) 55%,
+    var(--accent-secondary-bg) 100%
+  );
+}
+
+.learn-challenge-card__content {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.learn-challenge-card__icon {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  box-shadow: 0 4px 16px var(--accent-primary-shadow);
+}
+
+.learn-challenge-card__cta {
+  flex-shrink: 0;
+}
+
+.spell-tiles-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.spell-tile {
+  position: relative;
+  min-width: 42px;
+  height: 46px;
+  padding: 0 0.55rem;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--panel-border);
+  background: var(--input-bg);
+  color: var(--text-muted);
+  font-size: 1.15rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition-fast), background-color var(--transition-fast),
+    border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.spell-tile--active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-accent);
+  transform: translateY(-2px) scale(1.06);
+  box-shadow: 0 4px 14px var(--accent-primary-shadow);
+}
+
+.spell-tile--done {
+  background: var(--success-bg);
+  border-color: var(--success-color);
+  color: var(--text-color);
+}
+
+.spell-tile__check {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  color: var(--success-color);
+}
+
+@media (max-width: 560px) {
+  .learn-challenge-card__content {
+    align-items: flex-start;
+  }
+
+  .learn-challenge-card__cta {
+    width: 100%;
+  }
+
+  .spell-tile {
+    min-width: 36px;
+    height: 40px;
+    font-size: 1rem;
+  }
+}
+
 .learn-card-button {
   width: 100%;
   text-align: left;

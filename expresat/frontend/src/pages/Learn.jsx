@@ -12,6 +12,8 @@ import {
   Hand,
   Trophy,
   Search,
+  Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import {
   LEARNING_CATEGORIES,
@@ -28,6 +30,7 @@ import {
   computeProgressStats,
 } from '../utils/progressCookie.js';
 import GuidedPracticePanel from '../components/GuidedPracticePanel.jsx';
+import SpellNameModal from '../components/SpellNameModal.jsx';
 
 const CATEGORY_ICONS = Object.freeze({
   hash: <Hash size={26} aria-hidden="true" />,
@@ -115,6 +118,7 @@ function describeExpectedPostureBadges(sign) {
 const Learn = () => {
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [selectedSign, setSelectedSign] = useState(null);
+  const [spellChallengeOpen, setSpellChallengeOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [signFilter, setSignFilter] = useState('all'); // 'all' | 'static' | 'dynamic' | 'pending'
   const [completedIds, setCompletedIds] = useState(() =>
@@ -140,6 +144,21 @@ const Learn = () => {
   const handleSignCompleted = useCallback((signId) => {
     const updated = markSignCompleted(signId, { validIds: ALL_LEARNING_SIGN_IDS });
     setCompletedIds(updated);
+  }, []);
+
+  const openSpellChallenge = useCallback(() => {
+    lastFocusedRef.current = document.activeElement;
+    setSelectedSign(null);
+    setSelectedGroup(null);
+    setSpellChallengeOpen(true);
+  }, []);
+
+  const closeSpellChallenge = useCallback(() => {
+    setSpellChallengeOpen(false);
+    const prev = lastFocusedRef.current;
+    if (prev && typeof prev.focus === 'function') {
+      requestAnimationFrame(() => prev.focus());
+    }
   }, []);
 
   const openGroup = useCallback((category) => {
@@ -337,6 +356,47 @@ const Learn = () => {
             style={{ width: `${globalProgress.percentage}%` }}
           />
         </div>
+      </section>
+
+      {/* Featured Interactive Challenge: Deletrea tu nombre */}
+      <section
+        aria-label="Reto interactivo Deletrea tu nombre"
+        style={{ marginBottom: '2rem' }}
+      >
+        <button
+          type="button"
+          className="glass-panel learn-challenge-card"
+          onClick={openSpellChallenge}
+          data-testid="spell-name-challenge-card"
+          aria-label="Abrir Reto: Deletrea tu nombre en Lengua de Señas Mexicana"
+        >
+          <div className="learn-challenge-card__content">
+            <div className="module-card__icon learn-challenge-card__icon">
+              <Sparkles size={26} aria-hidden="true" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.25rem' }}>
+                <span className="chip" style={{ fontSize: '0.73rem' }}>
+                  Demostración en vivo
+                </span>
+                <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                  Abecedario A–Z + Ñ
+                </span>
+              </div>
+              <h2 style={{ fontSize: 'clamp(1.2rem, 3vw, 1.5rem)', fontWeight: 800, margin: '0 0 0.3rem 0', color: 'var(--text-color)' }}>
+                Reto: Deletrea tu nombre
+              </h2>
+              <p style={{ margin: 0, fontSize: '0.92rem', color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                Escribe tu nombre y practícalo letra por letra frente a la cámara con corrección
+                anatómica al instante. Ideal para probar la LSM en segundos.
+              </p>
+            </div>
+          </div>
+          <span className="btn-primary learn-challenge-card__cta" style={{ pointerEvents: 'none' }}>
+            <span>Aceptar reto</span>
+            <ArrowRight size={16} aria-hidden="true" />
+          </span>
+        </button>
       </section>
 
       {/* 4 Official Categories Grid */}
@@ -1014,6 +1074,9 @@ const Learn = () => {
           </div>,
           document.body
         )}
+
+      {/* Modal 3: Interactive "Deletrea tu nombre" Challenge */}
+      {spellChallengeOpen && <SpellNameModal onClose={closeSpellChallenge} />}
     </div>
   );
 };

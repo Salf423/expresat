@@ -37,3 +37,14 @@ export {
   evaluateTargetSign,
   TargetedPracticeEvaluator,
 } from './targetEvaluator.js';
+
+export {
+  MAX_SPELL_NAME_LENGTH,
+  DEFAULT_LETTER_STABLE_MS,
+  DEFAULT_REPEAT_RELEASE_MS,
+  DEFAULT_TRANSITION_COOLDOWN_MS,
+  normalizeSpellName,
+  letterToSignId,
+  buildNameLetterTargets,
+  SpellNameMachine,
+} from './spellNameMachine.js';
