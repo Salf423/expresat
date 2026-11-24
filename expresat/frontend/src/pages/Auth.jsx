@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Mail, Lock, LogIn, UserPlus, User, Eye, EyeOff, CheckCircle2, ArrowLeft, KeyRound, AlertCircle } from 'lucide-react';
 import { AuthService } from '../services/authService';
-import logoImg from '../assets/logo.png';
+import logoImg from '../assets/logo.webp';
 
 const Auth = () => {
   const [mode, setMode] = useState('login'); // 'login' | 'register' | 'forgot'

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Heart, Mail, ShieldCheck, FileText, HelpCircle } from 'lucide-react';
-import logoImg from '../assets/logo.png';
+import logoImg from '../assets/logo.webp';
 
 const Github = ({ size = 16, ...rest }) => (
   <svg aria-hidden="true" viewBox="0 0 24 24" width={size} height={size} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" {...rest}>

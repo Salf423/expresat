@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { User, Menu, X, ArrowRight } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 import EnvironmentSelector from './EnvironmentSelector';
-import logoImg from '../assets/logo.png';
+import logoImg from '../assets/logo.webp';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
