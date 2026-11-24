@@ -28,8 +28,8 @@
     X-Content-Type-Options = "nosniff"
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    # Allow camera access for MediaPipe gesture recognition
-    Permissions-Policy = "camera=(self), microphone=()"
+    # Allow camera and microphone access for bidirectional LSM translation
+    Permissions-Policy = "camera=(self), microphone=(self)"
 
 [[headers]]
   for = "/assets/*"

@@ -16,6 +16,8 @@ import {
   BarChart2,
   AlertTriangle,
   RefreshCw,
+  ArrowLeftRight,
+  Hand,
 } from 'lucide-react';
 import { useSignEngine } from '../ui/index.js';
 import { onDevProfilerRender } from '../engine/index.js';
@@ -30,6 +32,7 @@ import { COLOR_LEGEND_ITEMS } from '../services/landmarkTracker.js';
 import { CONFIG } from '../config.js';
 import { DevRecorder } from '../components/DevRecorder.jsx';
 import { DevInstrumentationPanel } from '../components/DevInstrumentationPanel.jsx';
+import TextToSignPanel from '../components/TextToSignPanel.jsx';
 
 const WS_STATE_LABELS = Object.freeze({
   [WS_STATES.IDLE]: 'Modo Demo Local',
@@ -68,7 +71,80 @@ function speakTextOffline(text, onStart, onEnd) {
   }
 }
 
-const Translator = () => {
+const TRANSLATOR_DIRECTIONS = Object.freeze([
+  Object.freeze({
+    id: 'sign-to-text',
+    label: 'Señas → Texto/Voz',
+    shortLabel: 'Señas → Texto/Voz',
+    description: 'Usa tu cámara para traducir señas LSM a texto y voz en español.',
+  }),
+  Object.freeze({
+    id: 'text-to-sign',
+    label: 'Texto/Voz → Señas',
+    shortLabel: 'Texto/Voz → Señas',
+    description: 'Escribe o dicta en español para ver cada seña LSM paso a paso.',
+  }),
+]);
+
+function DirectionSwitcher({ direction, onChange }) {
+  const handleKeyDown = useCallback(
+    (e, idx) => {
+      const count = TRANSLATOR_DIRECTIONS.length;
+      let nextIdx = null;
+      if (e.key === 'ArrowRight') nextIdx = (idx + 1) % count;
+      else if (e.key === 'ArrowLeft') nextIdx = (idx - 1 + count) % count;
+      else if (e.key === 'Home') nextIdx = 0;
+      else if (e.key === 'End') nextIdx = count - 1;
+      if (nextIdx !== null) {
+        e.preventDefault();
+        onChange(TRANSLATOR_DIRECTIONS[nextIdx].id);
+      }
+    },
+    [onChange]
+  );
+
+  return (
+    <nav
+      aria-label="Dirección de traducción bidireccional"
+      data-testid="translator-direction-switcher"
+      className="translator-direction-bar"
+    >
+      <div
+        role="tablist"
+        aria-label="Elegir dirección de traducción"
+        className="translator-direction-tabs"
+      >
+        {TRANSLATOR_DIRECTIONS.map((item, idx) => {
+          const isSelected = direction === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              tabIndex={isSelected ? 0 : -1}
+              data-testid={`direction-tab-${item.id}`}
+              onClick={() => onChange(item.id)}
+              onKeyDown={(e) => handleKeyDown(e, idx)}
+              className={`translator-direction-tab ${
+                isSelected ? 'translator-direction-tab--active' : ''
+              }`}
+            >
+              {item.id === 'sign-to-text' ? (
+                <Hand size={16} aria-hidden="true" />
+              ) : (
+                <ArrowLeftRight size={16} aria-hidden="true" />
+              )}
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+const SignToTextTranslator = ({ direction, onDirectionChange }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -452,6 +528,8 @@ const Translator = () => {
           )}
         </div>
       </header>
+
+      <DirectionSwitcher direction={direction} onChange={onDirectionChange} />
 
       {/* Camera or WASM engine error banner */}
       {engineError && (
@@ -1407,6 +1485,74 @@ const Translator = () => {
   ) : (
     content
   );
+};
+
+const Translator = () => {
+  const [direction, setDirection] = useState('sign-to-text');
+
+  if (direction === 'text-to-sign') {
+    return (
+      <div
+        className="container animate-fade-in"
+        style={{
+          padding: '2rem 1.5rem 4rem 1.5rem',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1.5rem',
+        }}
+      >
+        <header
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '1rem',
+          }}
+        >
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+              <h1
+                className="gradient-text"
+                style={{ fontSize: 'clamp(1.75rem, 4vw, 2.5rem)', margin: 0 }}
+              >
+                Traductor LSM
+              </h1>
+              <span className="chip" style={{ fontSize: '0.75rem' }}>
+                Bidireccional
+              </span>
+            </div>
+            <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+              Escribe o dicta una frase en español para ver la secuencia paso a paso en Lengua de
+              Señas Mexicana, con deletreo automático y 100% sin conexión.
+            </p>
+          </div>
+
+          <div
+            className="glass-panel"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.55rem',
+              padding: '0.55rem 1.15rem',
+              borderRadius: 'var(--radius-full)',
+            }}
+          >
+            <span className="status-dot status-dot--online" aria-hidden="true" />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)' }}>
+              Sin conexión · 100% privado
+            </span>
+          </div>
+        </header>
+
+        <DirectionSwitcher direction={direction} onChange={setDirection} />
+        <TextToSignPanel />
+      </div>
+    );
+  }
+
+  return <SignToTextTranslator direction={direction} onDirectionChange={setDirection} />;
 };
 
 export default Translator;

@@ -59,3 +59,11 @@ export {
 } from './classifier.js';
 
 export { buildSyntheticHand, SYNTHETIC_PRESETS } from './syntheticHand.js';
+
+export {
+  PLAYBACK_SPEEDS,
+  normalizeSpanishText,
+  describeSignPosture,
+  getDirectSignVocabulary,
+  sequenceTextToSigns,
+} from './textToSignSequencer.js';
